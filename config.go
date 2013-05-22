@@ -1,14 +1,17 @@
 package authaus
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	_ "github.com/bmizerany/pq"
 	"io/ioutil"
 	"os"
 )
 
 /*
 
-Example config:
+Full populated config:
 
 {
 	"HTTP": {
@@ -24,7 +27,8 @@ Example config:
 		"Encryption":	"ssl"
 	},
 	"PermitDB": {
-		"DBConnection": {
+		"DB": {
+			"Driver":		"postgres",
 			"Host":			"auth.example.com",
 			"Database": 	"auth",
 			"User":			"jim",
@@ -33,7 +37,8 @@ Example config:
 		}
 	},
 	"SessionDB": {
-		"DBConnection": {
+		"DB": {
+			"Driver":		"postgres",
 			"Host":			"auth.example.com",
 			"Database": 	"auth",
 			"User":			"jim",
@@ -51,12 +56,23 @@ var configLdapNameToMode = map[string]LdapConnectionMode{
 	"TLS": LdapConnectionModeTLS,
 }
 
-type ConfigDBConnection struct {
+// Database connection information
+type DBConnection struct {
+	Driver   string
 	Host     string
 	Database string
 	User     string
 	Password string
 	SSL      bool
+}
+
+func (x *DBConnection) Connect() (*sql.DB, error) {
+	sslmode := "disable"
+	if x.SSL {
+		sslmode = "require"
+	}
+	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, x.User, x.Password, x.Database, sslmode)
+	return sql.Open(x.Driver, conStr)
 }
 
 type ConfigHTTP struct {
@@ -67,25 +83,30 @@ type ConfigHTTP struct {
 }
 
 type ConfigPermitDB struct {
-	DBConnection ConfigDBConnection
+	DB DBConnection
 }
 
 type ConfigSessionDB struct {
-	DBConnection ConfigDBConnection
+	DB DBConnection
 }
 
 type ConfigAuthenticator struct {
-	Type       string // "ldap"
-	LdapHost   string // 
-	LdapPort   int32  // 
+	Type       string // "ldap", "db"
+	LdapHost   string //
+	LdapPort   int32  //
 	Encryption string // "", "TLS", "SSL"
+	DB         DBConnection
 }
 
+/*
+Configuration information. This is typically loaded from a .json config file.
+*/
 type Config struct {
-	HTTP          ConfigHTTP
-	PermitDB      ConfigPermitDB
-	SessionDB     ConfigSessionDB
-	Authenticator ConfigAuthenticator
+	HTTP               ConfigHTTP
+	PermitDB           ConfigPermitDB
+	SessionDB          ConfigSessionDB
+	Authenticator      ConfigAuthenticator
+	AuthenticatorChain []ConfigAuthenticator
 }
 
 func (x *Config) Reset() {

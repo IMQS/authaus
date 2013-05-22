@@ -3,18 +3,17 @@ package authaus
 import (
 	"code.google.com/p/winsvc/svc"
 	"log"
-	"os"
 )
 
 type myservice struct {
-	configFile string
+	handler func()
 }
 
 func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
 	changes <- svc.Status{State: svc.StartPending}
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-	go startServer(m.configFile)
+	go m.handler()
 loop:
 	for {
 		select {
@@ -37,13 +36,9 @@ loop:
 	return
 }
 
-func startServer(configFile string) {
-	// ignoring error here, but at this stage these things should probably be logged anyway
-	RunHttpFromConfigFile(configFile)
-}
-
-// Returns true if we tried to run as a service (regardless of success or not)
-func RunAsService() bool {
+// Returns true if we detected that we are not running in a non-interactive session, and so
+// launched the service. This function will not return until the service exits.
+func RunAsService(handler func()) bool {
 	interactive, err := svc.IsAnIinteractiveSession()
 	if err != nil {
 		log.Fatalf("failed to determine if we are running in an interactive session: %v", err)
@@ -54,23 +49,8 @@ func RunAsService() bool {
 	}
 
 	serviceName := "" // this doesn't matter when we are a "single-process" service
-	configFile := ""
-	for i, v := range os.Args {
-		if i < len(os.Args)-1 {
-			switch v {
-			case "-c":
-				configFile = os.Args[i+1]
-			}
-		}
-	}
-
-	if configFile == "" {
-		log.Fatalf("Must specify a config file with '-c <full path to config>'")
-		return true
-	}
-
 	service := &myservice{
-		configFile: configFile,
+		handler: handler,
 	}
 	svc.Run(serviceName, service)
 	return true

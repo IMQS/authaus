@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strconv"
+	//"strconv"
 	"time"
 )
 
@@ -26,6 +26,7 @@ var (
 	ErrIdentityAuthNotFound   = errors.New("Identity authorization not found")
 	ErrIdentityPermitNotFound = errors.New("Identity permit not found")
 	ErrIdentityEmpty          = errors.New("Identity may not be empty")
+	ErrIdentityExists         = errors.New("Identity already exists")
 	ErrInvalidPassword        = errors.New("Invalid password")
 	ErrInvalidSessionToken    = errors.New("Invalid session token")
 )
@@ -34,15 +35,6 @@ var (
 // of the error string to identify the broad category of the error.
 func NewError(base error, detail string) error {
 	return errors.New(base.Error() + ": " + detail)
-}
-
-/* For lack of a better name, this is the hub of everything.
- */
-type Central struct {
-	authenticator          Authenticator
-	permitDB               PermitDB
-	sessionDB              SessionDB
-	NewSessionExpiresAfter time.Duration
 }
 
 // A Permit is an opaque binary string that encodes domain-specific roles.
@@ -67,13 +59,20 @@ func (x *Permit) Deserialize(encoded string) error {
 	return nil
 }
 
+/*
+Token is the result of a successful authentication request. It contains
+everything that we know about this authentication event, which includes
+the identity that performed the request, when this token expires, and
+the permit belonging to this identity.
+*/
 type Token struct {
 	Identity string
 	Expires  time.Time
 	Permit   Permit
 }
 
-func randomString(nchars int, corpus string) string {
+// Returns a random string of 'nchars' characters, sampled uniformly from the given corpus of characters.
+func RandomString(nchars int, corpus string) string {
 	rbytes := make([]byte, nchars)
 	rstring := make([]byte, nchars)
 	rand.Read(rbytes)
@@ -86,9 +85,23 @@ func randomString(nchars int, corpus string) string {
 func generateSessionKey() string {
 	// It is important not to have any unusual characters in here, especially an equals sign. Old versions of Tomcat
 	// will parse such a cookie incorrectly (imagine Cookie: magic=abracadabra=)
-	return randomString(SessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	return RandomString(SessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+For lack of a better name, this is the single hub of authentication that you interact with.
+All public methods of Central are callable from multiple threads.
+*/
+type Central struct {
+	authenticator          Authenticator
+	permitDB               PermitDB
+	sessionDB              SessionDB
+	NewSessionExpiresAfter time.Duration
+}
+
+// Create a new Central object from the specified pieces
 func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB) *Central {
 	c := &Central{}
 	c.authenticator = &sanitizingAuthenticator{
@@ -100,57 +113,104 @@ func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB Sessio
 	return c
 }
 
+// Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (*Central, error) {
 	var err error
 	var auth Authenticator
-	switch config.Authenticator.Type {
-	case "ldap":
-		ldapMode, legalLdapMode := configLdapNameToMode[config.Authenticator.Encryption]
-		ldapAddress := config.Authenticator.LdapHost
-		if config.Authenticator.LdapPort != 0 {
-			ldapAddress += ":" + strconv.Itoa(int(config.Authenticator.LdapPort))
-		}
-		if !legalLdapMode {
-			return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", config.Authenticator.Encryption))
-		}
-		if auth, err = NewAuthenticator_LDAP(ldapMode, "tcp", ldapAddress); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error creating LDAP Authenticator: %v", err))
-		}
-	case "dummy":
-		auth = NewDummyAuthenticator()
-	default:
-		return nil, errors.New("Unrecognized Authenticator type '" + config.Authenticator.Type + "'")
+	if auth, err = createAuthenticator(&config.Authenticator); err != nil {
+		return nil, err
 	}
 
 	var permitDB PermitDB
-	permDBX := config.PermitDB.DBConnection
-	if permitDB, err = NewPermitDB_SQL("postgres", permDBX.Host, permDBX.Database, permDBX.User, permDBX.Password, permDBX.SSL); err != nil {
+	if permitDB, err = NewPermitDB_SQL(&config.PermitDB.DB); err != nil {
+		auth.Close()
 		return nil, errors.New(fmt.Sprintf("Error connecting to PermitDB: %v", err))
 	}
 
 	var sessionDB SessionDB
-	sessDBX := config.SessionDB.DBConnection
-	if sessionDB, err = NewSessionDB_SQL("postgres", sessDBX.Host, sessDBX.Database, sessDBX.User, sessDBX.Password, sessDBX.SSL); err != nil {
+	if sessionDB, err = NewSessionDB_SQL(&config.SessionDB.DB); err != nil {
+		auth.Close()
+		permitDB.Close()
 		return nil, errors.New(fmt.Sprintf("Error connecting to SessionDB: %v", err))
 	}
 
 	return NewCentral(auth, permitDB, sessionDB), nil
 }
 
-func (x *Central) debugEnableSessionDB(enable bool) {
-	// Used for testing the session cache
-	x.sessionDB.(*cachedSessionDB).enableDB = enable
+func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
+	var err error
+	var auth Authenticator
+	switch config.Type {
+	case "ldap":
+		ldapMode, legalLdapMode := configLdapNameToMode[config.Encryption]
+		//ldapAddress := config.Authenticator.LdapHost
+		//if config.Authenticator.LdapPort != 0 {
+		//	ldapAddress += ":" + strconv.Itoa(int(config.Authenticator.LdapPort))
+		//}
+		if !legalLdapMode {
+			return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", config.Encryption))
+		}
+		//if auth, err = NewAuthenticator_LDAP(ldapMode, "tcp", ldapAddress); err != nil {
+		if auth, err = NewAuthenticator_LDAP(ldapMode, config.LdapHost, uint16(config.LdapPort)); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error creating LDAP Authenticator: %v", err))
+		}
+		return auth, nil
+	case "db":
+		if auth, err = NewAuthenticationDB_SQL(&config.DB); err != nil {
+			return nil, errors.New(fmt.Sprintf("Unable to connect to AuthenticationDB: %v", err))
+		}
+		return auth, nil
+	case "dummy":
+		return NewDummyAuthenticator(), nil
+	default:
+		return nil, errors.New("Unrecognized Authenticator type '" + config.Type + "'")
+	}
+	// unreachable
+	return nil, nil
 }
 
+/*
+func createAuthenticatorChain(config *Config) (*Authenticator, error) {
+	chain := &ChainedAuthenticator{}
+	for _, def := range config.AuthenticatorChain {
+		if element, err := createAuthenticator(def); err != nil {
+			chain.Close()
+			return nil, err
+		} else {
+			chain.chain = append(chain.chain, element)
+		}
+	}
+	if len(chain.chain) == 0 {
+		return nil, ErrAuthChainEmpty
+	}
+	return chain, nil
+}
+*/
+
+// Set the size of the in-memory session cache
 func (x *Central) SetSessionCacheSize(maxSessions int) {
 	x.sessionDB.(*cachedSessionDB).MaxCachedSessions = maxSessions
 }
 
-func (x *Central) GetTokenForSession(sessionkey string) (*Token, error) {
-	return x.sessionDB.Read(sessionkey)
+// Pass in a session key that was generated with a call to Login(), and get back a token.
+// A session key is typically a cookie.
+func (x *Central) GetTokenFromSession(sessionkey string) (*Token, error) {
+	if token, err := x.sessionDB.Read(sessionkey); err != nil {
+		return token, err
+	} else {
+		if time.Now().UnixNano() > token.Expires.UnixNano() {
+			// DB has not yet expired token. It's OK for the DB to be a bit lazy in its cleanup.
+			return nil, ErrInvalidSessionToken
+		} else {
+			return token, err
+		}
+	}
+	// unreachable
+	return nil, nil
 }
 
-func (x *Central) GetTokenForIdentityPassword(identity, password string) (*Token, error) {
+// Perform a once-off authentication
+func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Token, error) {
 	if eAuth := x.authenticator.Authenticate(identity, password); eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(identity); ePermit == nil {
 			t := &Token{}
@@ -168,6 +228,9 @@ func (x *Central) GetTokenForIdentityPassword(identity, password string) (*Token
 	return nil, nil
 }
 
+// Create a new session. Returns a session key, which can be used in future to retrieve the token.
+// The internal session expiry is controlled with the member NewSessionExpiresAfter.
+// The session key is typically sent to the client as a cookie.
 func (x *Central) Login(identity, password string) (sessionkey string, token *Token, e error) {
 	token = &Token{}
 	token.Identity = identity
@@ -185,4 +248,46 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	sessionkey = ""
 	token = nil
 	return
+}
+
+// Change a Permit.
+func (x *Central) SetPermit(identity string, permit *Permit) error {
+	if err := x.permitDB.SetPermit(identity, permit); err != nil {
+		return err
+	}
+	return x.sessionDB.PermitChanged(identity, permit)
+}
+
+// Change a Password. This invalidates all sessions for this identity.
+func (x *Central) SetPassword(identity, password string) error {
+	if err := x.authenticator.SetPassword(identity, password); err != nil {
+		return err
+	}
+	return x.sessionDB.InvalidateSessionsForIdentity(identity)
+}
+
+// Create an identity in the Authenticator.
+// For the equivalent operation in the PermitDB, simply call SetPermit()
+func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
+	return x.authenticator.CreateIdentity(identity, password)
+}
+
+func (x *Central) Close() {
+	if x.authenticator != nil {
+		x.authenticator.Close()
+		x.authenticator = nil
+	}
+	if x.permitDB != nil {
+		x.permitDB.Close()
+		x.permitDB = nil
+	}
+	if x.sessionDB != nil {
+		x.sessionDB.Close()
+		x.sessionDB = nil
+	}
+}
+
+func (x *Central) debugEnableSessionDB(enable bool) {
+	// Used for testing the session cache
+	x.sessionDB.(*cachedSessionDB).enableDB = enable
 }

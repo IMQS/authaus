@@ -2,24 +2,42 @@ package authaus
 
 import (
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 )
 
-// Handle the 'whoami' request
-func HttpHandlerWhoAmI(central *Central, config *ConfigHTTP, w http.ResponseWriter, r *http.Request) {
+// Reads the session cookie or the appropriate HTTP Authorization headers to determine
+// whether this request is authorized. At present we do NOT read the Authorization headers,
+// but instead use query parameters 'identity' and 'password'. This must change.
+func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (*Token, error) {
 	sessioncookie, _ := r.Cookie(config.CookieName)
-	var token *Token
-	var err error
 	if sessioncookie != nil {
-		token, err = central.GetTokenForSession(sessioncookie.Value)
+		return central.GetTokenFromSession(sessioncookie.Value)
 	} else {
+		// This is temporary. It should be in the Authorization header instead
 		identity := r.URL.Query().Get("identity")
 		password := r.URL.Query().Get("password")
-		token, err = central.GetTokenForIdentityPassword(identity, password)
+		return central.GetTokenFromIdentityPassword(identity, password)
 	}
+	// unreachable
+	return nil, nil
+}
+
+// Runs the Prelude function, but before returning an error, sends an appropriate error response to the HTTP ResponseWriter.
+func HttpHandlerPreludeWithError(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) (*Token, error) {
+	token, err := HttpHandlerPrelude(config, central, r)
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, err.Error())
+	}
+	return token, err
+}
+
+// Handle the 'whoami' request, which is really just for debugging
+func HttpHandlerWhoAmI(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
+	token, err := HttpHandlerPrelude(config, central, r)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
 		w.Header().Set("Content-Type", "text/plain")
@@ -32,8 +50,8 @@ func HttpHandlerWhoAmI(central *Central, config *ConfigHTTP, w http.ResponseWrit
 }
 
 // Handle the 'login' request, sending back a session token (via Set-Cookie),
-// if authentication succeeds
-func HttpHandlerLogin(central *Central, config *ConfigHTTP, w http.ResponseWriter, r *http.Request) {
+// if authentication succeeds. You may want to use this as a template to write your own.
+func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
 	identity := r.URL.Query().Get("identity")
 	password := r.URL.Query().Get("password")
 	if sessionkey, token, err := central.Login(identity, password); err != nil {
@@ -42,6 +60,8 @@ func HttpHandlerLogin(central *Central, config *ConfigHTTP, w http.ResponseWrite
 		fmt.Fprintf(w, "%v", err)
 	} else {
 		// TODO: Set Cookie's "Secure: true" when appropriate
+		// It should actually be hard to send a cookie with Secure: false.
+		// One way might be to use r.TLS, but I haven't tested that yet.
 		cookie := &http.Cookie{
 			Name:    config.CookieName,
 			Value:   sessionkey,
@@ -58,16 +78,14 @@ func HttpHandlerLogin(central *Central, config *ConfigHTTP, w http.ResponseWrite
 // a listener. You will probably want to add your own entry points and do that yourself instead of using this.
 // This function is useful for demo/example purposes.
 func RunHttp(config *ConfigHTTP, central *Central) error {
-	whoami := func(w http.ResponseWriter, r *http.Request) {
-		HttpHandlerWhoAmI(central, config, w, r)
+	makehandler := func(actual func(*ConfigHTTP, *Central, http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
+			actual(config, central, w, r)
+		}
 	}
 
-	login := func(w http.ResponseWriter, r *http.Request) {
-		HttpHandlerLogin(central, config, w, r)
-	}
-
-	http.HandleFunc("/whoami", whoami)
-	http.HandleFunc("/login", login)
+	http.HandleFunc("/whoami", makehandler(HttpHandlerWhoAmI))
+	http.HandleFunc("/login", makehandler(HttpHandlerLogin))
 
 	fmt.Printf("Listening on %v:%v\n", config.Bind, config.Port)
 	if err := http.ListenAndServe(config.Bind+":"+strconv.Itoa(config.Port), nil); err != nil {
@@ -75,14 +93,6 @@ func RunHttp(config *ConfigHTTP, central *Central) error {
 	}
 
 	return nil
-}
-
-func RunHttpFromConfigFile(configFile string) error {
-	config := &Config{}
-	if err := config.LoadFile(configFile); err != nil {
-		return errors.New(fmt.Sprintf("Error loading config file '%v': %v\n", configFile, err))
-	}
-	return RunHttpFromConfig(config)
 }
 
 func RunHttpFromConfig(config *Config) error {

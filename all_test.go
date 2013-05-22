@@ -8,27 +8,38 @@ import (
 	"time"
 )
 
-func setup1() *Central {
+// NOTE: Some of these tests stress concurrency, so you must run the rest with at least -test.cpu 2
+
+func setup1_joePermit() Permit {
+	p := Permit{}
+	r := [2]byte{1, 2}
+	p.Roles = r[:]
+	return p
+}
+
+func setup1(t *testing.T) *Central {
 	authenticator := NewDummyAuthenticator()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
 	central := NewCentral(authenticator, permitDB, sessionDB)
 
-	joePermit := &Permit{}
-	joePermit.Roles = append(joePermit.Roles, 1)
-	joePermit.Roles = append(joePermit.Roles, 2)
-	authenticator.SetPassword("joe", "123")
-	authenticator.SetPassword("iHaveNoPermit", "123")
-	permitDB.SetPermit("joe", joePermit)
+	joePermit := setup1_joePermit()
+	if e := authenticator.CreateIdentity("joe", "123"); e != nil {
+		t.Errorf("CreateIdentity failed: %v", e)
+	}
+	if e := authenticator.CreateIdentity("iHaveNoPermit", "123"); e != nil {
+		t.Errorf("CreateIdentity failed: %v", e)
+	}
+	permitDB.SetPermit("joe", &joePermit)
 
 	return central
 }
 
 func TestBasicAuth(t *testing.T) {
-	c := setup1()
+	c := setup1(t)
 
 	expect_username_password := func(username, password, expectErrorStart string) {
-		token, err := c.GetTokenForIdentityPassword(username, password)
+		token, err := c.newCachedSessionDB(username, password)
 		if (token == nil) != (err != nil) {
 			t.Errorf("%v:%v -> (Token == nil) != (err != nil)", username, password)
 		}
@@ -48,8 +59,11 @@ func TestBasicAuth(t *testing.T) {
 }
 
 func TestPermit(t *testing.T) {
-	c := setup1()
-	token, _ := c.GetTokenForIdentityPassword("joe", "123")
+	c := setup1(t)
+	token, e := c.GetTokenFromIdentityPassword("joe", "123")
+	if e != nil {
+		t.Errorf("Unexpected error in TestPermit: %v", e)
+	}
 	if !bytes.Equal(token.Permit.Roles, []byte{1, 2}) {
 		t.Errorf("joe Permit is wrong")
 	}
@@ -63,7 +77,7 @@ func BenchmarkScrypt256(b *testing.B) {
 
 // This test must be run with at least 2 processors "go test -test.cpu 2"
 func TestLoad(t *testing.T) {
-	c := setup1()
+	c := setup1(t)
 
 	doLogin := func(myid int, times int64, ch chan<- bool) {
 		sessionKeys := make([]string, times)
@@ -79,9 +93,9 @@ func TestLoad(t *testing.T) {
 			sessionKeys[iter] = key
 		}
 		for iter := int64(0); iter < times; iter++ {
-			token, err := c.GetTokenForSession(sessionKeys[iter])
+			token, err := c.GetTokenFromSession(sessionKeys[iter])
 			if token == nil || err != nil {
-				t.Errorf("GetTokenForSession failed")
+				t.Errorf("GetTokenFromSession failed")
 			}
 		}
 		ch <- true
@@ -102,8 +116,79 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// This verifies that long-lived security tokens are updated correctly when their permits change
+func TestPermitChange(t *testing.T) {
+	c := setup1(t)
+	perm1 := setup1_joePermit()
+	perm2 := &Permit{}
+	perm2_roles := [3]byte{5, 6, 7}
+	perm2.Roles = perm2_roles[:]
+	for nsessions := 1; nsessions < 100; nsessions *= 2 {
+		// restore password and permit
+		if e := c.SetPassword("joe", "123"); e != nil {
+			t.Fatalf("Password restore failed: %v (nsessions = %v)", e, nsessions)
+		}
+		if e := c.SetPermit("joe", &perm1); e != nil {
+			t.Fatalf("Permit restore failed: %v", e)
+		}
+
+		keys := make([]string, nsessions)
+		tokens := make([]*Token, nsessions)
+		for i := 0; i < nsessions; i++ {
+			keys[i], tokens[i], _ = c.Login("joe", "123")
+			if !bytes.Equal(tokens[i].Permit.Roles, perm1.Roles) {
+				t.Fatalf("Permits not equal %v %v\n", tokens[i].Permit.Roles, perm1.Roles)
+			}
+		}
+		// Set a new permit
+		c.SetPermit("joe", perm2)
+		for i := 0; i < nsessions; i++ {
+			token, e := c.GetTokenFromSession(keys[i])
+			if e != nil {
+				t.Fatalf("Permit from session not found after permit change: %v\n", e)
+			}
+			if !bytes.Equal(token.Permit.Roles, perm2.Roles) {
+				t.Fatalf("Permits not equal %v %v\n", token.Permit.Roles, perm2.Roles)
+			}
+		}
+		// Change a password. This invalidates all sessions.
+		c.SetPassword("joe", "456")
+		for i := 0; i < nsessions; i++ {
+			_, e := c.GetTokenFromSession(keys[i])
+			if e == nil {
+				t.Fatalf("Session not correctly invalidated after password change")
+			}
+		}
+	}
+}
+
+func TestSessionExpiry(t *testing.T) {
+	c := setup1(t)
+	c.NewSessionExpiresAfter = time.Millisecond * 500
+	key, _, _ := c.Login("joe", "123")
+	expire_time := time.Now().Add(c.NewSessionExpiresAfter)
+	t.Logf("Expect failure at %v", expire_time)
+	num_expire := 0
+	for num_expire < 5 {
+		expect_ok := time.Now().UnixNano() < expire_time.UnixNano()
+		token, err := c.GetTokenFromSession(key)
+		t.Logf("Expect: %v\n", expect_ok)
+		if (token != nil) != expect_ok {
+			t.Fatalf("Session timeout failed - unexpected token return value %v", token)
+		}
+		if (err == nil) != expect_ok {
+			t.Fatalf("Session timeout failed - unexpected error return value %v", err)
+		}
+		if err != nil {
+			num_expire += 1
+		}
+		// make sure this is relatively prime to our expiry time or you'll be subject to false-positive-inducing races
+		time.Sleep(time.Millisecond * 300)
+	}
+}
+
 func TestSessionCache(t *testing.T) {
-	c := setup1()
+	c := setup1(t)
 	login := func(username, password string) string {
 		sessionkey, token, error := c.Login(username, password)
 		if token == nil || error != nil {
@@ -130,7 +215,7 @@ func TestSessionCache(t *testing.T) {
 			c.debugEnableSessionDB(false)
 			expectList := sessionList[len(sessionList)-cacheSize/2+1:]
 			for j, ttok := range expectList {
-				if _, e := c.GetTokenForSession(ttok); e != nil {
+				if _, e := c.GetTokenFromSession(ttok); e != nil {
 					t.Errorf("Token should not have been evicted from cache %v:%v:%v", i, j, ttok)
 					break
 				}

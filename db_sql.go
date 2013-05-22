@@ -6,8 +6,10 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	_ "github.com/bmizerany/pq"
+	"strings"
 )
 
 /*
@@ -22,17 +24,10 @@ bytes[33:65] = scrypt-ed hash with parameters N=256 r=8 p=1
 Why use such a low parameter (N=256) for scrypt?
 This is a balance between server cost and password crackability.
 If you decide that you need to raise the N factor, then introduce a new
-version of the hash.
+version of the hash (the only version right now is version 1).
 
 scrypt(256) on a first generation Intel i7 (i920, circa 2009) takes
 approximately 1 millisecond to compute.
-
-The thinking here is not for user logins, but for API usage.
-There are certainly better ways of authenticating API requests (such as
-using a shared secret key and an HMAC, or simply caching a session token),
-however part of the IMQS drive is to make APIs that are easily accessible
-to third party developers.
-Using a simple username+password system is about as simple as it gets.
 
 */
 
@@ -91,6 +86,29 @@ func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
 	return nil
 }
 
+func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
+	hash, ehash := computeAuthausHash(password)
+	if ehash != nil {
+		return ehash
+	}
+	if tx, etx := x.db.Begin(); etx == nil {
+		if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, password) VALUES ($1, $2)`, identity, hash); ecreate == nil {
+			return tx.Commit()
+		} else {
+			//fmt.Printf("CreateIdentity failed because: %v", ecreate)
+			if strings.Index(ecreate.Error(), "already exists") != -1 {
+				ecreate = ErrIdentityExists
+			}
+			tx.Rollback()
+			return ecreate
+		}
+	} else {
+		return etx
+	}
+	// Unreachable. Remove in Go 1.1
+	return nil
+}
+
 func (x *sqlAuthenticationDB) Close() {
 	if x.db != nil {
 		x.db.Close()
@@ -129,15 +147,13 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 }
 
 func (x *sqlSessionDB) PermitChanged(identity string, permit *Permit) error {
-	if permit == nil {
-		_, err := x.db.Exec(`DELETE FROM authsession WHERE identity = $1`, identity)
-		return err
-	} else {
-		_, err := x.db.Exec(`UPDATE authsession SET permit = $1 WHERE identity = $2`, permit.Serialize(), identity)
-		return err
-	}
-	// Unreachable. Remove in Go 1.1
-	return nil
+	_, err := x.db.Exec(`UPDATE authsession SET permit = $1 WHERE identity = $2`, permit.Serialize(), identity)
+	return err
+}
+
+func (x *sqlSessionDB) InvalidateSessionsForIdentity(identity string) error {
+	_, err := x.db.Exec(`DELETE FROM authsession WHERE identity = $1`, identity)
+	return err
 }
 
 func (x *sqlSessionDB) Close() {
@@ -183,6 +199,13 @@ func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	}
 	// Unreachable. Remove in Go 1.1
 	return nil
+}
+
+func (x *sqlPermitDB) Close() {
+	if x.db != nil {
+		x.db.Close()
+		x.db = nil
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -240,56 +263,120 @@ func computeAuthausHash(password string) (string, error) {
 	return base64.StdEncoding.EncodeToString(cblock[:]), nil
 }
 
-func dbConnect(driver, host, dbname, username, password string, useSSL bool) (*sql.DB, error) {
-	sslmode := "disable"
-	if useSSL {
-		sslmode = "require"
-	}
-	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", host, username, password, dbname, sslmode)
-	return sql.Open(driver, conStr)
-}
-
-func NewAuthenticationDB_SQL(driver, host, dbname, username, password string, useSSL bool) (Authenticator, error) {
+func NewAuthenticationDB_SQL(conx *DBConnection) (Authenticator, error) {
 	db := new(sqlAuthenticationDB)
 	var err error
-	if db.db, err = dbConnect(driver, host, dbname, username, password, useSSL); err != nil {
+	if db.db, err = conx.Connect(); err != nil {
 		return nil, err
 	}
 	return db, nil
 }
 
-func NewSessionDB_SQL(driver, host, dbname, username, password string, useSSL bool) (SessionDB, error) {
+func NewSessionDB_SQL(conx *DBConnection) (SessionDB, error) {
 	db := new(sqlSessionDB)
 	var err error
-	if db.db, err = dbConnect(driver, host, dbname, username, password, useSSL); err != nil {
+	if db.db, err = conx.Connect(); err != nil {
 		return nil, err
 	}
 	return db, nil
 }
 
-func NewPermitDB_SQL(driver, host, dbname, username, password string, useSSL bool) (PermitDB, error) {
+func NewPermitDB_SQL(conx *DBConnection) (PermitDB, error) {
 	db := new(sqlPermitDB)
 	var err error
-	if db.db, err = dbConnect(driver, host, dbname, username, password, useSSL); err != nil {
+	if db.db, err = conx.Connect(); err != nil {
 		return nil, err
 	}
 	return db, nil
 }
 
-func SqlCreateSchema(driver, host, dbname, username, password string, useSSL bool) error {
-	if db, err := dbConnect(driver, host, dbname, username, password, useSSL); err != nil {
-		return err
+// schema_name must be a lower case SQL table name that needs no escaping
+// Returns (0,nil) if this is the first time we have seen this database
+func readSchemaVersion(tx *sql.Tx, schema_name string) (int, error) {
+	tableName := schema_name + "_version"
+	if _, err := tx.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %v (version INTEGER)", tableName)); err != nil {
+		return 0, err
+	}
+	query := tx.QueryRow(fmt.Sprintf("SELECT version FROM %v", tableName))
+	var version int = 0
+	if err := query.Scan(&version); err != nil {
+		if err == sql.ErrNoRows {
+			if _, err := tx.Exec(fmt.Sprintf("INSERT INTO %v (version) VALUES (0)", tableName)); err != nil {
+				return 0, err
+			}
+			return version, nil
+		}
+		return 0, err
+
 	} else {
-		_, e2 := db.Exec(`
-			CREATE TABLE authsession (id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
-			CREATE TABLE authuser    (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
-			CREATE UNIQUE INDEX idx_authsession_token    ON authsession (sessionkey);
-			CREATE        INDEX idx_authsession_identity ON authsession (identity);
-			CREATE        INDEX idx_authsession_expires  ON authsession (expires);
-			CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);
-			`)
-		return e2
+		return version, nil
+	}
+	// unreachable
+	return 0, nil
+}
+
+func MigrateSchema(conx *DBConnection, schema_name string, migrations []string) (migrateError error) {
+	if db, eConnect := conx.Connect(); eConnect != nil {
+		return eConnect
+	} else {
+		defer db.Close()
+
+		if tx, eTxBegin := db.Begin(); eTxBegin == nil {
+			defer func() {
+				if err := recover(); err == nil {
+					migrateError = tx.Commit()
+				} else {
+					tx.Rollback()
+					migrateError = err.(error)
+				}
+			}()
+
+			version, eGetVersion := readSchemaVersion(tx, schema_name)
+			if eGetVersion != nil {
+				panic(eGetVersion)
+			}
+
+			if version > len(migrations) {
+				panic(errors.New(fmt.Sprintf("%v database is newer than this program (%v)", schema_name, version)))
+			}
+
+			for ; version < len(migrations); version += 1 {
+				fmt.Printf("Migrating %v to version %v\n", schema_name, version+1)
+				if _, err := tx.Exec(migrations[version]); err != nil {
+					panic(err)
+				}
+				if _, err := tx.Exec(fmt.Sprintf("UPDATE %v_version SET version = %v", schema_name, version+1)); err != nil {
+					panic(err)
+				}
+			}
+		} else {
+			return eTxBegin
+		}
 	}
 	// unreachable. remove in Go 1.1
 	return nil
+}
+
+// Create a Postgres DB schema necessary for a Session database
+func SqlCreateSchema_Session(conx *DBConnection) error {
+	versions := make([]string, 0)
+	versions = append(versions, `
+	CREATE TABLE authsession (id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
+	CREATE UNIQUE INDEX idx_authsession_token    ON authsession (sessionkey);
+	CREATE        INDEX idx_authsession_identity ON authsession (identity);
+	CREATE        INDEX idx_authsession_expires  ON authsession (expires);`)
+
+	return MigrateSchema(conx, "authsession", versions)
+}
+
+// Create a Postgres DB schema suitable for storage of Permits and Authentication
+// Note that we COULD separate Permit and Authenticator, but I'm not sure that provides any value.
+// It would be trivial to do so if that need ever arises.
+func SqlCreateSchema_User(conx *DBConnection) error {
+	versions := make([]string, 0)
+	versions = append(versions, `
+	CREATE TABLE authuser (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
+	CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);`)
+
+	return MigrateSchema(conx, "authuser", versions)
 }

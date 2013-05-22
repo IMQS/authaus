@@ -16,32 +16,35 @@ var (
 	veryFarFuture = time.Date(3000, 1, 1, 1, 1, 1, 1, time.UTC)
 )
 
-// The only job of an authenticator is to validate an identity/password
+// The primary job of an authenticator is to validate an identity/password.
+// It can also be responsible for creating a new account.
 type Authenticator interface {
-	Authenticate(identity, password string) error // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
-	SetPassword(identity, password string) error  // This should create the identity if it does not exist
-	Close()                                       // Typically used to close a database handle
+	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
+	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
+	CreateIdentity(identity, password string) error // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
+	Close()                                         // Typically used to close a database handle
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
 type PermitDB interface {
 	GetPermit(identity string) (*Permit, error)
-	// This should create the permit if it does not exist. A call to this function should be followed
+	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
 	SetPermit(identity string, permit *Permit) error
+	Close() // Typically used to close a database handle
 }
 
 // A Session database is essentially a key/value store where the keys are
-// session tokens, and the values are Permits
+// session tokens, and the values are tuples of (Identity,Permit)
 type SessionDB interface {
 	Write(sessionkey string, token *Token) error
 	// Returns the expiry time of the permit
 	Read(sessionkey string) (*Token, error)
-	// This is called after a permit has been changed. The Session DB must alter all existing tokens
-	// that belong to this Identity.
-	// If permit is not nil, then assign the new permit to all of the sessions belonging to permit.Identity
-	// If permit is nil, then erase all sessions belonging to that identity
+	// Assign the new permit to all of the sessions belonging to 'identity'
 	PermitChanged(identity string, permit *Permit) error
+	// Delete all sessions belonging to the given identity.
+	// This is called after a password has been changed.
+	InvalidateSessionsForIdentity(identity string) error
 	Close() // Typically used to close a database handle
 }
 
@@ -61,8 +64,8 @@ func NewDummyAuthenticator() *dummyAuthenticator {
 
 func (x *dummyAuthenticator) Authenticate(identity, password string) error {
 	x.passwordsLock.RLock()
+	defer x.passwordsLock.RUnlock()
 	truth, exists := x.passwords[identity]
-	x.passwordsLock.RUnlock()
 	if !exists {
 		return ErrIdentityAuthNotFound
 	} else if truth == password {
@@ -76,8 +79,25 @@ func (x *dummyAuthenticator) Authenticate(identity, password string) error {
 
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
 	x.passwordsLock.Lock()
-	x.passwords[identity] = password
-	x.passwordsLock.Unlock()
+	defer x.passwordsLock.Unlock()
+	if _, exists := x.passwords[identity]; exists {
+		x.passwords[identity] = password
+	} else {
+		return ErrIdentityAuthNotFound
+	}
+	return nil
+}
+
+func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
+	x.passwordsLock.Lock()
+	defer x.passwordsLock.Unlock()
+	if _, exists := x.passwords[identity]; !exists {
+		x.passwords[identity] = password
+		return nil
+	} else {
+		return ErrIdentityExists
+	}
+	// unreachable
 	return nil
 }
 
@@ -115,12 +135,64 @@ func (x *sanitizingAuthenticator) SetPassword(identity, password string) error {
 	return x.backend.SetPassword(identity, password)
 }
 
+func (x *sanitizingAuthenticator) CreateIdentity(identity, password string) error {
+	identity, password = cleanIdentityPassword(identity, password)
+	if len(identity) == 0 {
+		return ErrIdentityEmpty
+	}
+	if len(password) == 0 {
+		return ErrInvalidPassword
+	}
+	return x.backend.CreateIdentity(identity, password)
+}
+
 func (x *sanitizingAuthenticator) Close() {
 	if x.backend != nil {
 		x.backend.Close()
 		x.backend = nil
 	}
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Chained ? BAD IDEA. This introduces too much ambiguity into the system.
+/*
+// Chain of authenticators. Each one is tried in order.
+// If you have a high latency Authenticator, then you should place that last in the chain
+type ChainedAuthenticator struct {
+	chain []Authenticator
+}
+
+func (x *ChainedAuthenticator) Authenticate(identity, password string) error {
+	for _, a := range x.chain {
+		if err := a.Authenticate(identity, password); err == nil {
+			return nil
+		} else if err.Error().Index(ErrInvalidPassword) == 0 {
+			return ErrInvalidPassword
+		}
+	}
+	return ErrIdentityAuthNotFound
+}
+
+func (x *ChainedAuthenticator) SetPassword(identity, password string) error {
+	firstError := ErrIdentityAuthNotFound
+	for _, a := range x.chain {
+		if err := a.SetPassword(identity, password); err == nil {
+			return nil
+		} else if firstError == nil {
+			firstError = err
+		}
+	}
+	return firstError
+}
+
+func (x *ChainedAuthenticator) Close() {
+	for _, a := range x.chain {
+		a.Close()
+	}
+	x.chain = make([]Authenticator, 0)
+}
+*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -155,26 +227,34 @@ func (x *dummySessionDB) Read(sessionkey string) (*Token, error) {
 
 func (x *dummySessionDB) PermitChanged(identity string, permit *Permit) error {
 	x.sessionsLock.Lock()
-	// Find tokens belonging to this identity
-	tokens := []string{}
-	for tok, p := range x.sessions {
-		if p.Identity == identity {
-			tokens = append(tokens, tok)
-		}
+	for _, ses := range x.sessionKeysForIdentity(identity) {
+		x.sessions[ses].Permit = *permit
 	}
-	// Reset all those tokens
-	for _, tok := range tokens {
-		if permit != nil {
-			x.sessions[tok].Permit = *permit
-		} else {
-			delete(x.sessions, tok)
-		}
+	x.sessionsLock.Unlock()
+	return nil
+}
+
+func (x *dummySessionDB) InvalidateSessionsForIdentity(identity string) error {
+	x.sessionsLock.Lock()
+	for _, ses := range x.sessionKeysForIdentity(identity) {
+		delete(x.sessions, ses)
 	}
 	x.sessionsLock.Unlock()
 	return nil
 }
 
 func (x *dummySessionDB) Close() {
+}
+
+// Assume that sessionLock.READ is held
+func (x *dummySessionDB) sessionKeysForIdentity(identity string) []string {
+	sessions := []string{}
+	for ses, p := range x.sessions {
+		if p.Identity == identity {
+			sessions = append(sessions, ses)
+		}
+	}
+	return sessions
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -285,21 +365,20 @@ func (x *cachedSessionDB) Read(sessionkey string) (*Token, error) {
 
 func (x *cachedSessionDB) PermitChanged(identity string, permit *Permit) error {
 	x.cachedSessionsLock.Lock()
-	tokens := []string{}
-	for tok, cached := range x.cachedSessions {
-		if cached.token.Identity == identity {
-			tokens = append(tokens, tok)
-		}
-	}
-	for _, tok := range tokens {
-		if permit != nil {
-			x.cachedSessions[tok].token.Permit = *permit
-		} else {
-			delete(x.cachedSessions, tok)
-		}
+	for _, ses := range x.sessionKeysForIdentity(identity) {
+		x.cachedSessions[ses].token.Permit = *permit
 	}
 	x.cachedSessionsLock.Unlock()
 	return x.db.PermitChanged(identity, permit)
+}
+
+func (x *cachedSessionDB) InvalidateSessionsForIdentity(identity string) error {
+	x.cachedSessionsLock.Lock()
+	for _, ses := range x.sessionKeysForIdentity(identity) {
+		delete(x.cachedSessions, ses)
+	}
+	x.cachedSessionsLock.Unlock()
+	return x.db.InvalidateSessionsForIdentity(identity)
 }
 
 func (x *cachedSessionDB) Close() {
@@ -307,6 +386,17 @@ func (x *cachedSessionDB) Close() {
 		x.db.Close()
 		x.db = nil
 	}
+}
+
+// Assume that cachedSessionsLock.READ is held
+func (x *cachedSessionDB) sessionKeysForIdentity(identity string) []string {
+	sessions := []string{}
+	for ses, cached := range x.cachedSessions {
+		if cached.token.Identity == identity {
+			sessions = append(sessions, ses)
+		}
+	}
+	return sessions
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -340,4 +430,7 @@ func (x *dummyPermitDB) SetPermit(identity string, permit *Permit) error {
 	x.permits[identity] = permit
 	x.permitsLock.Unlock()
 	return nil
+}
+
+func (x *dummyPermitDB) Close() {
 }

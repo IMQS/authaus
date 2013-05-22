@@ -2,7 +2,8 @@ package authaus
 
 import (
 	"fmt"
-	"github.com/mmitton/ldap"
+	//"github.com/mmitton/ldap"
+	"github.com/mavricknz/ldap"
 )
 
 type LdapConnectionMode int
@@ -14,7 +15,8 @@ const (
 )
 
 type ldapAuthenticator struct {
-	con *ldap.Conn
+	//con *ldap.Conn
+	con *ldap.LDAPConnection
 }
 
 func (x *ldapAuthenticator) Authenticate(identity, password string) error {
@@ -34,6 +36,10 @@ func (x *ldapAuthenticator) SetPassword(identity, password string) error {
 	return ErrUnsupported
 }
 
+func (x *ldapAuthenticator) CreateIdentity(identity, password string) error {
+	return ErrUnsupported
+}
+
 func (x *ldapAuthenticator) Close() {
 	if x.con != nil {
 		x.con.Close()
@@ -41,23 +47,25 @@ func (x *ldapAuthenticator) Close() {
 	}
 }
 
-func NewAuthenticator_LDAP(mode LdapConnectionMode, network, addr string) (Authenticator, error) {
-	var err error
-	auth := &ldapAuthenticator{}
+func NewAuthenticator_LDAP(mode LdapConnectionMode, host string, port uint16) (Authenticator, error) {
+	//var err error
+	con := ldap.NewLDAPConnection(host, port)
 	switch mode {
 	case LdapConnectionModePlainText:
-		auth.con, err = ldap.Dial(network, addr)
-		break
+		//auth.con, err = ldap.Dial(network, addr)
 	case LdapConnectionModeSSL:
-		auth.con, err = ldap.DialSSL(network, addr)
-		break
+		con.IsSSL = true
+		//auth.con, err = ldap.DialSSL(network, addr)
 	case LdapConnectionModeTLS:
-		auth.con, err = ldap.DialTLS(network, addr)
-		break
+		con.IsTLS = true
+		//auth.con, err = ldap.DialTLS(network, addr)
 	}
-	if err != nil {
+	if err := con.Connect(); err != nil {
 		fmt.Printf("LDAP new. error = '%v'\n", err)
+		con.Close()
 		return nil, NewError(ErrConnect, err.Error())
 	}
+	auth := &ldapAuthenticator{}
+	auth.con = con
 	return auth, nil
 }
