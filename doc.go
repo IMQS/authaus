@@ -43,8 +43,8 @@ Concepts
 A Permit is a set of roles that has been granted to a user. Authaus knows nothing about
 the contents of a permit. It simply treats it as a binary blob, and when writing it to
 an SQL database, encodes it as base64. The interpretation of the permit is application
-dependent. Typically, a Permit will hold information such as "Allowed to verify new assets",
-or "Allowed to view billing information".
+dependent. Typically, a Permit will hold information such as "Allowed to view billing information",
+or "Allowed to paint your bathroom yellow".
 
 A Token is the result of a successful authentication. It stores the identity of a user,
 an expiry date, and a Permit. A token will usually be retrieved by a session key.
