@@ -98,17 +98,22 @@ type Central struct {
 	authenticator          Authenticator
 	permitDB               PermitDB
 	sessionDB              SessionDB
+	roleGroupDB            RoleGroupDB
 	NewSessionExpiresAfter time.Duration
 }
 
 // Create a new Central object from the specified pieces
-func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB) *Central {
+// roleGroupDB may be nil
+func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
 	c.authenticator = &sanitizingAuthenticator{
 		backend: authenticator,
 	}
 	c.permitDB = permitDB
 	c.sessionDB = newCachedSessionDB(sessionDB)
+	if roleGroupDB != nil {
+		c.roleGroupDB = NewCachedRoleGroupDB(roleGroupDB)
+	}
 	c.NewSessionExpiresAfter = 30 * 24 * time.Hour
 	return c
 }
@@ -134,7 +139,17 @@ func NewCentralFromConfig(config *Config) (*Central, error) {
 		return nil, errors.New(fmt.Sprintf("Error connecting to SessionDB: %v", err))
 	}
 
-	return NewCentral(auth, permitDB, sessionDB), nil
+	var roleGroupDB RoleGroupDB
+	if config.RoleGroupDB.DB.Driver != "" {
+		if roleGroupDB, err = NewRoleGroupDB_SQL(&config.RoleGroupDB.DB); err != nil {
+			auth.Close()
+			permitDB.Close()
+			sessionDB.Close()
+			return nil, errors.New(fmt.Sprintf("Error connecting to RoleGroupDB: %v", err))
+		}
+	}
+
+	return NewCentral(auth, permitDB, sessionDB, roleGroupDB), nil
 }
 
 func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
@@ -168,24 +183,6 @@ func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
 	// unreachable
 	return nil, nil
 }
-
-/*
-func createAuthenticatorChain(config *Config) (*Authenticator, error) {
-	chain := &ChainedAuthenticator{}
-	for _, def := range config.AuthenticatorChain {
-		if element, err := createAuthenticator(def); err != nil {
-			chain.Close()
-			return nil, err
-		} else {
-			chain.chain = append(chain.chain, element)
-		}
-	}
-	if len(chain.chain) == 0 {
-		return nil, ErrAuthChainEmpty
-	}
-	return chain, nil
-}
-*/
 
 // Set the size of the in-memory session cache
 func (x *Central) SetSessionCacheSize(maxSessions int) {
@@ -272,6 +269,11 @@ func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
 	return x.authenticator.CreateIdentity(identity, password)
 }
 
+// Retrieve the Role Group Database (which may be nil)
+func (x *Central) GetRoleGroupDB() RoleGroupDB {
+	return x.roleGroupDB
+}
+
 func (x *Central) Close() {
 	if x.authenticator != nil {
 		x.authenticator.Close()
@@ -284,6 +286,10 @@ func (x *Central) Close() {
 	if x.sessionDB != nil {
 		x.sessionDB.Close()
 		x.sessionDB = nil
+	}
+	if x.roleGroupDB != nil {
+		x.roleGroupDB.Close()
+		x.roleGroupDB = nil
 	}
 }
 

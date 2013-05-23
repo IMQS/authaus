@@ -45,6 +45,16 @@ Full populated config:
 			"Password":		"123",
 			"SSL":			true
 		}
+	},
+	"RoleGroupDB": {
+		"DB": {
+			"Driver":		"postgres",
+			"Host":			"auth.example.com",
+			"Database": 	"auth",
+			"User":			"jim",
+			"Password":		"123",
+			"SSL":			true
+		}
 	}
 }
 
@@ -89,6 +99,9 @@ type ConfigPermitDB struct {
 type ConfigSessionDB struct {
 	DB DBConnection
 }
+type ConfigRoleGroupDB struct {
+	DB DBConnection
+}
 
 type ConfigAuthenticator struct {
 	Type       string // "ldap", "db"
@@ -102,11 +115,11 @@ type ConfigAuthenticator struct {
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
-	HTTP               ConfigHTTP
-	PermitDB           ConfigPermitDB
-	SessionDB          ConfigSessionDB
-	Authenticator      ConfigAuthenticator
-	AuthenticatorChain []ConfigAuthenticator
+	HTTP          ConfigHTTP
+	PermitDB      ConfigPermitDB
+	SessionDB     ConfigSessionDB
+	RoleGroupDB   ConfigRoleGroupDB
+	Authenticator ConfigAuthenticator
 }
 
 func (x *Config) Reset() {

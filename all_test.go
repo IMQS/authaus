@@ -21,7 +21,7 @@ func setup1(t *testing.T) *Central {
 	authenticator := NewDummyAuthenticator()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
-	central := NewCentral(authenticator, permitDB, sessionDB)
+	central := NewCentral(authenticator, permitDB, sessionDB, nil)
 
 	joePermit := setup1_joePermit()
 	if e := authenticator.CreateIdentity("joe", "123"); e != nil {
@@ -39,7 +39,7 @@ func TestBasicAuth(t *testing.T) {
 	c := setup1(t)
 
 	expect_username_password := func(username, password, expectErrorStart string) {
-		token, err := c.newCachedSessionDB(username, password)
+		token, err := c.GetTokenFromIdentityPassword(username, password)
 		if (token == nil) != (err != nil) {
 			t.Errorf("%v:%v -> (Token == nil) != (err != nil)", username, password)
 		}
