@@ -254,7 +254,7 @@ func (x *sqlGroupDB) Close() {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /* Role Group cache
-This cached all role groups from the backend database. We assume that this database will never be
+This caches all role groups from the backend database. We assume that this database will never be
 particularly large, so we simply allow our cache to grow indefinitely.
 All public functions are thread-safe.
 */
