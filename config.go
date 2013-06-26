@@ -7,6 +7,7 @@ import (
 	_ "github.com/lib/pq"
 	"io/ioutil"
 	"os"
+	"strconv"
 )
 
 /*
@@ -14,6 +15,9 @@ import (
 Full populated config:
 
 {
+	"Log": {
+		"Filename":		"/var/log/authaus/authaus.log"
+	},
 	"HTTP": {
 		"CookieName":	"session",
 		"CookieSecure":	true,
@@ -74,6 +78,7 @@ type DBConnection struct {
 	User     string
 	Password string
 	SSL      bool
+	// If you add more fields, remember to change Equals() as well as signature()
 }
 
 func (x *DBConnection) Connect() (*sql.DB, error) {
@@ -85,11 +90,34 @@ func (x *DBConnection) Connect() (*sql.DB, error) {
 	return sql.Open(x.Driver, conStr)
 }
 
+func (x *DBConnection) Equals(y *DBConnection) bool {
+	return x.Driver == y.Driver &&
+		x.Host == y.Host &&
+		x.Database == y.Database &&
+		x.User == y.User &&
+		x.Password == y.Password &&
+		x.SSL == y.SSL
+}
+
+// Return a concatenation of all struct fields
+func (x *DBConnection) signature() string {
+	return x.Driver + " " +
+		x.Host + " " +
+		x.Database + " " +
+		x.User + " " +
+		x.Password + " " +
+		strconv.FormatBool(x.SSL)
+}
+
 type ConfigHTTP struct {
 	CookieName   string
 	CookieSecure bool
 	Port         int
 	Bind         string
+}
+
+type ConfigLog struct {
+	Filename string
 }
 
 type ConfigPermitDB struct {
@@ -115,6 +143,7 @@ type ConfigAuthenticator struct {
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
+	Log           ConfigLog
 	HTTP          ConfigHTTP
 	PermitDB      ConfigPermitDB
 	SessionDB     ConfigSessionDB

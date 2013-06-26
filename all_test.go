@@ -3,12 +3,14 @@ package authaus
 import (
 	"bytes"
 	"code.google.com/p/go.crypto/scrypt"
+	"io/ioutil"
+	"log"
 	"strings"
 	"testing"
 	"time"
 )
 
-// NOTE: Some of these tests stress concurrency, so you must run the rest with at least -test.cpu 2
+// NOTE: Some of these tests stress concurrency, so you must run them with at least -test.cpu 2
 
 func setup1_joePermit() Permit {
 	p := Permit{}
@@ -21,7 +23,8 @@ func setup1(t *testing.T) *Central {
 	authenticator := NewDummyAuthenticator()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
-	central := NewCentral(authenticator, permitDB, sessionDB, nil)
+	logger := log.New(ioutil.Discard, "", log.LstdFlags)
+	central := NewCentral(logger, authenticator, permitDB, sessionDB, nil)
 
 	joePermit := setup1_joePermit()
 	if e := authenticator.CreateIdentity("joe", "123"); e != nil {

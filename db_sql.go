@@ -315,7 +315,40 @@ func readSchemaVersion(tx *sql.Tx, schema_name string) (int, error) {
 	return 0, nil
 }
 
-func MigrateSchema(conx *DBConnection, schema_name string, migrations []string) (migrateError error) {
+func SqlCreateDatabase(conx *DBConnection) error {
+	// Check first if the database already exists
+	if db, eConnect := conx.Connect(); eConnect == nil {
+		// The postgres driver will not return an error until we attempt to start a transaction
+		if tx, eTxBegin := db.Begin(); eTxBegin == nil {
+			tx.Rollback()
+			db.Close()
+			return nil
+		} else {
+			// database does not exist, go ahead and try to create it
+			db.Close()
+		}
+	} else {
+		return eConnect
+	}
+	// Connect via the 'postgres' database
+	copy := *conx
+	copy.Database = "postgres"
+	if db, e := copy.Connect(); e == nil {
+		defer db.Close()
+		_, eExec := db.Exec("CREATE DATABASE \"" + conx.Database + "\"")
+		return eExec
+	} else {
+		return e
+	}
+	// unreachable
+	return nil
+}
+
+func MigrateSchema(conx *DBConnection, schema_name string, migrations []string) error {
+	return migrateSchemaInternal(true, conx, schema_name, migrations)
+}
+
+func migrateSchemaInternal(tryCreatingDB bool, conx *DBConnection, schema_name string, migrations []string) (migrateError error) {
 	if db, eConnect := conx.Connect(); eConnect != nil {
 		return eConnect
 	} else {
@@ -350,7 +383,16 @@ func MigrateSchema(conx *DBConnection, schema_name string, migrations []string) 
 				}
 			}
 		} else {
-			return eTxBegin
+			// Match the string 'database "foo" does not exist' to detect when the database needs to be created
+			if tryCreatingDB && strings.Index(eTxBegin.Error(), "does not exist") != -1 {
+				if eCreateDB := SqlCreateDatabase(conx); eCreateDB != nil {
+					return eCreateDB
+				} else {
+					return migrateSchemaInternal(false, conx, schema_name, migrations)
+				}
+			} else {
+				return eTxBegin
+			}
 		}
 	}
 	// unreachable. remove in Go 1.1

@@ -5,16 +5,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	//"strconv"
+	"io"
+	"log"
+	"os"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	/* Number of characters from the set [a-zA-Z0-9]. 62^40 = 5 x 10^71, which is 238 bits of entropy.
-	Divide that by 2 and we have effective security of 119 bits. This is acceptable, especially
-	for a token that cannot be validated without talking to the server.
+	/* Number of characters from the set [a-zA-Z0-9] = 62. 62^30 = 6 x 10^53, which is 178 bits of entropy.
+	Assume there will be 1 million valid tokens. That removes 20 bits of entropy, leaving 158 bits.
+	Divide 158 by 2 and we have a security level of 79 bits. If an attacker can try 100000 tokens per
+	second, then it would take 2 * 10^11 years to find a random good token.
 	*/
-	SessionTokenLength = 40
+	SessionTokenLength = 30
 )
 
 var (
@@ -90,6 +94,45 @@ func generateSessionKey() string {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+type CentralStats struct {
+	InvalidSessionKeys uint64
+	ExpiredSessionKeys uint64
+	InvalidPasswords   uint64
+	GoodOnceOffAuth    uint64
+	GoodLogin          uint64
+}
+
+func isPowerOf2(x uint64) bool {
+	return 0 == x&(x-1)
+}
+
+func (x *CentralStats) IncrementAndLog(name string, val *uint64, logger *log.Logger) {
+	n := atomic.AddUint64(&x.InvalidSessionKeys, 1)
+	if isPowerOf2(n) {
+		logger.Printf("%v %v", n, name)
+	}
+}
+
+func (x *CentralStats) IncrementInvalidSessionKey(logger *log.Logger) {
+	x.IncrementAndLog("invalid session keys", &x.InvalidSessionKeys, logger)
+}
+
+func (x *CentralStats) IncrementExpiredSessionKey(logger *log.Logger) {
+	x.IncrementAndLog("expired session keys", &x.ExpiredSessionKeys, logger)
+}
+
+func (x *CentralStats) IncrementInvalidPasswords(logger *log.Logger) {
+	x.IncrementAndLog("invalid passwords", &x.InvalidPasswords, logger)
+}
+
+func (x *CentralStats) IncrementGoodOnceOffAuth(logger *log.Logger) {
+	x.IncrementAndLog("good once-off auth", &x.GoodOnceOffAuth, logger)
+}
+
+func (x *CentralStats) IncrementGoodLogin(logger *log.Logger) {
+	x.IncrementAndLog("good login", &x.GoodLogin, logger)
+}
+
 /*
 For lack of a better name, this is the single hub of authentication that you interact with.
 All public methods of Central are callable from multiple threads.
@@ -99,12 +142,14 @@ type Central struct {
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
+	Log                    *log.Logger
+	Stats                  CentralStats
 	NewSessionExpiresAfter time.Duration
 }
 
 // Create a new Central object from the specified pieces
 // roleGroupDB may be nil
-func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
+func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
 	c.authenticator = &sanitizingAuthenticator{
 		backend: authenticator,
@@ -115,41 +160,59 @@ func NewCentral(authenticator Authenticator, permitDB PermitDB, sessionDB Sessio
 		c.roleGroupDB = NewCachedRoleGroupDB(roleGroupDB)
 	}
 	c.NewSessionExpiresAfter = 30 * 24 * time.Hour
+	c.Log = logger
+	c.Log.Printf("Authaus successfully started up\n")
 	return c
 }
 
 // Create a new 'Central' object from a Config.
-func NewCentralFromConfig(config *Config) (*Central, error) {
-	var err error
+func NewCentralFromConfig(config *Config) (central *Central, err error) {
+	var logfile io.Writer
+	if config.Log.Filename != "" {
+		if logfile, err = os.OpenFile(config.Log.Filename, os.O_APPEND|os.O_CREATE, 0660); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error opening log file '%v': %v", config.Log.Filename, err))
+		}
+	} else {
+		logfile = os.Stdout
+	}
+
+	logger := log.New(logfile, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+
 	var auth Authenticator
-	if auth, err = createAuthenticator(&config.Authenticator); err != nil {
-		return nil, err
-	}
-
 	var permitDB PermitDB
-	if permitDB, err = NewPermitDB_SQL(&config.PermitDB.DB); err != nil {
-		auth.Close()
-		return nil, errors.New(fmt.Sprintf("Error connecting to PermitDB: %v", err))
-	}
-
 	var sessionDB SessionDB
-	if sessionDB, err = NewSessionDB_SQL(&config.SessionDB.DB); err != nil {
-		auth.Close()
-		permitDB.Close()
-		return nil, errors.New(fmt.Sprintf("Error connecting to SessionDB: %v", err))
-	}
-
 	var roleGroupDB RoleGroupDB
-	if config.RoleGroupDB.DB.Driver != "" {
-		if roleGroupDB, err = NewRoleGroupDB_SQL(&config.RoleGroupDB.DB); err != nil {
+
+	defer func() {
+		if ePanic := recover(); ePanic != nil {
 			auth.Close()
 			permitDB.Close()
 			sessionDB.Close()
-			return nil, errors.New(fmt.Sprintf("Error connecting to RoleGroupDB: %v", err))
+			roleGroupDB.Close()
+			logger.Printf("Error initializing: %v\n", ePanic)
+			err = ePanic.(error)
+		}
+	}()
+
+	if auth, err = createAuthenticator(&config.Authenticator); err != nil {
+		panic(err)
+	}
+
+	if permitDB, err = NewPermitDB_SQL(&config.PermitDB.DB); err != nil {
+		panic(errors.New(fmt.Sprintf("Error connecting to PermitDB: %v", err)))
+	}
+
+	if sessionDB, err = NewSessionDB_SQL(&config.SessionDB.DB); err != nil {
+		panic(errors.New(fmt.Sprintf("Error connecting to SessionDB: %v", err)))
+	}
+
+	if config.RoleGroupDB.DB.Driver != "" {
+		if roleGroupDB, err = NewRoleGroupDB_SQL(&config.RoleGroupDB.DB); err != nil {
+			panic(errors.New(fmt.Sprintf("Error connecting to RoleGroupDB: %v", err)))
 		}
 	}
 
-	return NewCentral(auth, permitDB, sessionDB, roleGroupDB), nil
+	return NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB), nil
 }
 
 func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
@@ -193,10 +256,12 @@ func (x *Central) SetSessionCacheSize(maxSessions int) {
 // A session key is typically a cookie.
 func (x *Central) GetTokenFromSession(sessionkey string) (*Token, error) {
 	if token, err := x.sessionDB.Read(sessionkey); err != nil {
+		x.Stats.IncrementInvalidSessionKey(x.Log)
 		return token, err
 	} else {
 		if time.Now().UnixNano() > token.Expires.UnixNano() {
 			// DB has not yet expired token. It's OK for the DB to be a bit lazy in its cleanup.
+			x.Stats.IncrementExpiredSessionKey(x.Log)
 			return nil, ErrInvalidSessionToken
 		} else {
 			return token, err
@@ -214,11 +279,16 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 			t.Expires = veryFarFuture
 			t.Identity = identity
 			t.Permit = *permit
+			x.Stats.IncrementGoodOnceOffAuth(x.Log)
+			x.Log.Printf("Once-off auth successful (%v)", identity)
 			return t, nil
 		} else {
+			x.Log.Printf("Once-off auth GetPermit failed (%v) (%v)", identity, ePermit)
 			return nil, ePermit
 		}
 	} else {
+		x.Stats.IncrementInvalidPasswords(x.Log)
+		x.Log.Printf("Once-off auth Authentication failed (%v) (%v)", identity, eAuth)
 		return nil, eAuth
 	}
 	// unreachable (remove in Go 1.1)
@@ -232,15 +302,23 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	token = &Token{}
 	token.Identity = identity
 	if e = x.authenticator.Authenticate(identity, password); e == nil {
+		x.Log.Printf("Login authentication success (%v)", identity)
 		var permit *Permit
 		if permit, e = x.permitDB.GetPermit(identity); e == nil {
 			token.Expires = time.Now().Add(x.NewSessionExpiresAfter)
 			token.Permit = *permit
 			sessionkey = generateSessionKey()
 			if e = x.sessionDB.Write(sessionkey, token); e == nil {
+				x.Stats.IncrementGoodLogin(x.Log)
+				x.Log.Printf("Login successful (%v)", identity)
 				return
 			}
+		} else {
+			x.Log.Printf("Login GetPermit failed (%v) (%v)", identity, e)
 		}
+	} else {
+		x.Stats.IncrementInvalidPasswords(x.Log)
+		x.Log.Printf("Login Authentication failed (%v) (%v)", identity, e)
 	}
 	sessionkey = ""
 	token = nil
@@ -250,23 +328,33 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 // Change a Permit.
 func (x *Central) SetPermit(identity string, permit *Permit) error {
 	if err := x.permitDB.SetPermit(identity, permit); err != nil {
+		x.Log.Printf("SetPermit failed (%v) (%v)", identity, err)
 		return err
 	}
+	x.Log.Printf("SetPermit successful (%v)", identity)
 	return x.sessionDB.PermitChanged(identity, permit)
 }
 
 // Change a Password. This invalidates all sessions for this identity.
 func (x *Central) SetPassword(identity, password string) error {
 	if err := x.authenticator.SetPassword(identity, password); err != nil {
+		x.Log.Printf("SetPassword failed (%v) (%v)", identity, password)
 		return err
 	}
+	x.Log.Printf("SetPassword successful (%v)", identity)
 	return x.sessionDB.InvalidateSessionsForIdentity(identity)
 }
 
 // Create an identity in the Authenticator.
 // For the equivalent operation in the PermitDB, simply call SetPermit()
 func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
-	return x.authenticator.CreateIdentity(identity, password)
+	e := x.authenticator.CreateIdentity(identity, password)
+	if e == nil {
+		x.Log.Printf("CreateAuthenticatorIdentity successful (%v)", identity)
+	} else {
+		x.Log.Printf("CreateAuthenticatorIdentity failed (%v) (%v)", identity, e)
+	}
+	return e
 }
 
 // Retrieve the Role Group Database (which may be nil)
