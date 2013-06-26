@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/bmizerany/pq"
+	_ "github.com/lib/pq"
 	"io/ioutil"
 	"os"
 )

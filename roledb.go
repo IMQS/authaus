@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	_ "github.com/bmizerany/pq"
+	_ "github.com/lib/pq"
 	"sync"
 )
 
