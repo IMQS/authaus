@@ -142,6 +142,7 @@ type Central struct {
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
+	logFile                *os.File
 	Log                    *log.Logger
 	Stats                  CentralStats
 	NewSessionExpiresAfter time.Duration
@@ -167,16 +168,18 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 
 // Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (central *Central, err error) {
-	var logfile io.Writer
+	var logfile *os.File
+	var logwriter io.Writer
 	if config.Log.Filename != "" {
 		if logfile, err = os.OpenFile(config.Log.Filename, os.O_APPEND|os.O_CREATE, 0660); err != nil {
 			return nil, errors.New(fmt.Sprintf("Error opening log file '%v': %v", config.Log.Filename, err))
 		}
+		logwriter = logfile
 	} else {
 		logfile = os.Stdout
 	}
 
-	logger := log.New(logfile, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	logger := log.New(logwriter, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 
 	var auth Authenticator
 	var permitDB PermitDB
@@ -212,7 +215,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
-	return NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB), nil
+	c := NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB)
+	c.logFile = logfile
+	return c, nil
 }
 
 func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
@@ -363,6 +368,14 @@ func (x *Central) GetRoleGroupDB() RoleGroupDB {
 }
 
 func (x *Central) Close() {
+	if x.Log != nil {
+		x.Log.Printf("Authaus shutting down\n")
+		x.Log = nil
+	}
+	if x.logFile != nil {
+		x.logFile.Close()
+		x.logFile = nil
+	}
 	if x.authenticator != nil {
 		x.authenticator.Close()
 		x.authenticator = nil

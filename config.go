@@ -166,6 +166,7 @@ func (x *Config) LoadFile(filename string) error {
 	if file, err = os.Open(filename); err != nil {
 		return err
 	}
+	defer file.Close()
 	if all, err = ioutil.ReadAll(file); err != nil {
 		return err
 	}
