@@ -27,6 +27,7 @@ type Authenticator interface {
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
 type PermitDB interface {
+	// Retrieve a permit
 	GetPermit(identity string) (*Permit, error)
 	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
@@ -122,7 +123,7 @@ func (x *sanitizingAuthenticator) Authenticate(identity, password string) error 
 	}
 	// We COULD make an empty password an error here, but that is not necessarily correct.
 	// There may be an anonymous profile which requires no password. LDAP is specifically vulnerable
-	// to this, but that is the job of the LDAP driver to verify that it is not performing 
+	// to this, but that is the job of the LDAP driver to verify that it is not performing
 	// an anonymous BIND.
 	return x.backend.Authenticate(identity, password)
 }

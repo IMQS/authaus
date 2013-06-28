@@ -34,6 +34,21 @@ func (x PermissionList) Has(perm PermissionU16) bool {
 	return false
 }
 
+// A mapping from 16-bit permission number to a textual description of that permission
+type PermissionNameTable []string
+
+func (x PermissionNameTable) Get(perm PermissionU16) string {
+	return x[perm]
+}
+
+func (x *PermissionNameTable) Append(perm PermissionU16, description string) {
+	if len(*x) != int(perm) {
+		// This is just a sanity check. Why would you want to do it any other way?
+		panic("You must build up a permission table from empty, without any gaps in the enumerations")
+	}
+	*x = append(*x, description)
+}
+
 // Our group IDs are unsigned 32-bit integers
 type GroupIDU32 uint32
 
@@ -50,7 +65,7 @@ type RoleGroupDB interface {
 // An Authorization Group. This stores a list of permissions.
 type AuthGroup struct {
 	ID       GroupIDU32     // DB-generated id
-	Name     string         // Administrators need this name to keep sense of things
+	Name     string         // Administrators need this name to keep sense of things. Example of this is "finance" or "engineering".
 	PermList PermissionList // Application-defined permission bits (ie every value from 0..65535 pertains to one particular permission)
 }
 
@@ -66,6 +81,7 @@ func (x AuthGroup) Clone() *AuthGroup {
 	return clone
 }
 
+// This is a no-op if the bit is already set
 func (x *AuthGroup) AddPermBit(permBit PermissionU16) {
 	for _, bit := range x.PermList {
 		if bit == permBit {
@@ -75,6 +91,7 @@ func (x *AuthGroup) AddPermBit(permBit PermissionU16) {
 	x.PermList = append(x.PermList, permBit)
 }
 
+// This is a no-op if the bit is not set
 func (x *AuthGroup) RemovePermBit(permBit PermissionU16) {
 	for index, bit := range x.PermList {
 		if bit == permBit {
@@ -170,6 +187,19 @@ func GroupNamesToIDs(groups []string, db RoleGroupDB) ([]GroupIDU32, error) {
 		}
 	}
 	return ids, nil
+}
+
+// Converts group IDs to names
+func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB) ([]string, error) {
+	names := make([]string, len(groups))
+	for i, gid := range groups {
+		if group, err := db.GetByID(gid); err != nil {
+			return nil, err
+		} else {
+			names[i] = group.Name
+		}
+	}
+	return names, nil
 }
 
 func encodePermList(permlist PermissionList) []byte {

@@ -330,6 +330,11 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	return
 }
 
+// Retrieve a Permit.
+func (x *Central) GetPermit(identity string) (*Permit, error) {
+	return x.permitDB.GetPermit(identity)
+}
+
 // Change a Permit.
 func (x *Central) SetPermit(identity string, permit *Permit) error {
 	if err := x.permitDB.SetPermit(identity, permit); err != nil {
