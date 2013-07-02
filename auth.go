@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"sync/atomic"
@@ -169,17 +168,21 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 // Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	var logfile *os.File
-	var logwriter io.Writer
 	if config.Log.Filename != "" {
-		if logfile, err = os.OpenFile(config.Log.Filename, os.O_APPEND|os.O_CREATE, 0660); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error opening log file '%v': %v", config.Log.Filename, err))
+		if config.Log.Filename == "stdout" {
+			logfile = os.Stdout
+		} else if config.Log.Filename == "stderr" {
+			logfile = os.Stderr
+		} else {
+			if logfile, err = os.OpenFile(config.Log.Filename, os.O_APPEND|os.O_CREATE, 0660); err != nil {
+				return nil, errors.New(fmt.Sprintf("Error opening log file '%v': %v", config.Log.Filename, err))
+			}
 		}
-		logwriter = logfile
 	} else {
 		logfile = os.Stdout
 	}
 
-	logger := log.New(logwriter, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	logger := log.New(logfile, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 
 	var auth Authenticator
 	var permitDB PermitDB
@@ -244,7 +247,7 @@ func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
 		}
 		return auth, nil
 	case "dummy":
-		return NewDummyAuthenticator(), nil
+		return newDummyAuthenticator(), nil
 	default:
 		return nil, errors.New("Unrecognized Authenticator type '" + config.Type + "'")
 	}

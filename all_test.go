@@ -20,7 +20,7 @@ func setup1_joePermit() Permit {
 }
 
 func setup1(t *testing.T) *Central {
-	authenticator := NewDummyAuthenticator()
+	authenticator := newDummyAuthenticator()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
 	logger := log.New(ioutil.Discard, "", log.LstdFlags)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	_ "github.com/lib/pq"
+	"strings"
 	"sync"
 )
 
@@ -13,9 +14,11 @@ import (
 // role database is a completely optional component.
 
 var (
-	ErrGroupNotExist = errors.New("Group does not exist")
-	ErrGroupExists   = errors.New("Group already exists")
-	ErrPermitInvalid = errors.New("Permit is not a sequence of 32-bit words")
+	ErrGroupNotExist      = errors.New("Group does not exist")
+	ErrGroupExists        = errors.New("Group already exists")
+	ErrGroupNameIllegal   = errors.New("Group name may not be empty, and must not have spaces on the left or right")
+	ErrGroupDuplicateName = errors.New("A group with that name already exists")
+	ErrPermitInvalid      = errors.New("Permit is not a sequence of 32-bit words")
 )
 
 // Any permission in the system is uniquely described by a 16-bit unsigned integer
@@ -47,6 +50,10 @@ func (x *PermissionNameTable) Append(perm PermissionU16, description string) {
 		panic("You must build up a permission table from empty, without any gaps in the enumerations")
 	}
 	*x = append(*x, description)
+}
+
+func GroupNameIsLegal(name string) bool {
+	return name != "" && strings.TrimSpace(name) == name
 }
 
 // Our group IDs are unsigned 32-bit integers
@@ -137,6 +144,88 @@ func DecodePermit(permit []byte) ([]GroupIDU32, error) {
 		//fmt.Printf("Groups[%v] = %v\n", i>>2, groups[i>>2])
 	}
 	return groups, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type dummyRoleGroupDB struct {
+	groupsByName map[string]*AuthGroup
+	groupsByID   map[GroupIDU32]*AuthGroup
+	groupsLock   sync.RWMutex
+	groupsNextID GroupIDU32
+}
+
+func newDummyRoleGroupDB() *dummyRoleGroupDB {
+	db := &dummyRoleGroupDB{}
+	db.groupsByName = make(map[string]*AuthGroup)
+	db.groupsByID = make(map[GroupIDU32]*AuthGroup)
+	db.groupsNextID = 1
+	return db
+}
+
+func (x *dummyRoleGroupDB) GetByName(name string) (*AuthGroup, error) {
+	x.groupsLock.RLock()
+	defer x.groupsLock.RUnlock()
+	g := x.groupsByName[name]
+	if g != nil {
+		return g, nil
+	} else {
+		return nil, ErrGroupNotExist
+	}
+}
+
+func (x *dummyRoleGroupDB) GetByID(id GroupIDU32) (*AuthGroup, error) {
+	x.groupsLock.RLock()
+	defer x.groupsLock.RUnlock()
+	g := x.groupsByID[id]
+	if g != nil {
+		return g, nil
+	} else {
+		return nil, ErrGroupNotExist
+	}
+}
+
+func (x *dummyRoleGroupDB) InsertGroup(group *AuthGroup) error {
+	if !GroupNameIsLegal(group.Name) {
+		return ErrGroupNameIllegal
+	}
+	x.groupsLock.Lock()
+	defer x.groupsLock.Unlock()
+	if x.groupsByName[group.Name] != nil {
+		return ErrGroupExists
+	} else {
+		group.ID = x.groupsNextID
+		x.groupsByID[group.ID] = group
+		x.groupsByName[group.Name] = group
+		x.groupsNextID += 1
+		return nil
+	}
+}
+
+func (x *dummyRoleGroupDB) UpdateGroup(group *AuthGroup) error {
+	x.groupsLock.Lock()
+	defer x.groupsLock.Unlock()
+	if !GroupNameIsLegal(group.Name) {
+		return ErrGroupNameIllegal
+	}
+	if existingByName := x.groupsByName[group.Name]; existingByName != nil && existingByName.ID != group.ID {
+		return ErrGroupDuplicateName
+	}
+
+	if existingByID := x.groupsByID[group.ID]; existingByID == nil {
+		return ErrGroupNotExist
+	} else {
+		delete(x.groupsByName, existingByID.Name)
+		clone := group.Clone()
+		x.groupsByName[group.Name] = clone
+		x.groupsByID[group.ID] = clone
+		return nil
+	}
+}
+
+func (x *dummyRoleGroupDB) Close() {
+	x.groupsByID = nil
+	x.groupsByName = nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -248,6 +337,9 @@ func (x *sqlGroupDB) GetByID(id GroupIDU32) (*AuthGroup, error) {
 
 // Add a new group. If the function is successful, then 'group.ID' will be set to the inserted record's ID
 func (x *sqlGroupDB) InsertGroup(group *AuthGroup) error {
+	if !GroupNameIsLegal(group.Name) {
+		return ErrGroupNameIllegal
+	}
 	row := x.db.QueryRow("INSERT INTO authgroup (name, permlist) VALUES ($1, $2) RETURNING id", group.Name, group.encodePermList())
 	var lastId GroupIDU32
 	if err := row.Scan(&lastId); err == nil {
@@ -264,6 +356,12 @@ func (x *sqlGroupDB) InsertGroup(group *AuthGroup) error {
 func (x *sqlGroupDB) UpdateGroup(group *AuthGroup) error {
 	if group.ID == 0 {
 		return ErrGroupNotExist
+	}
+	if !GroupNameIsLegal(group.Name) {
+		return ErrGroupNameIllegal
+	}
+	if existingByName, _ := x.GetByName(group.Name); existingByName != nil && existingByName.ID != group.ID {
+		return ErrGroupDuplicateName
 	}
 	if _, err := x.db.Exec("UPDATE authgroup SET name=$1, permlist=$2 WHERE id=$3", group.Name, group.encodePermList(), group.ID); err == nil {
 		return nil

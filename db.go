@@ -57,7 +57,7 @@ type dummyAuthenticator struct {
 	passwordsLock sync.RWMutex
 }
 
-func NewDummyAuthenticator() *dummyAuthenticator {
+func newDummyAuthenticator() *dummyAuthenticator {
 	d := &dummyAuthenticator{}
 	d.passwords = make(map[string]string)
 	return d
