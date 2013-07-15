@@ -27,7 +27,7 @@ type PermissionU16 uint16
 // A list of permissions
 type PermissionList []PermissionU16
 
-// Returns true if the permission list contains this permission
+// Returns true if the list contains this permission
 func (x PermissionList) Has(perm PermissionU16) bool {
 	for _, bit := range x {
 		if bit == perm {
@@ -36,6 +36,30 @@ func (x PermissionList) Has(perm PermissionU16) bool {
 	}
 	return false
 }
+
+// Adds this permission to the list.
+// Takes no action if the permission is already present.
+func (x *PermissionList) Add(perm PermissionU16) {
+	for _, bit := range *x {
+		if bit == perm {
+			return
+		}
+	}
+	*x = append(*x, perm)
+}
+
+// Removes this permission from the lst
+// Takes no action if the permission is not present.
+func (x *PermissionList) Remove(perm PermissionU16) {
+	for index, bit := range *x {
+		if bit == perm {
+			*x = append((*x)[0:index], (*x)[index+1:]...)
+			return
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // A mapping from 16-bit permission number to a textual description of that permission
 type PermissionNameTable []string
@@ -59,6 +83,8 @@ func GroupNameIsLegal(name string) bool {
 // Our group IDs are unsigned 32-bit integers
 type GroupIDU32 uint32
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // A Role Group database stores a list of Groups. Each Group has a list
 // of permissions that it enables.
 type RoleGroupDB interface {
@@ -68,6 +94,8 @@ type RoleGroupDB interface {
 	UpdateGroup(group *AuthGroup) error
 	Close()
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // An Authorization Group. This stores a list of permissions.
 type AuthGroup struct {
@@ -88,33 +116,18 @@ func (x AuthGroup) Clone() *AuthGroup {
 	return clone
 }
 
-// This is a no-op if the bit is already set
-func (x *AuthGroup) AddPermBit(permBit PermissionU16) {
-	for _, bit := range x.PermList {
-		if bit == permBit {
-			return
-		}
-	}
-	x.PermList = append(x.PermList, permBit)
+// This is a no-op if the permission is already set
+func (x *AuthGroup) AddPerm(perm PermissionU16) {
+	x.PermList.Add(perm)
 }
 
-// This is a no-op if the bit is not set
-func (x *AuthGroup) RemovePermBit(permBit PermissionU16) {
-	for index, bit := range x.PermList {
-		if bit == permBit {
-			x.PermList = append(x.PermList[0:index], x.PermList[index+1:]...)
-			return
-		}
-	}
+// This is a no-op if the permission is not set
+func (x *AuthGroup) RemovePerm(perm PermissionU16) {
+	x.PermList.Remove(perm)
 }
 
-func (x *AuthGroup) HasBit(permBit PermissionU16) bool {
-	for _, bit := range x.PermList {
-		if bit == permBit {
-			return true
-		}
-	}
-	return false
+func (x *AuthGroup) HasPerm(perm PermissionU16) bool {
+	return x.PermList.Has(perm)
 }
 
 // Encodes a list of Group IDs into a Permit
@@ -146,7 +159,7 @@ func DecodePermit(permit []byte) ([]GroupIDU32, error) {
 	return groups, nil
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type dummyRoleGroupDB struct {
 	groupsByName map[string]*AuthGroup
@@ -228,7 +241,7 @@ func (x *dummyRoleGroupDB) Close() {
 	x.groupsByName = nil
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type sqlGroupDB struct {
 	db *sql.DB
