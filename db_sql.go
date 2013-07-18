@@ -68,12 +68,8 @@ func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
-				if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, password) VALUES ($1, $2)`, identity, hash); ecreate == nil {
-					return tx.Commit()
-				} else {
-					tx.Rollback()
-					return ecreate
-				}
+				tx.Rollback()
+				return ErrIdentityAuthNotFound
 			}
 		} else {
 			tx.Rollback()

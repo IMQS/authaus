@@ -12,6 +12,9 @@ import (
 
 // NOTE: Some of these tests stress concurrency, so you must run them with at least -test.cpu 2
 
+// TODO: Add test that verifies that SetPassword does not create an identity if that identity does not already exist
+// TODO: Add a test mode that stresses each backend individually
+
 func setup1_joePermit() Permit {
 	p := Permit{}
 	r := [2]byte{1, 2}
