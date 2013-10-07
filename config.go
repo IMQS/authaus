@@ -74,6 +74,7 @@ var configLdapNameToMode = map[string]LdapConnectionMode{
 type DBConnection struct {
 	Driver   string
 	Host     string
+	Port	 int32
 	Database string
 	User     string
 	Password string
@@ -86,13 +87,14 @@ func (x *DBConnection) Connect() (*sql.DB, error) {
 	if x.SSL {
 		sslmode = "require"
 	}
-	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, x.User, x.Password, x.Database, sslmode)
+	conStr := fmt.Sprintf("host=%v port=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, strconv.FormatInt(int64(x.Port),10), x.User, x.Password, x.Database, sslmode)
 	return sql.Open(x.Driver, conStr)
 }
 
 func (x *DBConnection) Equals(y *DBConnection) bool {
 	return x.Driver == y.Driver &&
 		x.Host == y.Host &&
+		x.Port == y.Port &&
 		x.Database == y.Database &&
 		x.User == y.User &&
 		x.Password == y.Password &&
@@ -103,6 +105,7 @@ func (x *DBConnection) Equals(y *DBConnection) bool {
 func (x *DBConnection) signature() string {
 	return x.Driver + " " +
 		x.Host + " " +
+		strconv.FormatInt(int64(x.Port), 10) + " " +
 		x.Database + " " +
 		x.User + " " +
 		x.Password + " " +
