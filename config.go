@@ -34,6 +34,7 @@ Full populated config:
 		"DB": {
 			"Driver":		"postgres",
 			"Host":			"auth.example.com",
+			"Port":			5432,
 			"Database": 	"auth",
 			"User":			"jim",
 			"Password":		"123",
@@ -44,6 +45,7 @@ Full populated config:
 		"DB": {
 			"Driver":		"postgres",
 			"Host":			"auth.example.com",
+			"Port":			5432,
 			"Database": 	"auth",
 			"User":			"jim",
 			"Password":		"123",
@@ -54,6 +56,7 @@ Full populated config:
 		"DB": {
 			"Driver":		"postgres",
 			"Host":			"auth.example.com",
+			"Port":			5432,
 			"Database": 	"auth",
 			"User":			"jim",
 			"Password":		"123",
@@ -74,7 +77,7 @@ var configLdapNameToMode = map[string]LdapConnectionMode{
 type DBConnection struct {
 	Driver   string
 	Host     string
-	Port	 int32
+	Port     uint16
 	Database string
 	User     string
 	Password string
@@ -87,7 +90,11 @@ func (x *DBConnection) Connect() (*sql.DB, error) {
 	if x.SSL {
 		sslmode = "require"
 	}
-	conStr := fmt.Sprintf("host=%v port=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, strconv.FormatInt(int64(x.Port),10), x.User, x.Password, x.Database, sslmode)
+	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, x.User, x.Password, x.Database, sslmode)
+	if x.Port != 0 {
+		conStr += fmt.Sprintf(" port=%v", x.Port)
+	}
+
 	return sql.Open(x.Driver, conStr)
 }
 
