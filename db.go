@@ -18,6 +18,7 @@ var (
 
 // The primary job of an authenticator is to validate an identity/password.
 // It can also be responsible for creating a new account.
+// All operations except for Close must be thread-safe
 type Authenticator interface {
 	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
 	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
@@ -26,9 +27,12 @@ type Authenticator interface {
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
+// All operations except for Close must be thread-safe
 type PermitDB interface {
 	// Retrieve a permit
 	GetPermit(identity string) (*Permit, error)
+	// Retrieve all permits as a map from identity to the permit.
+	GetAllPermits() (map[string]*Permit, error)
 	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
 	SetPermit(identity string, permit *Permit) error
@@ -37,9 +41,11 @@ type PermitDB interface {
 
 // A Session database is essentially a key/value store where the keys are
 // session tokens, and the values are tuples of (Identity,Permit)
+// All operations except for Close must be thread-safe
 type SessionDB interface {
+	// Set a token
 	Write(sessionkey string, token *Token) error
-	// Returns the expiry time of the permit
+	// Fetch a token
 	Read(sessionkey string) (*Token, error)
 	// Assign the new permit to all of the sessions belonging to 'identity'
 	PermitChanged(identity string, permit *Permit) error
@@ -74,8 +80,6 @@ func (x *dummyAuthenticator) Authenticate(identity, password string) error {
 	} else {
 		return ErrInvalidPassword
 	}
-	// unreachable (can remove in Go 1.1)
-	return nil
 }
 
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
@@ -98,8 +102,6 @@ func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 	} else {
 		return ErrIdentityExists
 	}
-	// unreachable
-	return nil
 }
 
 func (x *dummyAuthenticator) Close() {
@@ -329,15 +331,14 @@ func (x *cachedSessionDB) insert(sessionkey string, token *Token) {
 	x.cachedSessionsLock.Unlock()
 }
 
-func (x *cachedSessionDB) Write(sessionkey string, token *Token) error {
-	if err := x.db.Write(sessionkey, token); err == nil {
+func (x *cachedSessionDB) Write(sessionkey string, token *Token) (err error) {
+	// Since the pair (sessionkey, token) is unique, we need not worry about a race
+	// condition causing a discrepancy between the DB sessions and our cached sessions.
+	// Expanding the lock to cover x.db.Write would incur a significant performance penalty.
+	if err = x.db.Write(sessionkey, token); err == nil {
 		x.insert(sessionkey, token)
-		return nil
-	} else {
-		return err
 	}
-	// unreachable (remove in Go 1.1)
-	return nil
+	return
 }
 
 func (x *cachedSessionDB) Read(sessionkey string) (*Token, error) {
@@ -360,11 +361,12 @@ func (x *cachedSessionDB) Read(sessionkey string) (*Token, error) {
 			return nil, ErrInvalidSessionToken
 		}
 	}
-	// unreachable (remove in Go 1.1)
-	return nil, nil
 }
 
 func (x *cachedSessionDB) PermitChanged(identity string, permit *Permit) error {
+	// PermitChanged is called AFTER a permit has already been altered, so our
+	// first action is to update our cache, because that cannot fail.
+	// Thereafter, we try to modify the session database, which is beyond our control.
 	x.cachedSessionsLock.Lock()
 	for _, ses := range x.sessionKeysForIdentity(identity) {
 		x.cachedSessions[ses].token.Permit = *permit
@@ -401,6 +403,7 @@ func (x *cachedSessionDB) sessionKeysForIdentity(identity string) []string {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Permit database that is simply a map
 type dummyPermitDB struct {
 	permits     map[string]*Permit
@@ -418,12 +421,20 @@ func (x *dummyPermitDB) GetPermit(identity string) (*Permit, error) {
 	permit := x.permits[identity]
 	x.permitsLock.RUnlock()
 	if permit != nil {
-		return permit, nil
+		return permit.Clone(), nil
 	} else {
-		return permit, ErrIdentityPermitNotFound
+		return nil, ErrIdentityPermitNotFound
 	}
-	// unreachable (remove in Go 1.1)
-	return nil, nil
+}
+
+func (x *dummyPermitDB) GetAllPermits() (map[string]*Permit, error) {
+	x.permitsLock.RLock()
+	copy := make(map[string]*Permit)
+	for k, v := range x.permits {
+		copy[k] = v.Clone()
+	}
+	x.permitsLock.RUnlock()
+	return copy, nil
 }
 
 func (x *dummyPermitDB) SetPermit(identity string, permit *Permit) error {

@@ -172,6 +172,10 @@ func (x *sqlPermitDB) GetPermit(identity string) (*Permit, error) {
 	return getPermitFromDB(x.db, "authuser", "permit", "identity", identity, ErrIdentityPermitNotFound)
 }
 
+func (x *sqlPermitDB) GetAllPermits() (map[string]*Permit, error) {
+	return getPermitsFromDB(x.db, "authuser", "permit", "identity")
+}
+
 func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	encodedPermit := permit.Serialize()
 	if tx, etx := x.db.Begin(); etx == nil {
@@ -222,6 +226,34 @@ func getPermitFromDB(db *sql.DB, tableName, permitField, findOnField, findValue 
 	}
 	// unreachable. remove in Go 1.1
 	return nil, nil
+}
+
+func getPermitsFromDB(db *sql.DB, tableName, permitField, identityField string) (map[string]*Permit, error) {
+	permits := make(map[string]*Permit)
+	qstr := fmt.Sprintf(`SELECT %v, %v FROM %v`, identityField, permitField, tableName)
+	rows, err := db.Query(qstr)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var identity sql.NullString
+		var permit sql.NullString
+		err = rows.Scan(&identity, &permit)
+		if err != nil {
+			return nil, err
+		}
+		p := &Permit{}
+		if permit.Valid {
+			err = p.Deserialize(permit.String)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if identity.Valid {
+			permits[identity.String] = p
+		}
+	}
+	return permits, err
 }
 
 func verifyAuthausHash(password, hash string) bool {

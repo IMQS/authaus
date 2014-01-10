@@ -36,7 +36,7 @@ authentication information is associated with that request. This is either a ses
 or a username/password combination. Let's call it the authorization information. You then ask
 Authaus to tell you WHO this authorization information belongs to, as well as WHAT this
 authorization information allows the requester to do.
-Authaus responds either with a 401 (Unauthorized), 403 (Forbidden), or with a JSON object
+Authaus responds either with a 401 (Unauthorized), 403 (Forbidden), or a 200 (OK) and a JSON object
 that tells you the identity of the agent submitting this request, as well the permissions
 that this agent posesses. It's up to your individual services to decide what to do with that
 information.
@@ -51,7 +51,8 @@ A `Permit` is a set of roles that has been granted to a user. Authaus knows noth
 the contents of a permit. It simply treats it as a binary blob, and when writing it to
 an SQL database, encodes it as base64. The interpretation of the permit is application
 dependent. Typically, a Permit will hold information such as "Allowed to view billing information",
-or "Allowed to paint your bathroom yellow".
+or "Allowed to paint your bathroom yellow". Authaus does have a built-in module called
+RoleGroupDB, which has its own interpretation of what a Permit is, but you do not need to use this.
 
 A `Token` is the result of a successful authentication. It stores the identity of a user,
 an expiry date, and a Permit. A token will usually be retrieved by a session key.
@@ -64,7 +65,7 @@ All public methods of the `Central` object are callable from multiple threads. R
 locks are used in all of the caching systems.
 
 The number of concurrent connections is limited only by the limits of the Go runtime, and the
-limits inherent in the simple reader-writer locks used to protect shared state.
+performance limits that are inherent to the simple reader-writer locks used to protect shared state.
 
 Deployment
 
@@ -143,7 +144,7 @@ his new permissions to be reflected. His new permissions will be available immed
 Similarly, if a password is changed with Authaus, then all sessions are invalidated. Do take
 note though, that if a password is changed through an external mechanism (such as with LDAP),
 then Authaus will have no way of knowing this, and will continue to serve up sessions
-that were authenticated with the old password.
+that were authenticated with the old password. This is a problem that needs addressing.
 
 Session Cache
 
@@ -154,15 +155,15 @@ on the number of entries in this cache is hard-coded, and that should probably c
 Permit Database
 
 The Permit database runs on Postgres. It stores a table of permits, which is simply
-a 1:1 mapping from Identity -> Permit. The Permit is just a blob of binary data, which
-we store as base64 inside a text field. This part of the system doesn't care how you
+a 1:1 mapping from Identity -> Permit. The Permit is just an array of bytes, which
+we store base64 encoded, inside a text field. This part of the system doesn't care how you
 interpret that blob.
 
 Role Group Database
 
 The Role Group Database is an entirely optional component of Authaus. The other components
 of Authaus (Authenticator, PermitDB, SessionDB) do not understand your Permits. To them,
-a Permit is simply an arbitrary binary blob.
+a Permit is simply an arbitrary array of bytes.
 
 The Role Group Database is a component that adds a specific meaning to a permit blob. Let's
 see what that specific meaning looks like...
@@ -190,10 +191,10 @@ for more than 100 years, given a 32-bit ID. These constraints are extraordinary,
 suggesting that we do not even need 32 bits, but could even get away with just a
 16-bit group ID.
 
-However, we expect the number of groups to be relatively small. Our subconscious aim is to
-fit the permit and identity into a single ethernet packet, which one can reasonably
-peg at 1500 bytes. 1500 / 4 = 375. We assume that no sane human administrator
-will assign 375 security groups to any individual. We expect the number of groups
+However, we expect the number of groups to be relatively small. Our aim here, arbitrary
+though it may be, is to fit the permit and identity into a single ethernet packet,
+which one can reasonably peg at 1500 bytes. 1500 / 4 = 375. We assume that no sane human
+administrator will assign 375 security groups to any individual. We expect the number of groups
 assigned to any individual to be in the range of 1 to 20. This makes 375 a gigantic
 buffer.
 

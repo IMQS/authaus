@@ -46,6 +46,13 @@ type Permit struct {
 	Roles []byte
 }
 
+func (x *Permit) Clone() *Permit {
+	cpy := &Permit{}
+	cpy.Roles = make([]byte, len(x.Roles))
+	copy(cpy.Roles, x.Roles)
+	return cpy
+}
+
 func (x *Permit) Serialize() string {
 	return base64.StdEncoding.EncodeToString(x.Roles)
 }
@@ -58,8 +65,6 @@ func (x *Permit) Deserialize(encoded string) error {
 	} else {
 		return e
 	}
-	// Unreachable. Remove in Go 1.1
-	return nil
 }
 
 /*
@@ -336,6 +341,11 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 // Retrieve a Permit.
 func (x *Central) GetPermit(identity string) (*Permit, error) {
 	return x.permitDB.GetPermit(identity)
+}
+
+// Retrieve all Permits.
+func (x *Central) GetAllPermits() (map[string]*Permit, error) {
+	return x.permitDB.GetAllPermits()
 }
 
 // Change a Permit.

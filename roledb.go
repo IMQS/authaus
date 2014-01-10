@@ -88,6 +88,7 @@ type GroupIDU32 uint32
 // A Role Group database stores a list of Groups. Each Group has a list
 // of permissions that it enables.
 type RoleGroupDB interface {
+	GetAllGroups() ([]*AuthGroup, error)
 	GetByName(name string) (*AuthGroup, error)
 	GetByID(id GroupIDU32) (*AuthGroup, error)
 	InsertGroup(group *AuthGroup) error
@@ -174,6 +175,16 @@ func newDummyRoleGroupDB() *dummyRoleGroupDB {
 	db.groupsByID = make(map[GroupIDU32]*AuthGroup)
 	db.groupsNextID = 1
 	return db
+}
+
+func (x *dummyRoleGroupDB) GetAllGroups() ([]*AuthGroup, error) {
+	groups := []*AuthGroup{}
+	x.groupsLock.RLock()
+	for _, v := range x.groupsByName {
+		groups = append(groups, v.Clone())
+	}
+	x.groupsLock.RUnlock()
+	return groups, nil
 }
 
 func (x *dummyRoleGroupDB) GetByName(name string) (*AuthGroup, error) {
@@ -313,20 +324,30 @@ func encodePermList(permlist PermissionList) []byte {
 	return res
 }
 
+func parsePermListBase64(bitsB64 string) (PermissionList, error) {
+	if bytes, errB64 := base64.StdEncoding.DecodeString(bitsB64); errB64 == nil {
+		permList := make(PermissionList, 0)
+		if len(bytes)%2 != 0 {
+			return nil, errors.New("len(authgroup.permlist) mod 2 != 0")
+		}
+		for i := 0; i < len(bytes); i += 2 {
+			permList = append(permList, PermissionU16(bytes[i])<<8|PermissionU16(bytes[i+1]))
+		}
+		return permList, nil
+	} else {
+		return nil, errB64
+	}
+}
+
 func readSingleGroup(row *sql.Row, errDetail string) (*AuthGroup, error) {
+	bitsB64 := ""
 	group := &AuthGroup{}
-	bitsb64 := ""
-	if err := row.Scan(&group.ID, &group.Name, &bitsb64); err == nil {
-		if bytes, e64 := base64.StdEncoding.DecodeString(bitsb64); e64 == nil {
-			if len(bytes)%2 != 0 {
-				return nil, errors.New("len(authgroup.permlist) mod 2 != 0")
-			}
-			for i := 0; i < len(bytes); i += 2 {
-				group.PermList = append(group.PermList, PermissionU16(bytes[i])<<8|PermissionU16(bytes[i+1]))
-			}
+	if err := row.Scan(&group.ID, &group.Name, &bitsB64); err == nil {
+		var errB64 error
+		if group.PermList, errB64 = parsePermListBase64(bitsB64); errB64 == nil {
 			return group, nil
 		} else {
-			return nil, e64
+			return nil, errB64
 		}
 	} else {
 		if err == sql.ErrNoRows {
@@ -334,8 +355,32 @@ func readSingleGroup(row *sql.Row, errDetail string) (*AuthGroup, error) {
 		}
 		return nil, err
 	}
-	// unreachable
-	return nil, nil
+}
+
+func readAllGroups(rows *sql.Rows, queryError error) ([]*AuthGroup, error) {
+	if queryError != nil {
+		return nil, queryError
+	}
+	groups := make([]*AuthGroup, 0)
+	for rows.Next() {
+		bitsB64 := ""
+		group := &AuthGroup{}
+		if errScan := rows.Scan(&group.ID, &group.Name, &bitsB64); errScan == nil {
+			var errB64 error
+			if group.PermList, errB64 = parsePermListBase64(bitsB64); errB64 == nil {
+				groups = append(groups, group)
+			} else {
+				return nil, errB64
+			}
+		} else {
+			return nil, errScan
+		}
+	}
+	return groups, nil
+}
+
+func (x *sqlGroupDB) GetAllGroups() ([]*AuthGroup, error) {
+	return readAllGroups(x.db.Query("SELECT id,name,permlist FROM authgroup"))
 }
 
 func (x *sqlGroupDB) GetByName(name string) (*AuthGroup, error) {
@@ -403,7 +448,38 @@ type RoleGroupCache struct {
 	backend      RoleGroupDB
 	groupsByID   map[GroupIDU32]*AuthGroup
 	groupsByName map[string]*AuthGroup
-	groupsLock   sync.RWMutex
+	groupsLock   sync.RWMutex // this guards groupsByID, groupsByName, hasAll
+	hasAll       bool
+}
+
+func (x *RoleGroupCache) GetAllGroups() ([]*AuthGroup, error) {
+	x.groupsLock.RLock()
+	if x.hasAll {
+		groups := make([]*AuthGroup, 0)
+		for _, v := range x.groupsByName {
+			groups = append(groups, v.Clone())
+		}
+		x.groupsLock.RUnlock()
+		return groups, nil
+	} else {
+		// Fetch all groups from backend. This code looks racy: While we're fetching
+		// the list of all groups, another thread could be inserting new groups. However,
+		// this is OK, since those other inserted groups will be added to our cache
+		// already. All we're doing here is filling in the blanks that existed before
+		// this system came online.
+		x.groupsLock.RUnlock()
+		groups, err := x.backend.GetAllGroups()
+		if err != nil {
+			return nil, err
+		}
+		x.groupsLock.Lock()
+		for _, group := range groups {
+			x.insertInCache(group)
+		}
+		x.hasAll = true
+		x.groupsLock.Unlock()
+		return groups, nil
+	}
 }
 
 func (x *RoleGroupCache) GetByName(name string) (*AuthGroup, error) {
@@ -414,44 +490,41 @@ func (x *RoleGroupCache) GetByID(id GroupIDU32) (*AuthGroup, error) {
 	return x.get(false, id)
 }
 
-func (x *RoleGroupCache) InsertGroup(group *AuthGroup) error {
-	if err := x.backend.InsertGroup(group); err == nil {
-		x.groupsLock.Lock()
-		x.insertInCache(*group)
-		x.groupsLock.Unlock()
-		return nil
-	} else {
-		return err
+func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
+	// We need to hold the lock around the entire operation. If you try to "optimize" the lock
+	// window by locking only the insertion into our cache, and not into the DB, then you introduce
+	// the possibility of a discrepancy arising between the DB and the cache.
+	// Since groups are modified seldom, this should not be a performance concern - at least
+	// not for the envisaged use cases.
+	x.groupsLock.Lock()
+	if err = x.backend.InsertGroup(group); err == nil {
+		x.insertInCache(group)
 	}
-	// unreachable
-	return nil
+	x.groupsLock.Unlock()
+	return
 }
 
-func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) error {
-	if err := x.backend.UpdateGroup(group); err == nil {
-		x.groupsLock.Lock()
-		x.insertInCache(*group)
-		x.groupsLock.Unlock()
-		return nil
-	} else {
-		return err
+func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) (err error) {
+	// Same comment here about locking, as in InsertGroup
+	x.groupsLock.Lock()
+	if err = x.backend.UpdateGroup(group); err == nil {
+		x.insertInCache(group)
 	}
-	// unreachable
-	return nil
+	x.groupsLock.Unlock()
+	return
 }
 
 func (x *RoleGroupCache) Close() {
-	x.resetMaps()
+	x.reset()
 	if x.backend != nil {
 		x.backend.Close()
 		x.backend = nil
 	}
 }
 
-func (x *RoleGroupCache) get(byname bool, value interface{}) (*AuthGroup, error) {
+func (x *RoleGroupCache) get(byname bool, value interface{}) (group *AuthGroup, err error) {
 	// Acquire from the cache
 	x.groupsLock.RLock()
-	var group *AuthGroup
 	if byname {
 		group, _ = x.groupsByName[value.(string)]
 	} else {
@@ -459,20 +532,27 @@ func (x *RoleGroupCache) get(byname bool, value interface{}) (*AuthGroup, error)
 	}
 	x.groupsLock.RUnlock()
 	if group != nil {
-		return group, nil
+		return
 	}
 
 	// Acquire from the backend
 	x.groupsLock.Lock()
-	var err error
 	group, err = x.getFromBackend(byname, value)
 	x.groupsLock.Unlock()
-	return group, err
+	return
 }
 
-func (x *RoleGroupCache) resetMaps() {
+// This function is exposed for testing
+func (x *RoleGroupCache) lockAndReset() {
+	x.groupsLock.Lock()
+	x.reset()
+	x.groupsLock.Unlock()
+}
+
+func (x *RoleGroupCache) reset() {
 	x.groupsByID = make(map[GroupIDU32]*AuthGroup)
 	x.groupsByName = make(map[string]*AuthGroup)
+	x.hasAll = false
 }
 
 // Assume that groupsLock.WRITE is held
@@ -486,18 +566,15 @@ func (x *RoleGroupCache) getFromBackend(byname bool, value interface{}) (*AuthGr
 	}
 
 	if err == nil {
-		x.insertInCache(*group)
+		x.insertInCache(group)
 		return group, nil
 	} else {
 		return nil, err
 	}
-
-	// unreachable
-	return nil, nil
 }
 
 // Assume that groupsLock.WRITE is held
-func (x *RoleGroupCache) insertInCache(group AuthGroup) {
+func (x *RoleGroupCache) insertInCache(group *AuthGroup) {
 	gcopy := group.Clone()
 	x.groupsByID[group.ID] = gcopy
 	x.groupsByName[group.Name] = gcopy
@@ -506,7 +583,7 @@ func (x *RoleGroupCache) insertInCache(group AuthGroup) {
 // Create a new RoleGroupDB that transparently caches reads of groups
 func NewCachedRoleGroupDB(backend RoleGroupDB) RoleGroupDB {
 	cached := &RoleGroupCache{}
-	cached.resetMaps()
+	cached.reset()
 	cached.backend = backend
 	return cached
 }

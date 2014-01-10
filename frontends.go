@@ -52,8 +52,6 @@ func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (
 	if sessioncookie != nil {
 		return central.GetTokenFromSession(sessioncookie.Value)
 	} else {
-		// This is temporary. It should be in the Authorization header instead. By allowing credentials in the GET
-		// request, you risk them being exposed in the HTTP server logs
 		identity, password, eBasic := HttpReadBasicAuth(r)
 		if eBasic != nil {
 			return nil, eBasic

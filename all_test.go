@@ -26,8 +26,9 @@ func setup1(t *testing.T) *Central {
 	authenticator := newDummyAuthenticator()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
+	roleDB := newDummyRoleGroupDB()
 	logger := log.New(ioutil.Discard, "", log.LstdFlags)
-	central := NewCentral(logger, authenticator, permitDB, sessionDB, nil)
+	central := NewCentral(logger, authenticator, permitDB, sessionDB, roleDB)
 
 	joePermit := setup1_joePermit()
 	if e := authenticator.CreateIdentity("joe", "123"); e != nil {
@@ -193,7 +194,7 @@ func TestSessionExpiry(t *testing.T) {
 	}
 }
 
-func TestSessionCache(t *testing.T) {
+func TestSessionCacheEviction(t *testing.T) {
 	c := setup1(t)
 	login := func(username, password string) string {
 		sessionkey, token, error := c.Login(username, password)
