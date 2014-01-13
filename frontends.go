@@ -59,8 +59,6 @@ func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (
 			return central.GetTokenFromIdentityPassword(identity, password)
 		}
 	}
-	// unreachable
-	return nil, nil
 }
 
 // Runs the Prelude function, but before returning an error, sends an appropriate error response to the HTTP ResponseWriter.
@@ -146,6 +144,4 @@ func RunHttpFromConfig(config *Config) error {
 	} else {
 		return RunHttp(&config.HTTP, central)
 	}
-	// unreachable
-	return nil
 }

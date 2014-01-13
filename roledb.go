@@ -283,8 +283,6 @@ func PermitResolveToList(permit []byte, db RoleGroupDB) (PermissionList, error) 
 	} else {
 		return nil, err
 	}
-	// unreachable
-	return nil, nil
 }
 
 // Converts group names to group IDs.
@@ -406,8 +404,6 @@ func (x *sqlGroupDB) InsertGroup(group *AuthGroup) error {
 	} else {
 		return err
 	}
-	// unreachable
-	return nil
 }
 
 // Update an existing group (by ID)
@@ -426,8 +422,6 @@ func (x *sqlGroupDB) UpdateGroup(group *AuthGroup) error {
 	} else {
 		return err
 	}
-	// unreachable
-	return nil
 }
 
 func (x *sqlGroupDB) Close() {

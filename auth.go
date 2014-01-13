@@ -256,8 +256,6 @@ func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
 	default:
 		return nil, errors.New("Unrecognized Authenticator type '" + config.Type + "'")
 	}
-	// unreachable
-	return nil, nil
 }
 
 // Set the size of the in-memory session cache
@@ -280,8 +278,6 @@ func (x *Central) GetTokenFromSession(sessionkey string) (*Token, error) {
 			return token, err
 		}
 	}
-	// unreachable
-	return nil, nil
 }
 
 // Perform a once-off authentication
@@ -304,8 +300,6 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Log.Printf("Once-off auth Authentication failed (%v) (%v)", identity, eAuth)
 		return nil, eAuth
 	}
-	// unreachable (remove in Go 1.1)
-	return nil, nil
 }
 
 // Create a new session. Returns a session key, which can be used in future to retrieve the token.

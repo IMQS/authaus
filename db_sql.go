@@ -54,8 +54,6 @@ func (x *sqlAuthenticationDB) Authenticate(identity, password string) error {
 			return ErrInvalidPassword
 		}
 	}
-	// unreachable. remove in Go 1.1
-	return nil
 }
 
 func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
@@ -78,8 +76,6 @@ func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
 	} else {
 		return etx
 	}
-	// Unreachable. Remove in Go 1.1
-	return nil
 }
 
 func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
@@ -101,8 +97,6 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 	} else {
 		return etx
 	}
-	// Unreachable. Remove in Go 1.1
-	return nil
 }
 
 func (x *sqlAuthenticationDB) Close() {
@@ -137,9 +131,6 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 			return token, nil
 		}
 	}
-	// unreachable. remove in Go 1.1
-	return nil, nil
-
 }
 
 func (x *sqlSessionDB) PermitChanged(identity string, permit *Permit) error {
@@ -197,8 +188,6 @@ func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	} else {
 		return etx
 	}
-	// Unreachable. Remove in Go 1.1
-	return nil
 }
 
 func (x *sqlPermitDB) Close() {
@@ -224,8 +213,6 @@ func getPermitFromDB(db *sql.DB, tableName, permitField, findOnField, findValue 
 			return p, nil
 		}
 	}
-	// unreachable. remove in Go 1.1
-	return nil, nil
 }
 
 func getPermitsFromDB(db *sql.DB, tableName, permitField, identityField string) (map[string]*Permit, error) {
@@ -273,8 +260,6 @@ func verifyAuthausHash(password, hash string) bool {
 	} else {
 		return false
 	}
-	// unreachable. remove in Go 1.1
-	return false
 }
 
 func computeAuthausHash(password string) (string, error) {
@@ -339,8 +324,6 @@ func readSchemaVersion(tx *sql.Tx, schema_name string) (int, error) {
 	} else {
 		return version, nil
 	}
-	// unreachable
-	return 0, nil
 }
 
 func SqlCreateDatabase(conx *DBConnection) error {
@@ -368,8 +351,6 @@ func SqlCreateDatabase(conx *DBConnection) error {
 	} else {
 		return e
 	}
-	// unreachable
-	return nil
 }
 
 func MigrateSchema(conx *DBConnection, schema_name string, migrations []string) error {
@@ -410,6 +391,7 @@ func migrateSchemaInternal(tryCreatingDB bool, conx *DBConnection, schema_name s
 					panic(err)
 				}
 			}
+			return nil
 		} else {
 			// Match the string 'database "foo" does not exist' to detect when the database needs to be created
 			if tryCreatingDB && strings.Index(eTxBegin.Error(), "does not exist") != -1 {
@@ -423,8 +405,6 @@ func migrateSchemaInternal(tryCreatingDB bool, conx *DBConnection, schema_name s
 			}
 		}
 	}
-	// unreachable. remove in Go 1.1
-	return nil
 }
 
 // Create a Postgres DB schema necessary for a Session database
