@@ -23,6 +23,7 @@ type Authenticator interface {
 	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
 	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
 	CreateIdentity(identity, password string) error // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
+	GetIdentities() ([]string, error)               // Retrieve a list of all identities
 	Close()                                         // Typically used to close a database handle
 }
 
@@ -32,7 +33,7 @@ type PermitDB interface {
 	// Retrieve a permit
 	GetPermit(identity string) (*Permit, error)
 	// Retrieve all permits as a map from identity to the permit.
-	GetAllPermits() (map[string]*Permit, error)
+	GetPermits() (map[string]*Permit, error)
 	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
 	SetPermit(identity string, permit *Permit) error
@@ -104,6 +105,16 @@ func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 	}
 }
 
+func (x *dummyAuthenticator) GetIdentities() ([]string, error) {
+	x.passwordsLock.RLock()
+	list := []string{}
+	for identity, _ := range x.passwords {
+		list = append(list, identity)
+	}
+	x.passwordsLock.RUnlock()
+	return list, nil
+}
+
 func (x *dummyAuthenticator) Close() {
 }
 
@@ -147,6 +158,10 @@ func (x *sanitizingAuthenticator) CreateIdentity(identity, password string) erro
 		return ErrInvalidPassword
 	}
 	return x.backend.CreateIdentity(identity, password)
+}
+
+func (x *sanitizingAuthenticator) GetIdentities() ([]string, error) {
+	return x.backend.GetIdentities()
 }
 
 func (x *sanitizingAuthenticator) Close() {
@@ -427,7 +442,7 @@ func (x *dummyPermitDB) GetPermit(identity string) (*Permit, error) {
 	}
 }
 
-func (x *dummyPermitDB) GetAllPermits() (map[string]*Permit, error) {
+func (x *dummyPermitDB) GetPermits() (map[string]*Permit, error) {
 	x.permitsLock.RLock()
 	copy := make(map[string]*Permit)
 	for k, v := range x.permits {

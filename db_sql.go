@@ -99,6 +99,25 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 	}
 }
 
+func (x *sqlAuthenticationDB) GetIdentities() ([]string, error) {
+	rows, err := x.db.Query(`SELECT identity FROM authuser`)
+	if err != nil {
+		return []string{}, err
+	}
+	result := make([]string, 0)
+	for rows.Next() {
+		identity := ""
+		if err := rows.Scan(&identity); err != nil {
+			return []string{}, err
+		}
+		result = append(result, identity)
+	}
+	if rows.Err() != nil {
+		return []string{}, rows.Err()
+	}
+	return result, nil
+}
+
 func (x *sqlAuthenticationDB) Close() {
 	if x.db != nil {
 		x.db.Close()
@@ -163,7 +182,7 @@ func (x *sqlPermitDB) GetPermit(identity string) (*Permit, error) {
 	return getPermitFromDB(x.db, "authuser", "permit", "identity", identity, ErrIdentityPermitNotFound)
 }
 
-func (x *sqlPermitDB) GetAllPermits() (map[string]*Permit, error) {
+func (x *sqlPermitDB) GetPermits() (map[string]*Permit, error) {
 	return getPermitsFromDB(x.db, "authuser", "permit", "identity")
 }
 

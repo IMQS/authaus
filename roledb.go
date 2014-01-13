@@ -88,7 +88,7 @@ type GroupIDU32 uint32
 // A Role Group database stores a list of Groups. Each Group has a list
 // of permissions that it enables.
 type RoleGroupDB interface {
-	GetAllGroups() ([]*AuthGroup, error)
+	GetGroups() ([]*AuthGroup, error)
 	GetByName(name string) (*AuthGroup, error)
 	GetByID(id GroupIDU32) (*AuthGroup, error)
 	InsertGroup(group *AuthGroup) error
@@ -177,7 +177,7 @@ func newDummyRoleGroupDB() *dummyRoleGroupDB {
 	return db
 }
 
-func (x *dummyRoleGroupDB) GetAllGroups() ([]*AuthGroup, error) {
+func (x *dummyRoleGroupDB) GetGroups() ([]*AuthGroup, error) {
 	groups := []*AuthGroup{}
 	x.groupsLock.RLock()
 	for _, v := range x.groupsByName {
@@ -377,7 +377,7 @@ func readAllGroups(rows *sql.Rows, queryError error) ([]*AuthGroup, error) {
 	return groups, nil
 }
 
-func (x *sqlGroupDB) GetAllGroups() ([]*AuthGroup, error) {
+func (x *sqlGroupDB) GetGroups() ([]*AuthGroup, error) {
 	return readAllGroups(x.db.Query("SELECT id,name,permlist FROM authgroup"))
 }
 
@@ -446,7 +446,7 @@ type RoleGroupCache struct {
 	hasAll       bool
 }
 
-func (x *RoleGroupCache) GetAllGroups() ([]*AuthGroup, error) {
+func (x *RoleGroupCache) GetGroups() ([]*AuthGroup, error) {
 	x.groupsLock.RLock()
 	if x.hasAll {
 		groups := make([]*AuthGroup, 0)
@@ -462,7 +462,7 @@ func (x *RoleGroupCache) GetAllGroups() ([]*AuthGroup, error) {
 		// already. All we're doing here is filling in the blanks that existed before
 		// this system came online.
 		x.groupsLock.RUnlock()
-		groups, err := x.backend.GetAllGroups()
+		groups, err := x.backend.GetGroups()
 		if err != nil {
 			return nil, err
 		}

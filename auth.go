@@ -338,8 +338,8 @@ func (x *Central) GetPermit(identity string) (*Permit, error) {
 }
 
 // Retrieve all Permits.
-func (x *Central) GetAllPermits() (map[string]*Permit, error) {
-	return x.permitDB.GetAllPermits()
+func (x *Central) GetPermits() (map[string]*Permit, error) {
+	return x.permitDB.GetPermits()
 }
 
 // Change a Permit.
@@ -372,6 +372,11 @@ func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
 		x.Log.Printf("CreateAuthenticatorIdentity failed (%v) (%v)", identity, e)
 	}
 	return e
+}
+
+// Retrieve all identities known to the Authenticator.
+func (x *Central) GetAuthenticatorIdentities() ([]string, error) {
+	return x.authenticator.GetIdentities()
 }
 
 // Retrieve the Role Group Database (which may be nil)

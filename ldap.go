@@ -40,6 +40,10 @@ func (x *ldapAuthenticator) CreateIdentity(identity, password string) error {
 	return ErrUnsupported
 }
 
+func (x *ldapAuthenticator) GetIdentities() ([]string, error) {
+	return []string{}, ErrUnsupported
+}
+
 func (x *ldapAuthenticator) Close() {
 	if x.con != nil {
 		x.con.Close()

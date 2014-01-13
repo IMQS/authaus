@@ -51,10 +51,10 @@ func TestRoleDB(t *testing.T) {
 	fetchAllGroups := func() {
 		for i := 0; i < 1000; i++ {
 			roleGroupDBCache.lockAndReset()
-			if all, err := c.GetRoleGroupDB().GetAllGroups(); err != nil {
-				t.Errorf("GetAllGroups failed: %v", err)
+			if all, err := c.GetRoleGroupDB().GetGroups(); err != nil {
+				t.Errorf("GetGroups failed: %v", err)
 			} else if len(all) != 2 {
-				t.Errorf("GetAllGroups did not return expected number of groups")
+				t.Errorf("GetGroups did not return expected number of groups")
 			}
 		}
 	}
