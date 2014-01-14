@@ -1,5 +1,5 @@
 /*
-Package Authaus (pronounced "outhouse") is an authentication and authorization system.
+Package Authaus is an authentication and authorization system.
 
 Authaus brings together the following pluggable components:
 
