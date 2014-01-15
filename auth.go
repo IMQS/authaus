@@ -102,6 +102,7 @@ type CentralStats struct {
 	InvalidSessionKeys uint64
 	ExpiredSessionKeys uint64
 	InvalidPasswords   uint64
+	EmptyIdentities    uint64
 	GoodOnceOffAuth    uint64
 	GoodLogin          uint64
 }
@@ -112,7 +113,7 @@ func isPowerOf2(x uint64) bool {
 
 func (x *CentralStats) IncrementAndLog(name string, val *uint64, logger *log.Logger) {
 	n := atomic.AddUint64(&x.InvalidSessionKeys, 1)
-	if isPowerOf2(n) || (n&1023) == 0 {
+	if isPowerOf2(n) || (n&255) == 0 {
 		logger.Printf("%v %v", n, name)
 	}
 }
@@ -127,6 +128,10 @@ func (x *CentralStats) IncrementExpiredSessionKey(logger *log.Logger) {
 
 func (x *CentralStats) IncrementInvalidPasswords(logger *log.Logger) {
 	x.IncrementAndLog("invalid passwords", &x.InvalidPasswords, logger)
+}
+
+func (x *CentralStats) IncrementEmptyIdentities(logger *log.Logger) {
+	x.IncrementAndLog("empty identities", &x.EmptyIdentities, logger)
 }
 
 func (x *CentralStats) IncrementGoodOnceOffAuth(logger *log.Logger) {
@@ -282,6 +287,14 @@ func (x *Central) GetTokenFromSession(sessionkey string) (*Token, error) {
 
 // Perform a once-off authentication
 func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Token, error) {
+	// Treat empty identity specially, since this is a very common condition, and
+	// tends to flood the logs.
+	// Some day we may realize that it is better to emit the IP addresses here, even
+	// for empty identity authorization requests.
+	if identity == "" {
+		x.Stats.IncrementEmptyIdentities(x.Log)
+		return nil, ErrIdentityEmpty
+	}
 	if eAuth := x.authenticator.Authenticate(identity, password); eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(identity); ePermit == nil {
 			t := &Token{}
