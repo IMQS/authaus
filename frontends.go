@@ -88,8 +88,11 @@ func HttpHandlerWhoAmI(config *ConfigHTTP, central *Central, w http.ResponseWrit
 }
 
 func HttpSendTxt(w http.ResponseWriter, responseCode int, responseBody string) {
-	w.WriteHeader(responseCode)
 	w.Header().Add("Content-Type", "text/plain")
+	w.Header().Add("Cache-Control", "no-cache, no-store, must revalidate")
+	w.Header().Add("Pragma", "no-cache")
+	w.Header().Add("Expires", "0")
+	w.WriteHeader(responseCode)
 	fmt.Fprintf(w, "%v", responseBody)
 }
 
