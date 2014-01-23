@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -77,6 +78,10 @@ type Token struct {
 	Identity string
 	Expires  time.Time
 	Permit   Permit
+}
+
+func CanonicalizeIdentity(identity string) string {
+	return strings.ToLower(identity)
 }
 
 // Returns a random string of 'nchars' characters, sampled uniformly from the given corpus of characters.

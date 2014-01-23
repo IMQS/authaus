@@ -36,6 +36,7 @@ type PermitDB interface {
 	GetPermits() (map[string]*Permit, error)
 	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
+	// identity is canonicalized before stored
 	SetPermit(identity string, permit *Permit) error
 	Close() // Typically used to close a database handle
 }
@@ -73,7 +74,7 @@ func newDummyAuthenticator() *dummyAuthenticator {
 func (x *dummyAuthenticator) Authenticate(identity, password string) error {
 	x.passwordsLock.RLock()
 	defer x.passwordsLock.RUnlock()
-	truth, exists := x.passwords[identity]
+	truth, exists := x.passwords[CanonicalizeIdentity(identity)]
 	if !exists {
 		return ErrIdentityAuthNotFound
 	} else if truth == password {
@@ -86,8 +87,8 @@ func (x *dummyAuthenticator) Authenticate(identity, password string) error {
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
 	x.passwordsLock.Lock()
 	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[identity]; exists {
-		x.passwords[identity] = password
+	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; exists {
+		x.passwords[CanonicalizeIdentity(identity)] = password
 	} else {
 		return ErrIdentityAuthNotFound
 	}
@@ -97,8 +98,8 @@ func (x *dummyAuthenticator) SetPassword(identity, password string) error {
 func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 	x.passwordsLock.Lock()
 	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[identity]; !exists {
-		x.passwords[identity] = password
+	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; !exists {
+		x.passwords[CanonicalizeIdentity(identity)] = password
 		return nil
 	} else {
 		return ErrIdentityExists
@@ -268,7 +269,7 @@ func (x *dummySessionDB) Close() {
 func (x *dummySessionDB) sessionKeysForIdentity(identity string) []string {
 	sessions := []string{}
 	for ses, p := range x.sessions {
-		if p.Identity == identity {
+		if CanonicalizeIdentity(p.Identity) == CanonicalizeIdentity(identity) {
 			sessions = append(sessions, ses)
 		}
 	}
@@ -410,7 +411,7 @@ func (x *cachedSessionDB) Close() {
 func (x *cachedSessionDB) sessionKeysForIdentity(identity string) []string {
 	sessions := []string{}
 	for ses, cached := range x.cachedSessions {
-		if cached.token.Identity == identity {
+		if CanonicalizeIdentity(cached.token.Identity) == CanonicalizeIdentity(identity) {
 			sessions = append(sessions, ses)
 		}
 	}
@@ -433,7 +434,7 @@ func newDummyPermitDB() *dummyPermitDB {
 
 func (x *dummyPermitDB) GetPermit(identity string) (*Permit, error) {
 	x.permitsLock.RLock()
-	permit := x.permits[identity]
+	permit := x.permits[CanonicalizeIdentity(identity)]
 	x.permitsLock.RUnlock()
 	if permit != nil {
 		return permit.Clone(), nil
@@ -454,7 +455,7 @@ func (x *dummyPermitDB) GetPermits() (map[string]*Permit, error) {
 
 func (x *dummyPermitDB) SetPermit(identity string, permit *Permit) error {
 	x.permitsLock.Lock()
-	x.permits[identity] = permit
+	x.permits[CanonicalizeIdentity(identity)] = permit
 	x.permitsLock.Unlock()
 	return nil
 }

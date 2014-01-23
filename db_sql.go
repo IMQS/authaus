@@ -43,7 +43,7 @@ type sqlAuthenticationDB struct {
 }
 
 func (x *sqlAuthenticationDB) Authenticate(identity, password string) error {
-	row := x.db.QueryRow(`SELECT password FROM authuser WHERE identity = $1`, identity)
+	row := x.db.QueryRow(`SELECT password FROM authuser WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
 	dbHash := ""
 	if err := row.Scan(&dbHash); err != nil {
 		return ErrIdentityAuthNotFound
@@ -62,7 +62,7 @@ func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
 		return err
 	}
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuser SET password = $1 WHERE identity = $2`, hash, identity); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuser SET password = $1 WHERE LOWER(identity) = $2`, hash, CanonicalizeIdentity(identity)); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
@@ -83,14 +83,16 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 	if ehash != nil {
 		return ehash
 	}
+
+	row := x.db.QueryRow(`SELECT identity FROM authuser WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
+	dbHash := ""
+	if err := row.Scan(&dbHash); err == nil {
+		return ErrIdentityExists
+	}
 	if tx, etx := x.db.Begin(); etx == nil {
 		if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, password) VALUES ($1, $2)`, identity, hash); ecreate == nil {
 			return tx.Commit()
 		} else {
-			//fmt.Printf("CreateIdentity failed because: %v", ecreate)
-			if strings.Index(ecreate.Error(), "already exists") != -1 {
-				ecreate = ErrIdentityExists
-			}
 			tx.Rollback()
 			return ecreate
 		}
@@ -132,7 +134,7 @@ type sqlSessionDB struct {
 }
 
 func (x *sqlSessionDB) Write(sessionkey string, token *Token) error {
-	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, identity, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, token.Identity, token.Permit.Serialize(), token.Expires)
+	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, identity, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, CanonicalizeIdentity(token.Identity), token.Permit.Serialize(), token.Expires)
 	return err
 }
 
@@ -153,12 +155,12 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 }
 
 func (x *sqlSessionDB) PermitChanged(identity string, permit *Permit) error {
-	_, err := x.db.Exec(`UPDATE authsession SET permit = $1 WHERE identity = $2`, permit.Serialize(), identity)
+	_, err := x.db.Exec(`UPDATE authsession SET permit = $1 WHERE LOWER(identity) = $2`, permit.Serialize(), CanonicalizeIdentity(identity))
 	return err
 }
 
 func (x *sqlSessionDB) InvalidateSessionsForIdentity(identity string) error {
-	_, err := x.db.Exec(`DELETE FROM authsession WHERE identity = $1`, identity)
+	_, err := x.db.Exec(`DELETE FROM authsession WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
 	return err
 }
 
@@ -189,11 +191,11 @@ func (x *sqlPermitDB) GetPermits() (map[string]*Permit, error) {
 func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	encodedPermit := permit.Serialize()
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuser SET permit = $1 WHERE identity = $2`, encodedPermit, identity); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuser SET permit = $1 WHERE identity = $2`, encodedPermit, CanonicalizeIdentity(identity)); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
-				if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, permit) VALUES ($1, $2)`, identity, encodedPermit); ecreate == nil {
+				if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, permit) VALUES ($1, $2)`, CanonicalizeIdentity(identity), encodedPermit); ecreate == nil {
 					return tx.Commit()
 				} else {
 					tx.Rollback()
@@ -219,8 +221,8 @@ func (x *sqlPermitDB) Close() {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func getPermitFromDB(db *sql.DB, tableName, permitField, findOnField, findValue string, baseError error) (*Permit, error) {
-	qstr := fmt.Sprintf(`SELECT %v FROM %v WHERE %v = $1`, permitField, tableName, findOnField)
-	row := db.QueryRow(qstr, findValue)
+	qstr := fmt.Sprintf(`SELECT %v FROM %v WHERE LOWER(%v) = $1`, permitField, tableName, findOnField)
+	row := db.QueryRow(qstr, CanonicalizeIdentity(findValue))
 	epermit := ""
 	if err := row.Scan(&epermit); err != nil {
 		return nil, NewError(baseError, err.Error())
@@ -256,7 +258,7 @@ func getPermitsFromDB(db *sql.DB, tableName, permitField, identityField string) 
 			return nil, err
 		}
 		if identity.Valid {
-			permits[identity.String] = p
+			permits[CanonicalizeIdentity(identity.String)] = p
 		}
 	}
 	return permits, err
