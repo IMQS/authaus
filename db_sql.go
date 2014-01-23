@@ -84,15 +84,14 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 		return ehash
 	}
 
-	row := x.db.QueryRow(`SELECT identity FROM authuser WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
-	dbHash := ""
-	if err := row.Scan(&dbHash); err == nil {
-		return ErrIdentityExists
-	}
 	if tx, etx := x.db.Begin(); etx == nil {
 		if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, password) VALUES ($1, $2)`, identity, hash); ecreate == nil {
 			return tx.Commit()
 		} else {
+			//fmt.Printf("CreateIdentity failed because: %v", ecreate)
+			if strings.Index(ecreate.Error(), "already exists") != -1 {
+				ecreate = ErrIdentityExists
+			}
 			tx.Rollback()
 			return ecreate
 		}
@@ -448,6 +447,10 @@ func SqlCreateSchema_User(conx *DBConnection) error {
 	versions = append(versions, `
 	CREATE TABLE authuser (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
 	CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);`)
+
+	versions = append(versions, `
+	DROP INDEX idx_authuser_identity;
+	CREATE UNIQUE INDEX idx_authuser_identity ON authuser (LOWER(identity));`)
 
 	return MigrateSchema(conx, "authuser", versions)
 }
