@@ -1,6 +1,7 @@
 package authaus
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -66,6 +67,10 @@ func (x *Permit) Deserialize(encoded string) error {
 	} else {
 		return e
 	}
+}
+
+func (a *Permit) Equals(b *Permit) bool {
+	return bytes.Equal(a.Roles, b.Roles)
 }
 
 /*

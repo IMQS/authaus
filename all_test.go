@@ -42,6 +42,31 @@ func setup1(t *testing.T) *Central {
 	return central
 }
 
+func isPrefix(prefix, str string) bool {
+	return strings.Index(str, prefix) == 0
+}
+
+func TestIdentityCaseSensitivity(t *testing.T) {
+	c := setup1(t)
+
+	if e := c.CreateAuthenticatorIdentity("JOE", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
+		t.Errorf("CreateIdentity should fail because identities are case-insensitive")
+	}
+	perm := Permit{}
+	roles := [2]byte{99}
+	perm.Roles = roles[:]
+	if e := c.SetPermit("JOE", &perm); e != nil {
+		t.Errorf("SetPermit should ignore identity case")
+	}
+
+	if p1, e := c.GetPermit("joe"); e != nil || !p1.Equals(&perm) {
+		t.Errorf("SetPermit or GetPermit is not ignoring case")
+	}
+	if p1, e := c.GetPermit("JOE"); e != nil || !p1.Equals(&perm) {
+		t.Errorf("SetPermit or GetPermit is not ignoring case")
+	}
+}
+
 func TestBasicAuth(t *testing.T) {
 	c := setup1(t)
 
@@ -63,6 +88,7 @@ func TestBasicAuth(t *testing.T) {
 	expect_username_password("", "123", ErrIdentityEmpty.Error())
 	expect_username_password(" ", "123", ErrIdentityEmpty.Error())
 	expect_username_password("joe", "123", "")
+	expect_username_password("JOE", "123", "")
 }
 
 func TestPermit(t *testing.T) {

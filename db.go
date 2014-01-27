@@ -36,7 +36,7 @@ type PermitDB interface {
 	GetPermits() (map[string]*Permit, error)
 	// This should create the permit if it does not exist. A call to this function is followed
 	// by a call to SessionDB.PermitChanged.
-	// identity is canonicalized before stored
+	// identity is canonicalized before being stored
 	SetPermit(identity string, permit *Permit) error
 	Close() // Typically used to close a database handle
 }
