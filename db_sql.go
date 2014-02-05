@@ -190,11 +190,11 @@ func (x *sqlPermitDB) GetPermits() (map[string]*Permit, error) {
 func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	encodedPermit := permit.Serialize()
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuser SET permit = $1 WHERE identity = $2`, encodedPermit, CanonicalizeIdentity(identity)); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuser SET permit = $1 WHERE LOWER(identity) = $2`, encodedPermit, CanonicalizeIdentity(identity)); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
-				if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, permit) VALUES ($1, $2)`, CanonicalizeIdentity(identity), encodedPermit); ecreate == nil {
+				if _, ecreate := tx.Exec(`INSERT INTO authuser (identity, permit) VALUES ($1, $2)`, identity, encodedPermit); ecreate == nil {
 					return tx.Commit()
 				} else {
 					tx.Rollback()
