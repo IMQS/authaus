@@ -61,19 +61,16 @@ func (x *PermissionList) Remove(perm PermissionU16) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// A mapping from 16-bit permission number to a textual description of that permission
-type PermissionNameTable []string
+// A mapping from 16-bit permission number to a textual name of that permission
+type PermissionNameTable map[PermissionU16]string
 
-func (x PermissionNameTable) Get(perm PermissionU16) string {
-	return x[perm]
-}
-
-func (x *PermissionNameTable) Append(perm PermissionU16, description string) {
-	if len(*x) != int(perm) {
-		// This is just a sanity check. Why would you want to do it any other way?
-		panic("You must build up a permission table from empty, without any gaps in the enumerations")
+// Produces a map from permission name to permission number
+func (x *PermissionNameTable) Inverted() map[string]PermissionU16 {
+	inverted := map[string]PermissionU16{}
+	for p, n := range *x {
+		inverted[n] = p
 	}
-	*x = append(*x, description)
+	return inverted
 }
 
 func GroupNameIsLegal(name string) bool {
