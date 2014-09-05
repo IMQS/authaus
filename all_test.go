@@ -3,6 +3,8 @@ package authaus
 import (
 	"bytes"
 	"code.google.com/p/go.crypto/scrypt"
+	"database/sql"
+	"flag"
 	"io/ioutil"
 	"log"
 	"strings"
@@ -10,10 +12,41 @@ import (
 	"time"
 )
 
-// NOTE: Some of these tests stress concurrency, so you must run them with at least -test.cpu 2
+/*
+NOTE: Some of these tests stress concurrency, so you must run them with at least -test.cpu 2
 
-// TODO: Add test that verifies that SetPassword does not create an identity if that identity does not already exist
-// TODO: Add a test mode that stresses each backend individually
+TODO: Add test that verifies that SetPassword does not create an identity if that identity does not already exist
+
+Create a test Postgres database:
+	create role auth_test password 'auth_test';
+	create database auth_test owner = auth_test;
+
+Suggested test runs that you should do:
+
+	go test github.com/IMQS/authaus -test.cpu 2
+	go test github.com/IMQS/authaus -test.cpu 2 -backend_postgres
+	go test -race github.com/IMQS/authaus -test.cpu 2
+	go test -race github.com/IMQS/authaus -test.cpu 2 -backend_postgres
+
+In other words, test with and without race detector, and with dummy backend,
+and Postgres backend. I'm not sure that testing without the race detector adds any value.
+*/
+
+var backend_postgres = flag.Bool("backend_postgres", false, "Run tests against Postgres backend")
+
+var conx_postgres = DBConnection{
+	Driver:   "postgres",
+	Host:     "localhost",
+	Port:     5432,
+	Database: "auth_test",
+	User:     "auth_test",
+	Password: "auth_test",
+	SSL:      false,
+}
+
+func isBackendTest() bool {
+	return *backend_postgres
+}
 
 func setup1_joePermit() Permit {
 	p := Permit{}
@@ -23,10 +56,48 @@ func setup1_joePermit() Permit {
 }
 
 func setup1(t *testing.T) *Central {
-	authenticator := newDummyAuthenticator()
-	sessionDB := newDummySessionDB()
-	permitDB := newDummyPermitDB()
-	roleDB := newDummyRoleGroupDB()
+	var authenticator Authenticator
+	var sessionDB SessionDB
+	var permitDB PermitDB
+	var roleDB RoleGroupDB
+
+	connectToDB := func(conx DBConnection) {
+		dbName := conx.Host + ":" + conx.Database
+		if db, errdb := conx.Connect(); errdb != nil {
+			t.Fatalf("Unable to connect to database %v: %v", dbName, errdb)
+		} else {
+			if err := sqlDeleteAllTables(db); err != nil {
+				t.Fatalf("Unable to wipe database %v: %v", dbName, err)
+			}
+			if err := SqlCreateSchema_Session(&conx); err != nil {
+				t.Fatalf("Unable to create session schema in database %v: %v", dbName, err)
+			}
+			if err := SqlCreateSchema_User(&conx); err != nil {
+				t.Fatalf("Unable to create user schema in database %v: %v", dbName, err)
+			}
+			if err := SqlCreateSchema_RoleGroupDB(&conx); err != nil {
+				t.Fatalf("Unable to create role/group schema in database %v: %v", dbName, err)
+			}
+		}
+
+		var err [4]error
+		authenticator, err[0] = NewAuthenticationDB_SQL(&conx)
+		sessionDB, err[1] = NewSessionDB_SQL(&conx)
+		permitDB, err[2] = NewPermitDB_SQL(&conx)
+		roleDB, err[3] = NewRoleGroupDB_SQL(&conx)
+		if firstError(err[:]) != nil {
+			t.Fatalf("Unable to connect to database %v: %v", dbName, firstError(err[:]))
+		}
+	}
+
+	if *backend_postgres {
+		connectToDB(conx_postgres)
+	} else {
+		authenticator = newDummyAuthenticator()
+		sessionDB = newDummySessionDB()
+		permitDB = newDummyPermitDB()
+		roleDB = newDummyRoleGroupDB()
+	}
 	logger := log.New(ioutil.Discard, "", log.LstdFlags)
 	central := NewCentral(logger, authenticator, permitDB, sessionDB, roleDB)
 
@@ -40,6 +111,32 @@ func setup1(t *testing.T) *Central {
 	permitDB.SetPermit("joe", &joePermit)
 
 	return central
+}
+
+func firstError(errors []error) error {
+	for _, e := range errors {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func sqlDeleteAllTables(db *sql.DB) error {
+	statements := []string{
+		"DROP TABLE IF EXISTS authgroup",
+		"DROP TABLE IF EXISTS authsession",
+		"DROP TABLE IF EXISTS authuser",
+		"DROP TABLE IF EXISTS authgroup_version",
+		"DROP TABLE IF EXISTS authsession_version",
+		"DROP TABLE IF EXISTS authuser_version",
+	}
+	for _, st := range statements {
+		if _, err := db.Exec(st); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isPrefix(prefix, str string) bool {
@@ -136,6 +233,9 @@ func TestLoad(t *testing.T) {
 
 	nsimul := 20
 	conPerThread := int64(10000)
+	if isBackendTest() {
+		conPerThread = int64(100)
+	}
 	waits := make([]chan bool, nsimul)
 	for i := 0; i < nsimul; i++ {
 		waits[i] = make(chan bool, 0)

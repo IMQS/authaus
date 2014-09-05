@@ -198,5 +198,9 @@ administrator will assign 375 security groups to any individual. We expect the n
 assigned to any individual to be in the range of 1 to 20. This makes 375 a gigantic
 buffer.
 
+Testing
+
+See the guidelines at the top of all_test.go for testing instructions.
+
 */
 package authaus
