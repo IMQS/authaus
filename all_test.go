@@ -18,8 +18,8 @@ NOTE: Some of these tests stress concurrency, so you must run them with at least
 TODO: Add test that verifies that SetPassword does not create an identity if that identity does not already exist
 
 Create a test Postgres database:
-	create role auth_test password 'auth_test';
-	create database auth_test owner = auth_test;
+	create role authaus_test login password 'authaus_test';
+	create database authaus_test owner = authaus_test;
 
 Suggested test runs that you should do:
 
@@ -38,9 +38,9 @@ var conx_postgres = DBConnection{
 	Driver:   "postgres",
 	Host:     "localhost",
 	Port:     5432,
-	Database: "auth_test",
-	User:     "auth_test",
-	Password: "auth_test",
+	Database: "authaus_test",
+	User:     "authaus_test",
+	Password: "authaus_test",
 	SSL:      false,
 }
 
