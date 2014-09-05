@@ -122,7 +122,7 @@ func isPowerOf2(x uint64) bool {
 }
 
 func (x *CentralStats) IncrementAndLog(name string, val *uint64, logger *log.Logger) {
-	n := atomic.AddUint64(&x.InvalidSessionKeys, 1)
+	n := atomic.AddUint64(val, 1)
 	if isPowerOf2(n) || (n&255) == 0 {
 		logger.Printf("%v %v", n, name)
 	}
