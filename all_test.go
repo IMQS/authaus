@@ -258,3 +258,17 @@ func TestSessionCacheEviction(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionDelete(t *testing.T) {
+	c := setup1(t)
+	key, _, _ := c.Login("joe", "123")
+	_, err := c.GetTokenFromSession(key)
+	if err != nil {
+		t.Error("Login should not fail so early")
+	}
+	c.Logout(key)
+	_, err = c.GetTokenFromSession(key)
+	if err != ErrInvalidSessionToken {
+		t.Error("Expected ErrInvalidSessionToken after Logout")
+	}
+}

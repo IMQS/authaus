@@ -115,6 +115,7 @@ type CentralStats struct {
 	EmptyIdentities    uint64
 	GoodOnceOffAuth    uint64
 	GoodLogin          uint64
+	Logout             uint64
 }
 
 func isPowerOf2(x uint64) bool {
@@ -150,6 +151,10 @@ func (x *CentralStats) IncrementGoodOnceOffAuth(logger *log.Logger) {
 
 func (x *CentralStats) IncrementGoodLogin(logger *log.Logger) {
 	x.IncrementAndLog("good login", &x.GoodLogin, logger)
+}
+
+func (x *CentralStats) IncrementLogout(logger *log.Logger) {
+	x.IncrementAndLog("logout", &x.Logout, logger)
 }
 
 /*
@@ -353,6 +358,12 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	sessionkey = ""
 	token = nil
 	return
+}
+
+// Logout, which erases the session key
+func (x *Central) Logout(sessionkey string) error {
+	x.Stats.IncrementLogout(x.Log)
+	return x.sessionDB.Delete(sessionkey)
 }
 
 // Retrieve a Permit.

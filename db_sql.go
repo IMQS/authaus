@@ -153,6 +153,11 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 	}
 }
 
+func (x *sqlSessionDB) Delete(sessionkey string) error {
+	_, err := x.db.Exec(`DELETE FROM authsession WHERE sessionkey = $1`, sessionkey)
+	return err
+}
+
 func (x *sqlSessionDB) PermitChanged(identity string, permit *Permit) error {
 	_, err := x.db.Exec(`UPDATE authsession SET permit = $1 WHERE LOWER(identity) = $2`, permit.Serialize(), CanonicalizeIdentity(identity))
 	return err

@@ -120,6 +120,17 @@ func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWrite
 	}
 }
 
+func HttpHandlerLogout(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
+	sessioncookie, _ := r.Cookie(config.CookieName)
+	if sessioncookie != nil {
+		err := central.Logout(sessioncookie.Value)
+		if err != nil {
+			HttpSendTxt(w, http.StatusServiceUnavailable, err.Error())
+		}
+	}
+	HttpSendTxt(w, http.StatusOK, "")
+}
+
 // Run as a standalone HTTP server. This just wires up the various HTTP handler functions and starts
 // a listener. You will probably want to add your own entry points and do that yourself instead of using this.
 // This function is useful for demo/example purposes.
@@ -132,6 +143,7 @@ func RunHttp(config *ConfigHTTP, central *Central) error {
 
 	http.HandleFunc("/whoami", makehandler(HttpHandlerWhoAmI))
 	http.HandleFunc("/login", makehandler(HttpHandlerLogin))
+	http.HandleFunc("/logout", makehandler(HttpHandlerLogout))
 
 	fmt.Printf("Listening on %v:%v\n", config.Bind, config.Port)
 	if err := http.ListenAndServe(config.Bind+":"+strconv.Itoa(config.Port), nil); err != nil {

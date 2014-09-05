@@ -31,11 +31,11 @@ and whether you'd like that to face the world, or whether it should only be
 accessible via other services that you control.
 
 At startup, your services open an HTTP connection to the Authaus service. This connection
-will typically live for the duration of service. For every incoming request, you peel off whatever
+will typically live for the duration of the service. For every incoming request, you peel off whatever
 authentication information is associated with that request. This is either a session key,
 or a username/password combination. Let's call it the authorization information. You then ask
 Authaus to tell you WHO this authorization information belongs to, as well as WHAT this
-authorization information allows the requester to do.
+authorization information allows the requester to do (ie Authentication and Authorization).
 Authaus responds either with a 401 (Unauthorized), 403 (Forbidden), or a 200 (OK) and a JSON object
 that tells you the identity of the agent submitting this request, as well the permissions
 that this agent posesses. It's up to your individual services to decide what to do with that

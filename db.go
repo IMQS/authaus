@@ -49,6 +49,8 @@ type SessionDB interface {
 	Write(sessionkey string, token *Token) error
 	// Fetch a token
 	Read(sessionkey string) (*Token, error)
+	// Delete a token (used to implement "logout")
+	Delete(sessionkey string) error
 	// Assign the new permit to all of the sessions belonging to 'identity'
 	PermitChanged(identity string, permit *Permit) error
 	// Delete all sessions belonging to the given identity.
@@ -244,6 +246,13 @@ func (x *dummySessionDB) Read(sessionkey string) (*Token, error) {
 	return token, nil
 }
 
+func (x *dummySessionDB) Delete(sessionkey string) error {
+	x.sessionsLock.Lock()
+	delete(x.sessions, sessionkey)
+	x.sessionsLock.Unlock()
+	return nil
+}
+
 func (x *dummySessionDB) PermitChanged(identity string, permit *Permit) error {
 	x.sessionsLock.Lock()
 	for _, ses := range x.sessionKeysForIdentity(identity) {
@@ -296,7 +305,7 @@ type cachedSessionDB struct {
 	cachedSessions     map[string]*cachedToken
 	cachedSessionsLock sync.RWMutex
 	db                 SessionDB
-	enableDB           bool
+	enableDB           bool // Used by tests to disable DB reads/writes
 }
 
 func newCachedSessionDB(storage SessionDB) *cachedSessionDB {
@@ -377,6 +386,19 @@ func (x *cachedSessionDB) Read(sessionkey string) (*Token, error) {
 			return nil, ErrInvalidSessionToken
 		}
 	}
+}
+
+func (x *cachedSessionDB) Delete(sessionkey string) error {
+	// First delete from the DB, and then from the cache
+	if x.enableDB {
+		if err := x.db.Delete(sessionkey); err != nil {
+			return err
+		}
+	}
+	x.cachedSessionsLock.Lock()
+	delete(x.cachedSessions, sessionkey)
+	x.cachedSessionsLock.Unlock()
+	return nil
 }
 
 func (x *cachedSessionDB) PermitChanged(identity string, permit *Permit) error {
