@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // Tested against b021d0ef20de4f7ed239e2cbe3b95648d8e41e9 (Aug 27, 2014)
 	"strings"
 )
 
@@ -89,7 +89,7 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 			return tx.Commit()
 		} else {
 			//fmt.Printf("CreateIdentity failed because: %v", ecreate)
-			if strings.Index(ecreate.Error(), "already exists") != -1 {
+			if strings.Index(ecreate.Error(), "duplicate key") != -1 {
 				ecreate = ErrIdentityExists
 			}
 			tx.Rollback()
@@ -229,6 +229,11 @@ func getPermitFromDB(db *sql.DB, tableName, permitField, findOnField, findValue 
 	row := db.QueryRow(qstr, CanonicalizeIdentity(findValue))
 	epermit := ""
 	if err := row.Scan(&epermit); err != nil {
+		// The following check, which according to the db/sql docs should work, fails on Postgres.
+		// Suspect a bug in the Postgres driver. BMH 2014-09-12
+		if err == sql.ErrNoRows {
+			return nil, baseError
+		}
 		return nil, NewError(baseError, err.Error())
 	} else {
 		p := &Permit{}

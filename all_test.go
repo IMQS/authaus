@@ -147,7 +147,7 @@ func TestIdentityCaseSensitivity(t *testing.T) {
 	c := setup1(t)
 
 	if e := c.CreateAuthenticatorIdentity("JOE", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
-		t.Errorf("CreateIdentity should fail because identities are case-insensitive")
+		t.Errorf("CreateIdentity should fail because identities are case-insensitive. Instead, error is %v", e)
 	}
 	perm := Permit{}
 	roles := [2]byte{99}
