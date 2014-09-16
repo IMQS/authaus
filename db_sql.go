@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	_ "github.com/lib/pq" // Tested against b021d0ef20de4f7ed239e2cbe3b95648d8e41e9 (Aug 27, 2014)
+	_ "github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
 	"strings"
 )
 

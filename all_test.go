@@ -63,6 +63,11 @@ func setup1(t *testing.T) *Central {
 
 	connectToDB := func(conx DBConnection) {
 		dbName := conx.Host + ":" + conx.Database
+
+		if ecreate := SqlCreateDatabase(&conx); ecreate != nil {
+			t.Fatalf("Unable to create test database: %v: %v", dbName, ecreate)
+		}
+
 		if db, errdb := conx.Connect(); errdb != nil {
 			t.Fatalf("Unable to connect to database %v: %v", dbName, errdb)
 		} else {
