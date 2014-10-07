@@ -234,6 +234,10 @@ func getPermitFromDB(db *sql.DB, tableName, permitField, findOnField, findValue 
 		if err == sql.ErrNoRows {
 			return nil, baseError
 		}
+		// Work around for the bug mentioned above (2014-10-07)
+		if strings.Index(err.Error(), "Scan error on column index 0") != -1 {
+			return nil, baseError
+		}
 		return nil, NewError(baseError, err.Error())
 	} else {
 		p := &Permit{}
