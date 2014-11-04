@@ -42,6 +42,8 @@ Full populated config:
 		}
 	},
 	"SessionDB": {
+		"MaxActiveSessions": 0,
+		"SessionExpirySeconds": 2592000,
 		"DB": {
 			"Driver":		"postgres",
 			"Host":			"auth.example.com",
@@ -135,8 +137,11 @@ type ConfigPermitDB struct {
 }
 
 type ConfigSessionDB struct {
-	DB DBConnection
+	DB                   DBConnection
+	MaxActiveSessions    int32 // Maximum number of active sessions per user. legal values are 0 and 1. Zero means unlimited.
+	SessionExpirySeconds int64 // Lifetime of newly created sessions, in seconds. Zero means default, which is defaultSessionExpirySeconds (30 days)
 }
+
 type ConfigRoleGroupDB struct {
 	DB DBConnection
 }

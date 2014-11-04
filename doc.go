@@ -23,7 +23,8 @@ but the internals certainly have not been built with millions of users in mind.
 
 The intended usage model is this:
 
-Authaus is intended to be run as a standalone HTTP service (aka a REST service).
+Authaus is intended to be embedded inside your security system, and run as a standalone HTTP
+service (aka a REST service).
 This HTTP service CAN be open to the wide world, but it's also completely OK to let it listen
 only to servers inside your DMZ. Authaus only gives you the skeleton and some examples of HTTP responders.
 It's up to you to flesh out the details of your authentication HTTP interface,
@@ -41,7 +42,8 @@ that tells you the identity of the agent submitting this request, as well the pe
 that this agent posesses. It's up to your individual services to decide what to do with that
 information.
 
-It should be very easy to expose Authaus over a protocol other than HTTP.
+It should be very easy to expose Authaus over a protocol other than HTTP, since Authaus is
+intended to be easy to embed. The HTTP API is merely an illustrative example.
 
 Concepts
 
@@ -145,6 +147,10 @@ Similarly, if a password is changed with Authaus, then all sessions are invalida
 note though, that if a password is changed through an external mechanism (such as with LDAP),
 then Authaus will have no way of knowing this, and will continue to serve up sessions
 that were authenticated with the old password. This is a problem that needs addressing.
+
+You can limit the number of concurrent sessions per user to 1, by setting
+MaxActiveSessions.ConfigSessionDB to 1. This setting may only be zero or one. Zero, which is
+the default, means an unlimited number of concurrent sessions per user.
 
 Session Cache
 

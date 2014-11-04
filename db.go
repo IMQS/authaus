@@ -18,7 +18,7 @@ var (
 
 // The primary job of an authenticator is to validate an identity/password.
 // It can also be responsible for creating a new account.
-// All operations except for Close must be thread-safe
+// All operations except for Close must be thread-safe.
 type Authenticator interface {
 	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
 	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
@@ -28,35 +28,26 @@ type Authenticator interface {
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
-// All operations except for Close must be thread-safe
+// All operations except for Close must be thread-safe.
 type PermitDB interface {
-	// Retrieve a permit
-	GetPermit(identity string) (*Permit, error)
-	// Retrieve all permits as a map from identity to the permit.
-	GetPermits() (map[string]*Permit, error)
-	// This should create the permit if it does not exist. A call to this function is followed
-	// by a call to SessionDB.PermitChanged.
-	// identity is canonicalized before being stored
+	GetPermit(identity string) (*Permit, error) // Retrieve a permit
+	GetPermits() (map[string]*Permit, error)    // Retrieve all permits as a map from identity to the permit.
+	// This should create the permit if it does not exist. A call to this function is
+	// followed by a call to SessionDB.PermitChanged. identity is canonicalized before being stored*/
 	SetPermit(identity string, permit *Permit) error
 	Close() // Typically used to close a database handle
 }
 
 // A Session database is essentially a key/value store where the keys are
-// session tokens, and the values are tuples of (Identity,Permit)
-// All operations except for Close must be thread-safe
+// session tokens, and the values are tuples of (Identity,Permit).
+// All operations except for Close must be thread-safe.
 type SessionDB interface {
-	// Set a token
-	Write(sessionkey string, token *Token) error
-	// Fetch a token
-	Read(sessionkey string) (*Token, error)
-	// Delete a token (used to implement "logout")
-	Delete(sessionkey string) error
-	// Assign the new permit to all of the sessions belonging to 'identity'
-	PermitChanged(identity string, permit *Permit) error
-	// Delete all sessions belonging to the given identity.
-	// This is called after a password has been changed.
-	InvalidateSessionsForIdentity(identity string) error
-	Close() // Typically used to close a database handle
+	Write(sessionkey string, token *Token) error         // Set a token
+	Read(sessionkey string) (*Token, error)              // Fetch a token
+	Delete(sessionkey string) error                      // Delete a token (used to implement "logout")
+	PermitChanged(identity string, permit *Permit) error // Assign the new permit to all of the sessions belonging to 'identity'
+	InvalidateSessionsForIdentity(identity string) error // Delete all sessions belonging to the given identity. This is called after a password has been changed.
+	Close()                                              // Typically used to close a database handle
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

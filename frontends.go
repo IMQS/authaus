@@ -44,9 +44,7 @@ func HttpReadBasicAuth(r *http.Request) (identity, password string, err error) {
 	}
 }
 
-// Reads the session cookie or the appropriate HTTP Authorization headers to determine
-// whether this request is authorized. At present we do NOT read the Authorization headers,
-// but instead use query parameters 'identity' and 'password'. This must change.
+// Reads the session cookie or the HTTP "Basic" Authorization header to determine whether this request is authorized.
 func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (*Token, error) {
 	sessioncookie, _ := r.Cookie(config.CookieName)
 	if sessioncookie != nil {

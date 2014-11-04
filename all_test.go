@@ -325,6 +325,29 @@ func TestSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestMaxSessionLimit(t *testing.T) {
+	c := setup1(t)
+	c.MaxActiveSessions = 1
+
+	// Login first time
+	key1, _, _ := c.Login("joe", "123")
+	_, err := c.GetTokenFromSession(key1)
+	if err != nil {
+		t.Fatalf("Expected key1 to be valid")
+	}
+
+	// Login second time. After this, key1 must be invalid
+	key2, _, _ := c.Login("joe", "123")
+	_, err = c.GetTokenFromSession(key1)
+	if err == nil {
+		t.Fatalf("Expected key1 to be invalid")
+	}
+	_, err = c.GetTokenFromSession(key2)
+	if err != nil {
+		t.Fatalf("Expected key2 to be valid")
+	}
+}
+
 func TestSessionCacheEviction(t *testing.T) {
 	c := setup1(t)
 	login := func(username, password string) string {

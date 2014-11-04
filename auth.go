@@ -19,7 +19,9 @@ const (
 	Divide 158 by 2 and we have a security level of 79 bits. If an attacker can try 100000 tokens per
 	second, then it would take 2 * 10^11 years to find a random good token.
 	*/
-	SessionTokenLength = 30
+	sessionTokenLength = 30
+
+	defaultSessionExpirySeconds = 30 * 24 * 3600
 )
 
 var (
@@ -85,12 +87,15 @@ type Token struct {
 	Permit   Permit
 }
 
+// Transform an identity into its canonical form. What this means is that any two identities
+// are considered equal if their canonical forms are equal. This is simply a lower-casing
+// of the identity, so that "bob@enterprise.com" is equal to "Bob@enterprise.com".
 func CanonicalizeIdentity(identity string) string {
 	return strings.ToLower(identity)
 }
 
 // Returns a random string of 'nchars' characters, sampled uniformly from the given corpus of characters.
-func RandomString(nchars int, corpus string) string {
+func randomString(nchars int, corpus string) string {
 	rbytes := make([]byte, nchars)
 	rstring := make([]byte, nchars)
 	rand.Read(rbytes)
@@ -103,7 +108,7 @@ func RandomString(nchars int, corpus string) string {
 func generateSessionKey() string {
 	// It is important not to have any unusual characters in here, especially an equals sign. Old versions of Tomcat
 	// will parse such a cookie incorrectly (imagine Cookie: magic=abracadabra=)
-	return RandomString(SessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	return randomString(sessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -169,10 +174,11 @@ type Central struct {
 	logFile                *os.File
 	Log                    *log.Logger
 	Stats                  CentralStats
+	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
 }
 
-// Create a new Central object from the specified pieces
+// Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
 func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
@@ -184,7 +190,8 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 	if roleGroupDB != nil {
 		c.roleGroupDB = NewCachedRoleGroupDB(roleGroupDB)
 	}
-	c.NewSessionExpiresAfter = 30 * 24 * time.Hour
+	c.MaxActiveSessions = 0
+	c.NewSessionExpiresAfter = time.Duration(defaultSessionExpirySeconds) * time.Second
 	c.Log = logger
 	c.Log.Printf("Authaus successfully started up\n")
 	return c
@@ -225,6 +232,14 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}()
 
+	if config.SessionDB.MaxActiveSessions < 0 || config.SessionDB.MaxActiveSessions > 1 {
+		panic(errors.New("MaxActiveSessions must be 0 or 1"))
+	}
+
+	if config.SessionDB.SessionExpirySeconds < 0 {
+		panic(errors.New("SessionExpirySeconds must be 0 or more"))
+	}
+
 	if auth, err = createAuthenticator(&config.Authenticator); err != nil {
 		panic(err)
 	}
@@ -245,6 +260,10 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 
 	c := NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB)
 	c.logFile = logfile
+	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
+	if config.SessionDB.SessionExpirySeconds != 0 {
+		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
+	}
 	return c, nil
 }
 
@@ -340,6 +359,12 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 		x.Log.Printf("Login authentication success (%v)", identity)
 		var permit *Permit
 		if permit, e = x.permitDB.GetPermit(identity); e == nil {
+			if x.MaxActiveSessions != 0 {
+				if e = x.sessionDB.InvalidateSessionsForIdentity(identity); e != nil {
+					x.Log.Printf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", identity, e)
+					return "", nil, e
+				}
+			}
 			token.Expires = time.Now().Add(x.NewSessionExpiresAfter)
 			token.Permit = *permit
 			sessionkey = generateSessionKey()
