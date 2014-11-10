@@ -223,10 +223,18 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 
 	defer func() {
 		if ePanic := recover(); ePanic != nil {
-			auth.Close()
-			permitDB.Close()
-			sessionDB.Close()
-			roleGroupDB.Close()
+			if auth != nil {
+				auth.Close()
+			}
+			if permitDB != nil {
+				permitDB.Close()
+			}
+			if sessionDB != nil {
+				sessionDB.Close()
+			}
+			if roleGroupDB != nil {
+				roleGroupDB.Close()
+			}
 			logger.Printf("Error initializing: %v\n", ePanic)
 			err = ePanic.(error)
 		}
