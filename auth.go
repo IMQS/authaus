@@ -399,6 +399,11 @@ func (x *Central) Logout(sessionkey string) error {
 	return x.sessionDB.Delete(sessionkey)
 }
 
+// Invalidate all sessions for a particular identity
+func (x *Central) InvalidateSessionsForIdentity(identity string) error {
+	return x.sessionDB.InvalidateSessionsForIdentity(identity)
+}
+
 // Retrieve a Permit.
 func (x *Central) GetPermit(identity string) (*Permit, error) {
 	return x.permitDB.GetPermit(identity)
