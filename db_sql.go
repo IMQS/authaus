@@ -1,7 +1,6 @@
 package authaus
 
 import (
-	"code.google.com/p/go.crypto/scrypt"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -9,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	_ "github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
+	"golang.org/x/crypto/scrypt"
 	"strings"
 )
 
