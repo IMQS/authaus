@@ -495,6 +495,36 @@ func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
 	return
 }
 
+func SaveGroup(icentral *Central, group *AuthGroup) bool {
+	if eupdate := icentral.GetRoleGroupDB().UpdateGroup(group); eupdate == nil {
+		// fmt.Printf("Group %v updated\n", group.Name)
+		return true
+	} else {
+		// fmt.Printf("Error updating group of %v: %v\n", group.Name, eupdate)
+		return false
+	}
+}
+
+func LoadOrCreateGroup(icentral *Central, groupName string, createIfNotExist bool) (*AuthGroup, error) {
+	if existing, eget := icentral.GetRoleGroupDB().GetByName(groupName); eget == nil {
+		return existing, nil
+	} else if strings.Index(eget.Error(), ErrGroupNotExist.Error()) == 0 {
+		if createIfNotExist {
+			group := &AuthGroup{}
+			group.Name = groupName
+			if ecreate := icentral.GetRoleGroupDB().InsertGroup(group); ecreate == nil {
+				return group, nil
+			} else {
+				return nil, ecreate
+			}
+		} else {
+			return nil, eget
+		}
+	} else {
+		return nil, eget
+	}
+}
+
 func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) (err error) {
 	// Same comment here about locking, as in InsertGroup
 	x.groupsLock.Lock()
