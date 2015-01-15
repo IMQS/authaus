@@ -497,10 +497,8 @@ func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
 
 func SaveGroup(icentral *Central, group *AuthGroup) bool {
 	if eupdate := icentral.GetRoleGroupDB().UpdateGroup(group); eupdate == nil {
-		// fmt.Printf("Group %v updated\n", group.Name)
 		return true
 	} else {
-		// fmt.Printf("Error updating group of %v: %v\n", group.Name, eupdate)
 		return false
 	}
 }
