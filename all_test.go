@@ -2,9 +2,9 @@ package authaus
 
 import (
 	"bytes"
-	"code.google.com/p/go.crypto/scrypt"
 	"database/sql"
 	"flag"
+	"golang.org/x/crypto/scrypt"
 	"io/ioutil"
 	"log"
 	"strings"
