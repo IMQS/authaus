@@ -93,6 +93,26 @@ type RoleGroupDB interface {
 	Close()
 }
 
+func LoadOrCreateGroup(roleDB RoleGroupDB, groupName string, createIfNotExist bool) (*AuthGroup, error) {
+	if existing, eget := roleDB.GetByName(groupName); eget == nil {
+		return existing, nil
+	} else if strings.Index(eget.Error(), ErrGroupNotExist.Error()) == 0 {
+		if createIfNotExist {
+			group := &AuthGroup{}
+			group.Name = groupName
+			if ecreate := roleDB.InsertGroup(group); ecreate == nil {
+				return group, nil
+			} else {
+				return nil, ecreate
+			}
+		} else {
+			return nil, eget
+		}
+	} else {
+		return nil, eget
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // An Authorization Group. This stores a list of permissions.
@@ -493,26 +513,6 @@ func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
 	}
 	x.groupsLock.Unlock()
 	return
-}
-
-func LoadOrCreateGroup(icentral *Central, groupName string, createIfNotExist bool) (*AuthGroup, error) {
-	if existing, eget := icentral.GetRoleGroupDB().GetByName(groupName); eget == nil {
-		return existing, nil
-	} else if strings.Index(eget.Error(), ErrGroupNotExist.Error()) == 0 {
-		if createIfNotExist {
-			group := &AuthGroup{}
-			group.Name = groupName
-			if ecreate := icentral.GetRoleGroupDB().InsertGroup(group); ecreate == nil {
-				return group, nil
-			} else {
-				return nil, ecreate
-			}
-		} else {
-			return nil, eget
-		}
-	} else {
-		return nil, eget
-	}
 }
 
 func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) (err error) {
