@@ -495,14 +495,6 @@ func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
 	return
 }
 
-func SaveGroup(icentral *Central, group *AuthGroup) bool {
-	if eupdate := icentral.GetRoleGroupDB().UpdateGroup(group); eupdate == nil {
-		return true
-	} else {
-		return false
-	}
-}
-
 func LoadOrCreateGroup(icentral *Central, groupName string, createIfNotExist bool) (*AuthGroup, error) {
 	if existing, eget := icentral.GetRoleGroupDB().GetByName(groupName); eget == nil {
 		return existing, nil
