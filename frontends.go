@@ -143,7 +143,7 @@ func RunHttp(config *ConfigHTTP, central *Central) error {
 	http.HandleFunc("/login", makehandler(HttpHandlerLogin))
 	http.HandleFunc("/logout", makehandler(HttpHandlerLogout))
 
-	fmt.Printf("Listening on %v:%v\n", config.Bind, config.Port)
+	fmt.Printf("Trying to listen on %v:%v\n", config.Bind, config.Port)
 	if err := http.ListenAndServe(config.Bind+":"+strconv.Itoa(config.Port), nil); err != nil {
 		return err
 	}
