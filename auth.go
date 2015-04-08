@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -172,6 +173,7 @@ type Central struct {
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
 	logFile                *os.File
+	renameLock             sync.Mutex
 	Log                    *log.Logger
 	Stats                  CentralStats
 	MaxActiveSessions      int32
@@ -444,6 +446,44 @@ func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
 		x.Log.Printf("CreateAuthenticatorIdentity failed (%v) (%v)", identity, e)
 	}
 	return e
+}
+
+// Rename an identity. Invalidates all existing sessions for that identity
+func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
+	// Since our rename involves two distinct ops that we can't unify into a single atomic
+	// operation, we ensure that renames are serialized.
+	x.renameLock.Lock()
+	defer x.renameLock.Unlock()
+
+	oldIdent = CanonicalizeIdentity(oldIdent)
+	newIdent = CanonicalizeIdentity(newIdent)
+	if oldIdent == newIdent {
+		// This just doesn't make sense, and it has the potential to violate assumptions by other pieces of code down below, so we silently allow it
+		x.Log.Printf("RenameIdentity succeeded (%v -> %v) (no action taken)", oldIdent, newIdent)
+		return nil
+	}
+
+	if err := x.authenticator.RenameIdentity(oldIdent, newIdent); err != nil {
+		x.Log.Printf("RenameIdentity failed (%v -> %v) (%v)", oldIdent, newIdent, err)
+		return err
+	}
+
+	x.Log.Printf("RenameIdentity (Authenticator) successful (%v -> %v)", oldIdent, newIdent)
+
+	if err := x.permitDB.RenameIdentity(oldIdent, newIdent); err != nil {
+		x.Log.Printf("RenameIdentity (PermitDB) failed (%v -> %v) (%v)", oldIdent, newIdent, err)
+
+		errReverse := x.authenticator.RenameIdentity(newIdent, oldIdent)
+		x.Log.Printf("Reverse of rename (Authenticator) (%v -> %v). Result (%v)", newIdent, oldIdent, errReverse)
+
+		return err
+	}
+
+	x.Log.Printf("RenameIdentity (PermitDB) successful (%v -> %v)", oldIdent, newIdent)
+
+	eInvalidate := x.InvalidateSessionsForIdentity(oldIdent)
+	x.Log.Printf("RenameIdentity (%v -> %v), session invalidation result (%v)", oldIdent, newIdent, eInvalidate)
+	return nil
 }
 
 // Retrieve all identities known to the Authenticator.

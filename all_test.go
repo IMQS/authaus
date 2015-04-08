@@ -110,6 +110,9 @@ func setup1(t *testing.T) *Central {
 	if e := authenticator.CreateIdentity("joe", "123"); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
+	if e := authenticator.CreateIdentity("jack", "12345"); e != nil {
+		t.Errorf("CreateIdentity failed: %v", e)
+	}
 	if e := authenticator.CreateIdentity("iHaveNoPermit", "123"); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
@@ -166,6 +169,38 @@ func TestIdentityCaseSensitivity(t *testing.T) {
 	}
 	if p1, e := c.GetPermit("JOE"); e != nil || !p1.Equals(&perm) {
 		t.Errorf("SetPermit or GetPermit is not ignoring case")
+	}
+}
+
+func TestRenameIdentity(t *testing.T) {
+	c := setup1(t)
+
+	// Fail to rename 'joe', because 'jack' already exists
+	if err := c.RenameIdentity("joe", "jack"); err != ErrIdentityExists {
+		t.Fatalf("Rename should not have succeeded")
+	}
+
+	// Fail to rename 'foo', because 'foo' does not exist
+	if err := c.RenameIdentity("foo", "boo"); err != ErrIdentityAuthNotFound {
+		t.Fatalf("Rename should have failed with ErrIdentityAuthNotFound")
+	}
+
+	// Succeed renaming 'joe' to 'sarah'
+	session, _, _ := c.Login("joe", "123")
+	if _, err := c.GetTokenFromSession(session); err != nil {
+		t.Fatalf("Expected good login")
+	}
+
+	if err := c.RenameIdentity("joe", "sarah"); err != nil {
+		t.Fatalf("Rename should have succeeded, but error was %v", err)
+	}
+
+	if _, err := c.GetTokenFromSession(session); err != ErrInvalidSessionToken {
+		t.Fatalf("All sessions for 'joe' should have been invalidated by rename")
+	}
+
+	if _, _, err := c.Login("sarah", "123"); err != nil {
+		t.Fatalf("Login as 'sarah' failed (%v)", err)
 	}
 }
 

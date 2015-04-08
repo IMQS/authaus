@@ -50,12 +50,16 @@ func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (
 	if sessioncookie != nil {
 		return central.GetTokenFromSession(sessioncookie.Value)
 	} else {
-		identity, password, eBasic := HttpReadBasicAuth(r)
-		if eBasic != nil {
-			return nil, eBasic
-		} else {
-			return central.GetTokenFromIdentityPassword(identity, password)
-		}
+		return HttpHandlerBasicAuth(central, r)
+	}
+}
+
+func HttpHandlerBasicAuth(central *Central, r *http.Request) (*Token, error) {
+	identity, password, eBasic := HttpReadBasicAuth(r)
+	if eBasic != nil {
+		return nil, eBasic
+	} else {
+		return central.GetTokenFromIdentityPassword(identity, password)
 	}
 }
 

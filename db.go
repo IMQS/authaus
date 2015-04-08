@@ -23,6 +23,7 @@ type Authenticator interface {
 	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
 	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
 	CreateIdentity(identity, password string) error // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
+	RenameIdentity(oldIdent, newIdent string) error // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetIdentities() ([]string, error)               // Retrieve a list of all identities
 	Close()                                         // Typically used to close a database handle
 }
@@ -33,9 +34,10 @@ type PermitDB interface {
 	GetPermit(identity string) (*Permit, error) // Retrieve a permit
 	GetPermits() (map[string]*Permit, error)    // Retrieve all permits as a map from identity to the permit.
 	// This should create the permit if it does not exist. A call to this function is
-	// followed by a call to SessionDB.PermitChanged. identity is canonicalized before being stored*/
+	// followed by a call to SessionDB.PermitChanged. identity is canonicalized before being stored
 	SetPermit(identity string, permit *Permit) error
-	Close() // Typically used to close a database handle
+	RenameIdentity(oldIdent, newIdent string) error // Rename an identity. Returns ErrIdentityPermitNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
+	Close()                                         // Typically used to close a database handle
 }
 
 // A Session database is essentially a key/value store where the keys are
@@ -46,7 +48,7 @@ type SessionDB interface {
 	Read(sessionkey string) (*Token, error)              // Fetch a token
 	Delete(sessionkey string) error                      // Delete a token (used to implement "logout")
 	PermitChanged(identity string, permit *Permit) error // Assign the new permit to all of the sessions belonging to 'identity'
-	InvalidateSessionsForIdentity(identity string) error // Delete all sessions belonging to the given identity. This is called after a password has been changed.
+	InvalidateSessionsForIdentity(identity string) error // Delete all sessions belonging to the given identity. This is called after a password has been changed, or an identity renamed.
 	Close()                                              // Typically used to close a database handle
 }
 
@@ -96,6 +98,26 @@ func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 		return nil
 	} else {
 		return ErrIdentityExists
+	}
+}
+
+func (x *dummyAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
+	x.passwordsLock.Lock()
+	defer x.passwordsLock.Unlock()
+
+	oldIdent = CanonicalizeIdentity(oldIdent)
+	newIdent = CanonicalizeIdentity(newIdent)
+
+	if _, exists := x.passwords[newIdent]; exists {
+		return ErrIdentityExists
+	}
+
+	if password, exists := x.passwords[oldIdent]; exists {
+		delete(x.passwords, oldIdent)
+		x.passwords[newIdent] = password
+		return nil
+	} else {
+		return ErrIdentityAuthNotFound
 	}
 }
 
@@ -152,6 +174,18 @@ func (x *sanitizingAuthenticator) CreateIdentity(identity, password string) erro
 		return ErrInvalidPassword
 	}
 	return x.backend.CreateIdentity(identity, password)
+}
+
+func (x *sanitizingAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
+	oldIdent, _ = cleanIdentityPassword(oldIdent, "")
+	newIdent, _ = cleanIdentityPassword(newIdent, "")
+	if len(oldIdent) == 0 || len(newIdent) == 0 {
+		return ErrIdentityEmpty
+	}
+	if oldIdent == newIdent {
+		return nil
+	}
+	return x.backend.RenameIdentity(oldIdent, newIdent)
 }
 
 func (x *sanitizingAuthenticator) GetIdentities() ([]string, error) {
@@ -470,6 +504,27 @@ func (x *dummyPermitDB) SetPermit(identity string, permit *Permit) error {
 	x.permitsLock.Lock()
 	x.permits[CanonicalizeIdentity(identity)] = permit
 	x.permitsLock.Unlock()
+	return nil
+}
+
+func (x *dummyPermitDB) RenameIdentity(oldIdent, newIdent string) error {
+	x.permitsLock.Lock()
+	defer x.permitsLock.Unlock()
+
+	oldIdent = CanonicalizeIdentity(oldIdent)
+	newIdent = CanonicalizeIdentity(newIdent)
+
+	permit, oldExists := x.permits[oldIdent]
+	if !oldExists {
+		return ErrIdentityPermitNotFound
+	}
+	if _, newExists := x.permits[newIdent]; newExists {
+		return ErrIdentityExists
+	}
+
+	delete(x.permits, oldIdent)
+	x.permits[newIdent] = permit
+
 	return nil
 }
 

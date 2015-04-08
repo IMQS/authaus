@@ -100,6 +100,35 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 	}
 }
 
+func (x *sqlAuthenticationDB) RenameIdentity(oldIdent, newIdent string) error {
+	if tx, etx := x.db.Begin(); etx == nil {
+		// Check if oldIdent exists. We need to do this, because the UPDATE statement will simply succeed
+		// without doing anything, if oldIdent does not exist.
+		count := 0
+		if ecount := tx.QueryRow("SELECT COUNT(*) FROM authuser WHERE identity = $1", oldIdent).Scan(&count); ecount != nil {
+			tx.Rollback()
+			return ecount
+		}
+		if count != 1 {
+			tx.Rollback()
+			return ErrIdentityAuthNotFound
+		}
+
+		// Rename
+		if _, eupdate := tx.Exec(`UPDATE authuser SET identity = $1 WHERE identity = $2`, newIdent, oldIdent); eupdate == nil {
+			return tx.Commit()
+		} else {
+			if strings.Index(eupdate.Error(), "duplicate key") != -1 {
+				eupdate = ErrIdentityExists
+			}
+			tx.Rollback()
+			return eupdate
+		}
+	} else {
+		return etx
+	}
+}
+
 func (x *sqlAuthenticationDB) GetIdentities() ([]string, error) {
 	rows, err := x.db.Query(`SELECT identity FROM authuser`)
 	if err != nil {
@@ -213,6 +242,12 @@ func (x *sqlPermitDB) SetPermit(identity string, permit *Permit) error {
 	} else {
 		return etx
 	}
+}
+
+func (x *sqlPermitDB) RenameIdentity(oldIdent, newIdent string) error {
+	// In this design, we store Authenticator and PermitDB in the same table, so we let the Authenticator portion
+	// handle the rename. Once that's done, we have no work left to do here.
+	return nil
 }
 
 func (x *sqlPermitDB) Close() {

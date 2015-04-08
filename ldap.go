@@ -40,6 +40,10 @@ func (x *ldapAuthenticator) CreateIdentity(identity, password string) error {
 	return ErrUnsupported
 }
 
+func (x *ldapAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
+	return ErrUnsupported
+}
+
 func (x *ldapAuthenticator) GetIdentities() ([]string, error) {
 	return []string{}, ErrUnsupported
 }
