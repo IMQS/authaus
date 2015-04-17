@@ -20,12 +20,12 @@ var (
 // It can also be responsible for creating a new account.
 // All operations except for Close must be thread-safe.
 type Authenticator interface {
-	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
-	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
-	CreateIdentity(identity, password string) error // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
-	RenameIdentity(oldIdent, newIdent string) error // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
-	GetIdentities() ([]string, error)               // Retrieve a list of all identities
-	Close()                                         // Typically used to close a database handle
+	Authenticate(identity, password string) (string, error) // Return the non-canonicalized identity and nil error if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
+	SetPassword(identity, password string) error            // This must not automatically create an identity if it does not already exist
+	CreateIdentity(identity, password string) error         // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
+	RenameIdentity(oldIdent, newIdent string) error         // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
+	GetIdentities() ([]string, error)                       // Retrieve a list of all identities
+	Close()                                                 // Typically used to close a database handle
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
@@ -66,17 +66,19 @@ func newDummyAuthenticator() *dummyAuthenticator {
 	return d
 }
 
-func (x *dummyAuthenticator) Authenticate(identity, password string) error {
+func (x *dummyAuthenticator) Authenticate(identity, password string) (id string, er error) {
 	x.passwordsLock.RLock()
 	defer x.passwordsLock.RUnlock()
 	truth, exists := x.passwords[CanonicalizeIdentity(identity)]
+	id = identity
 	if !exists {
-		return ErrIdentityAuthNotFound
+		er = ErrIdentityAuthNotFound
 	} else if truth == password {
-		return nil
+		er = nil
 	} else {
-		return ErrInvalidPassword
+		er = ErrInvalidPassword
 	}
+	return
 }
 
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
@@ -145,10 +147,10 @@ func cleanIdentityPassword(identity, password string) (string, string) {
 	return strings.TrimSpace(identity), strings.TrimSpace(password)
 }
 
-func (x *sanitizingAuthenticator) Authenticate(identity, password string) error {
+func (x *sanitizingAuthenticator) Authenticate(identity, password string) (string, error) {
 	identity, password = cleanIdentityPassword(identity, password)
 	if len(identity) == 0 {
-		return ErrIdentityEmpty
+		return identity, ErrIdentityEmpty
 	}
 	// We COULD make an empty password an error here, but that is not necessarily correct.
 	// There may be an anonymous profile which requires no password. LDAP is specifically vulnerable

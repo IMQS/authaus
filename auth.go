@@ -339,7 +339,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	if eAuth := x.authenticator.Authenticate(identity, password); eAuth == nil {
+	if identity, eAuth := x.authenticator.Authenticate(identity, password); eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(identity); ePermit == nil {
 			t := &Token{}
 			t.Expires = veryFarFuture
@@ -364,8 +364,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // The session key is typically sent to the client as a cookie.
 func (x *Central) Login(identity, password string) (sessionkey string, token *Token, e error) {
 	token = &Token{}
-	token.Identity = identity
-	if e = x.authenticator.Authenticate(identity, password); e == nil {
+	if token.Identity, e = x.authenticator.Authenticate(identity, password); e == nil {
 		x.Log.Printf("Login authentication success (%v)", identity)
 		var permit *Permit
 		if permit, e = x.permitDB.GetPermit(identity); e == nil {
