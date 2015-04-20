@@ -19,17 +19,19 @@ type ldapAuthenticator struct {
 	con *ldap.LDAPConnection
 }
 
-func (x *ldapAuthenticator) Authenticate(identity, password string) error {
+func (x *ldapAuthenticator) Authenticate(identity, password string) (id string, er error) {
+	id = identity
 	if len(password) == 0 {
 		// Many LDAP servers (or AD) will allow an anonymous BIND.
 		// I've never seen the need for a password-less user authenticated against LDAP.
-		return ErrInvalidPassword
+		er = ErrInvalidPassword
+		return
 	}
 	err := x.con.Bind(identity, password)
 	if err != nil {
-		return NewError(ErrIdentityAuthNotFound, err.Error())
+		er = NewError(ErrIdentityAuthNotFound, err.Error())
 	}
-	return nil
+	return
 }
 
 func (x *ldapAuthenticator) SetPassword(identity, password string) error {

@@ -42,18 +42,20 @@ type sqlAuthenticationDB struct {
 	db *sql.DB
 }
 
-func (x *sqlAuthenticationDB) Authenticate(identity, password string) error {
-	row := x.db.QueryRow(`SELECT password FROM authuser WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
+func (x *sqlAuthenticationDB) Authenticate(identity, password string) (id string, er error) {
+	row := x.db.QueryRow(`SELECT identity, password FROM authuser WHERE LOWER(identity) = $1`, CanonicalizeIdentity(identity))
 	dbHash := ""
-	if err := row.Scan(&dbHash); err != nil {
-		return ErrIdentityAuthNotFound
+	id = identity
+	if err := row.Scan(&id, &dbHash); err != nil {
+		er = ErrIdentityAuthNotFound
 	} else {
 		if verifyAuthausHash(password, dbHash) {
-			return nil
+			er = nil
 		} else {
-			return ErrInvalidPassword
+			er = ErrInvalidPassword
 		}
 	}
+	return
 }
 
 func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {

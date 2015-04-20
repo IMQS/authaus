@@ -20,12 +20,12 @@ var (
 // It can also be responsible for creating a new account.
 // All operations except for Close must be thread-safe.
 type Authenticator interface {
-	Authenticate(identity, password string) error   // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
-	SetPassword(identity, password string) error    // This must not automatically create an identity if it does not already exist
-	CreateIdentity(identity, password string) error // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
-	RenameIdentity(oldIdent, newIdent string) error // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
-	GetIdentities() ([]string, error)               // Retrieve a list of all identities
-	Close()                                         // Typically used to close a database handle
+	Authenticate(identity, password string) (string, error) // Return the non-canonicalized identity and nil error if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
+	SetPassword(identity, password string) error            // This must not automatically create an identity if it does not already exist
+	CreateIdentity(identity, password string) error         // Create a new identity. If the identity already exists, then this must return ErrIdentityExists
+	RenameIdentity(oldIdent, newIdent string) error         // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
+	GetIdentities() ([]string, error)                       // Retrieve a list of all identities
+	Close()                                                 // Typically used to close a database handle
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
@@ -56,34 +56,42 @@ type SessionDB interface {
 
 // Authenticator that simply stores identity/passwords in memory
 type dummyAuthenticator struct {
-	passwords     map[string]string
-	passwordsLock sync.RWMutex
+	users     map[string]*dummyUser
+	usersLock sync.RWMutex
+}
+
+type dummyUser struct {
+	name     string
+	password string
 }
 
 func newDummyAuthenticator() *dummyAuthenticator {
 	d := &dummyAuthenticator{}
-	d.passwords = make(map[string]string)
+	d.users = make(map[string]*dummyUser)
 	return d
 }
 
-func (x *dummyAuthenticator) Authenticate(identity, password string) error {
-	x.passwordsLock.RLock()
-	defer x.passwordsLock.RUnlock()
-	truth, exists := x.passwords[CanonicalizeIdentity(identity)]
+func (x *dummyAuthenticator) Authenticate(identity, password string) (id string, er error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+	user, exists := x.users[CanonicalizeIdentity(identity)]
+	id = identity
 	if !exists {
-		return ErrIdentityAuthNotFound
-	} else if truth == password {
-		return nil
+		er = ErrIdentityAuthNotFound
+	} else if user.password == password {
+		id = user.name
+		er = nil
 	} else {
-		return ErrInvalidPassword
+		er = ErrInvalidPassword
 	}
+	return
 }
 
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; exists {
-		x.passwords[CanonicalizeIdentity(identity)] = password
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.users[CanonicalizeIdentity(identity)]; exists {
+		user.password = password
 	} else {
 		return ErrIdentityAuthNotFound
 	}
@@ -91,10 +99,10 @@ func (x *dummyAuthenticator) SetPassword(identity, password string) error {
 }
 
 func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; !exists {
-		x.passwords[CanonicalizeIdentity(identity)] = password
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if _, exists := x.users[CanonicalizeIdentity(identity)]; !exists {
+		x.users[CanonicalizeIdentity(identity)] = &dummyUser{identity, password}
 		return nil
 	} else {
 		return ErrIdentityExists
@@ -102,19 +110,19 @@ func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 }
 
 func (x *dummyAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
 
-	oldIdent = CanonicalizeIdentity(oldIdent)
-	newIdent = CanonicalizeIdentity(newIdent)
-
-	if _, exists := x.passwords[newIdent]; exists {
+	if _, exists := x.users[CanonicalizeIdentity(newIdent)]; exists {
 		return ErrIdentityExists
 	}
 
-	if password, exists := x.passwords[oldIdent]; exists {
-		delete(x.passwords, oldIdent)
-		x.passwords[newIdent] = password
+	oldIdent = CanonicalizeIdentity(oldIdent)
+	newKey := CanonicalizeIdentity(newIdent)
+
+	if user, exists := x.users[oldIdent]; exists {
+		delete(x.users, oldIdent)
+		x.users[newKey] = &dummyUser{newIdent, user.password}
 		return nil
 	} else {
 		return ErrIdentityAuthNotFound
@@ -122,12 +130,12 @@ func (x *dummyAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *dummyAuthenticator) GetIdentities() ([]string, error) {
-	x.passwordsLock.RLock()
+	x.usersLock.RLock()
 	list := []string{}
-	for identity, _ := range x.passwords {
+	for identity, _ := range x.users {
 		list = append(list, identity)
 	}
-	x.passwordsLock.RUnlock()
+	x.usersLock.RUnlock()
 	return list, nil
 }
 
@@ -145,10 +153,10 @@ func cleanIdentityPassword(identity, password string) (string, string) {
 	return strings.TrimSpace(identity), strings.TrimSpace(password)
 }
 
-func (x *sanitizingAuthenticator) Authenticate(identity, password string) error {
+func (x *sanitizingAuthenticator) Authenticate(identity, password string) (string, error) {
 	identity, password = cleanIdentityPassword(identity, password)
 	if len(identity) == 0 {
-		return ErrIdentityEmpty
+		return identity, ErrIdentityEmpty
 	}
 	// We COULD make an empty password an error here, but that is not necessarily correct.
 	// There may be an anonymous profile which requires no password. LDAP is specifically vulnerable
