@@ -113,10 +113,14 @@ func setup1(t *testing.T) *Central {
 	if e := authenticator.CreateIdentity("jack", "12345"); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
+	if e := authenticator.CreateIdentity("Sam", "0000"); e != nil {
+		t.Errorf("CreateIdentity failed: %v", e)
+	}
 	if e := authenticator.CreateIdentity("iHaveNoPermit", "123"); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
 	permitDB.SetPermit("joe", &joePermit)
+	permitDB.SetPermit("Sam", &joePermit)
 
 	return central
 }
@@ -207,7 +211,7 @@ func TestRenameIdentity(t *testing.T) {
 func TestBasicAuth(t *testing.T) {
 	c := setup1(t)
 
-	expect_username_password := func(username, password, expectErrorStart string) {
+	expect_username_password := func(username, password, expectErrorStart, expectIdentity string) {
 		token, err := c.GetTokenFromIdentityPassword(username, password)
 		if (token == nil) != (err != nil) {
 			t.Errorf("%v:%v -> (Token == nil) != (err != nil)", username, password)
@@ -215,17 +219,22 @@ func TestBasicAuth(t *testing.T) {
 		if err != nil && strings.Index(err.Error(), expectErrorStart) != 0 {
 			t.Errorf("%v:%v -> Expected '%v' prefix (but error starts with '%v')", username, password, expectErrorStart, err.Error())
 		}
+		if token != nil && token.Identity != expectIdentity {
+			t.Errorf("%v:%v -> Expected token identity '%v', returned '%v' ", username, password, expectIdentity, token.Identity)
+		}
 	}
 
-	expect_username_password("123", "joe", ErrIdentityAuthNotFound.Error())
-	expect_username_password("iHaveNoPermit", "123", ErrIdentityPermitNotFound.Error())
-	expect_username_password("joe", "wrong", ErrInvalidPassword.Error())
-	expect_username_password("joe", "", ErrInvalidPassword.Error())
-	expect_username_password("joe", " ", ErrInvalidPassword.Error())
-	expect_username_password("", "123", ErrIdentityEmpty.Error())
-	expect_username_password(" ", "123", ErrIdentityEmpty.Error())
-	expect_username_password("joe", "123", "")
-	expect_username_password("JOE", "123", "")
+	expect_username_password("123", "joe", ErrIdentityAuthNotFound.Error(), "123")
+	expect_username_password("iHaveNoPermit", "123", ErrIdentityPermitNotFound.Error(), "iHaveNoPermit")
+	expect_username_password("joe", "wrong", ErrInvalidPassword.Error(), "joe")
+	expect_username_password("joe", "", ErrInvalidPassword.Error(), "joe")
+	expect_username_password("joe", " ", ErrInvalidPassword.Error(), "joe")
+	expect_username_password("", "123", ErrIdentityEmpty.Error(), "")
+	expect_username_password(" ", "123", ErrIdentityEmpty.Error(), "")
+	expect_username_password("joe", "123", "", "joe")
+	expect_username_password("JOE", "123", "", "joe")
+	expect_username_password("Sam", "0000", "", "Sam")
+	expect_username_password("sam", "0000", "", "Sam")
 }
 
 func TestPermit(t *testing.T) {

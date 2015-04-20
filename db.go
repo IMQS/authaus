@@ -56,24 +56,30 @@ type SessionDB interface {
 
 // Authenticator that simply stores identity/passwords in memory
 type dummyAuthenticator struct {
-	passwords     map[string]string
-	passwordsLock sync.RWMutex
+	users     map[string]*dummyUser
+	usersLock sync.RWMutex
+}
+
+type dummyUser struct {
+	name     string
+	password string
 }
 
 func newDummyAuthenticator() *dummyAuthenticator {
 	d := &dummyAuthenticator{}
-	d.passwords = make(map[string]string)
+	d.users = make(map[string]*dummyUser)
 	return d
 }
 
 func (x *dummyAuthenticator) Authenticate(identity, password string) (id string, er error) {
-	x.passwordsLock.RLock()
-	defer x.passwordsLock.RUnlock()
-	truth, exists := x.passwords[CanonicalizeIdentity(identity)]
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+	user, exists := x.users[CanonicalizeIdentity(identity)]
 	id = identity
 	if !exists {
 		er = ErrIdentityAuthNotFound
-	} else if truth == password {
+	} else if user.password == password {
+		id = user.name
 		er = nil
 	} else {
 		er = ErrInvalidPassword
@@ -82,10 +88,10 @@ func (x *dummyAuthenticator) Authenticate(identity, password string) (id string,
 }
 
 func (x *dummyAuthenticator) SetPassword(identity, password string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; exists {
-		x.passwords[CanonicalizeIdentity(identity)] = password
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.users[CanonicalizeIdentity(identity)]; exists {
+		user.password = password
 	} else {
 		return ErrIdentityAuthNotFound
 	}
@@ -93,10 +99,10 @@ func (x *dummyAuthenticator) SetPassword(identity, password string) error {
 }
 
 func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
-	if _, exists := x.passwords[CanonicalizeIdentity(identity)]; !exists {
-		x.passwords[CanonicalizeIdentity(identity)] = password
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if _, exists := x.users[CanonicalizeIdentity(identity)]; !exists {
+		x.users[CanonicalizeIdentity(identity)] = &dummyUser{identity, password}
 		return nil
 	} else {
 		return ErrIdentityExists
@@ -104,19 +110,19 @@ func (x *dummyAuthenticator) CreateIdentity(identity, password string) error {
 }
 
 func (x *dummyAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
-	x.passwordsLock.Lock()
-	defer x.passwordsLock.Unlock()
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
 
-	oldIdent = CanonicalizeIdentity(oldIdent)
-	newIdent = CanonicalizeIdentity(newIdent)
-
-	if _, exists := x.passwords[newIdent]; exists {
+	if _, exists := x.users[CanonicalizeIdentity(newIdent)]; exists {
 		return ErrIdentityExists
 	}
 
-	if password, exists := x.passwords[oldIdent]; exists {
-		delete(x.passwords, oldIdent)
-		x.passwords[newIdent] = password
+	oldIdent = CanonicalizeIdentity(oldIdent)
+	newKey := CanonicalizeIdentity(newIdent)
+
+	if user, exists := x.users[oldIdent]; exists {
+		delete(x.users, oldIdent)
+		x.users[newKey] = &dummyUser{newIdent, user.password}
 		return nil
 	} else {
 		return ErrIdentityAuthNotFound
@@ -124,12 +130,12 @@ func (x *dummyAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *dummyAuthenticator) GetIdentities() ([]string, error) {
-	x.passwordsLock.RLock()
+	x.usersLock.RLock()
 	list := []string{}
-	for identity, _ := range x.passwords {
+	for identity, _ := range x.users {
 		list = append(list, identity)
 	}
-	x.passwordsLock.RUnlock()
+	x.usersLock.RUnlock()
 	return list, nil
 }
 
