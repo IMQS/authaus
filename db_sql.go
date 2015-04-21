@@ -164,7 +164,7 @@ type sqlSessionDB struct {
 }
 
 func (x *sqlSessionDB) Write(sessionkey string, token *Token) error {
-	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, identity, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, CanonicalizeIdentity(token.Identity), token.Permit.Serialize(), token.Expires)
+	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, identity, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, token.Identity, token.Permit.Serialize(), token.Expires)
 	return err
 }
 
