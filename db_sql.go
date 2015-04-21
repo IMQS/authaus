@@ -486,6 +486,8 @@ func SqlCreateSchema_Session(conx *DBConnection) error {
 	CREATE UNIQUE INDEX idx_authsession_token    ON authsession (sessionkey);
 	CREATE        INDEX idx_authsession_identity ON authsession (identity);
 	CREATE        INDEX idx_authsession_expires  ON authsession (expires);`)
+	// we made some changes that are not backwards compatible, need to force a logout for all users
+	versions = append(versions, `DELETE FROM authsession;`)
 
 	return MigrateSchema(conx, "authsession", versions)
 }
