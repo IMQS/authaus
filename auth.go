@@ -201,7 +201,7 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 }
 
 // Create a new 'Central' object from a Config.
-func NewCentralFromConfig(config *Config) (central *Central, err error) {	
+func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	var logfile io.Writer
 	if config.Log.Filename != "" {
 		if config.Log.Filename == "stdout" {
@@ -209,13 +209,12 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		} else if config.Log.Filename == "stderr" {
 			logfile = os.Stderr
 		} else {
-			fmt.Println(os.Stat(config.Log.Filename).)
 			logfile = &lumberjack.Logger{
 				Filename:   config.Log.Filename,
 				MaxSize:    20, // megabytes
 				MaxBackups: 3,
 				MaxAge:     90, // days
-			}			
+			}
 		}
 	} else {
 		logfile = os.Stdout
