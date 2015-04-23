@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/lumberjack"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -172,7 +174,6 @@ type Central struct {
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
-	logFile                *os.File
 	renameLock             sync.Mutex
 	Log                    *log.Logger
 	Stats                  CentralStats
@@ -200,23 +201,27 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 }
 
 // Create a new 'Central' object from a Config.
-func NewCentralFromConfig(config *Config) (central *Central, err error) {
-	var logfile *os.File
+func NewCentralFromConfig(config *Config) (central *Central, err error) {	
+	var logfile io.Writer
 	if config.Log.Filename != "" {
 		if config.Log.Filename == "stdout" {
 			logfile = os.Stdout
 		} else if config.Log.Filename == "stderr" {
 			logfile = os.Stderr
 		} else {
-			if logfile, err = os.OpenFile(config.Log.Filename, os.O_APPEND|os.O_CREATE, 0660); err != nil {
-				return nil, errors.New(fmt.Sprintf("Error opening log file '%v': %v", config.Log.Filename, err))
-			}
+			fmt.Println(os.Stat(config.Log.Filename).)
+			logfile = &lumberjack.Logger{
+				Filename:   config.Log.Filename,
+				MaxSize:    20, // megabytes
+				MaxBackups: 3,
+				MaxAge:     90, // days
+			}			
 		}
 	} else {
 		logfile = os.Stdout
 	}
-
-	logger := log.New(logfile, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	logFlags := log.Ldate | log.Ltime | log.Lmicroseconds
+	logger := log.New(logfile, "", logFlags)
 
 	var auth Authenticator
 	var permitDB PermitDB
@@ -269,7 +274,6 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 
 	c := NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB)
-	c.logFile = logfile
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
@@ -499,10 +503,6 @@ func (x *Central) Close() {
 	if x.Log != nil {
 		x.Log.Printf("Authaus shutting down\n")
 		x.Log = nil
-	}
-	if x.logFile != nil {
-		x.logFile.Close()
-		x.logFile = nil
 	}
 	if x.authenticator != nil {
 		x.authenticator.Close()
