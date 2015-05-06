@@ -10,6 +10,7 @@ import (
 	_ "github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
 	"golang.org/x/crypto/scrypt"
 	"strings"
+	"time"
 )
 
 /*
@@ -59,22 +60,74 @@ func (x *sqlAuthenticationDB) Authenticate(identity, password string) (id string
 }
 
 func (x *sqlAuthenticationDB) SetPassword(identity, password string) error {
-	hash, err := computeAuthausHash(password)
-	if err != nil {
-		return err
-	}
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuser SET password = $1 WHERE LOWER(identity) = $2`, hash, CanonicalizeIdentity(identity)); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return tx.Commit()
-			} else {
-				tx.Rollback()
-				return ErrIdentityAuthNotFound
-			}
+		if eupdate := x.setPasswordInternal(tx, identity, password); eupdate == nil {
+			return tx.Commit()
 		} else {
 			tx.Rollback()
 			return eupdate
 		}
+	} else {
+		return etx
+	}
+}
+
+func (x *sqlAuthenticationDB) setPasswordInternal(tx *sql.Tx, identity, password string) error {
+	hash, err := computeAuthausHash(password)
+	if err != nil {
+		return err
+	}
+
+	if update, eupdate := tx.Exec(`UPDATE authuser SET password = $1, pwdtoken = NULL WHERE LOWER(identity) = $2`, hash, CanonicalizeIdentity(identity)); eupdate == nil {
+		if affected, _ := update.RowsAffected(); affected == 1 {
+			return nil
+		} else {
+			return ErrIdentityAuthNotFound
+		}
+	} else {
+		return eupdate
+	}
+}
+
+func (x *sqlAuthenticationDB) ResetPasswordStart(identity string, expires time.Time) (string, error) {
+	if tx, etx := x.db.Begin(); etx == nil {
+		token := generatePasswordResetToken(expires)
+		if update, eupdate := tx.Exec(`UPDATE authuser SET pwdtoken = $1 WHERE LOWER(identity) = $2`, token, CanonicalizeIdentity(identity)); eupdate == nil {
+			if affected, _ := update.RowsAffected(); affected == 1 {
+				return token, tx.Commit()
+			} else {
+				tx.Rollback()
+				return "", ErrIdentityAuthNotFound
+			}
+		} else {
+			return "", eupdate
+		}
+	} else {
+		return "", etx
+	}
+}
+
+func (x *sqlAuthenticationDB) ResetPasswordFinish(identity string, token string, password string) error {
+	if tx, etx := x.db.Begin(); etx == nil {
+		var truthToken sql.NullString
+		if escan := tx.QueryRow("SELECT pwdtoken FROM authuser WHERE LOWER(identity) = $1", CanonicalizeIdentity(identity)).Scan(&truthToken); escan != nil {
+			tx.Rollback()
+			if escan == sql.ErrNoRows {
+				return ErrIdentityAuthNotFound
+			}
+			return escan
+		}
+		if everify := verifyPasswordResetToken(token, truthToken.String); everify != nil {
+			tx.Rollback()
+			return everify
+		}
+		if eupdate := x.setPasswordInternal(tx, identity, password); eupdate != nil {
+			tx.Rollback()
+			return eupdate
+		} else {
+			return tx.Commit()
+		}
+
 	} else {
 		return etx
 	}
@@ -104,21 +157,13 @@ func (x *sqlAuthenticationDB) CreateIdentity(identity, password string) error {
 
 func (x *sqlAuthenticationDB) RenameIdentity(oldIdent, newIdent string) error {
 	if tx, etx := x.db.Begin(); etx == nil {
-		// Check if oldIdent exists. We need to do this, because the UPDATE statement will simply succeed
-		// without doing anything, if oldIdent does not exist.
-		count := 0
-		if ecount := tx.QueryRow("SELECT COUNT(*) FROM authuser WHERE identity = $1", oldIdent).Scan(&count); ecount != nil {
-			tx.Rollback()
-			return ecount
-		}
-		if count != 1 {
-			tx.Rollback()
-			return ErrIdentityAuthNotFound
-		}
-
-		// Rename
-		if _, eupdate := tx.Exec(`UPDATE authuser SET identity = $1 WHERE identity = $2`, newIdent, oldIdent); eupdate == nil {
-			return tx.Commit()
+		if update, eupdate := tx.Exec(`UPDATE authuser SET identity = $1 WHERE LOWER(identity) = $2`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
+			if affected, _ := update.RowsAffected(); affected == 1 {
+				return tx.Commit()
+			} else {
+				tx.Rollback()
+				return ErrIdentityAuthNotFound
+			}
 		} else {
 			if strings.Index(eupdate.Error(), "duplicate key") != -1 {
 				eupdate = ErrIdentityExists
@@ -504,6 +549,9 @@ func SqlCreateSchema_User(conx *DBConnection) error {
 	versions = append(versions, `
 	DROP INDEX idx_authuser_identity;
 	CREATE UNIQUE INDEX idx_authuser_identity ON authuser (LOWER(identity));`)
+
+	versions = append(versions, `
+	ALTER TABLE authuser ADD COLUMN pwdtoken VARCHAR;`)
 
 	return MigrateSchema(conx, "authuser", versions)
 }

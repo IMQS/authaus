@@ -4,6 +4,7 @@ import (
 	"fmt"
 	//"github.com/mmitton/ldap"
 	"github.com/mavricknz/ldap"
+	"time"
 )
 
 type LdapConnectionMode int
@@ -35,6 +36,14 @@ func (x *ldapAuthenticator) Authenticate(identity, password string) (id string, 
 }
 
 func (x *ldapAuthenticator) SetPassword(identity, password string) error {
+	return ErrUnsupported
+}
+
+func (x *ldapAuthenticator) ResetPasswordStart(identity string, expires time.Time) (string, error) {
+	return "", ErrUnsupported
+}
+
+func (x *ldapAuthenticator) ResetPasswordFinish(identity string, token string, password string) error {
 	return ErrUnsupported
 }
 

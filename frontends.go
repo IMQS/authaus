@@ -1,7 +1,6 @@
 package authaus
 
 import (
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -11,38 +10,8 @@ import (
 )
 
 var (
-	ErrHttpBasicBase64        = errors.New("HTTP Basic Authorization must be base64(identity:password). Error decoding base64")
-	ErrHttpBasicIdentPassPair = errors.New("HTTP Basic Authorization must be base64(identity:password). Error separating identity:password")
+	ErrHttpBasicAuth = errors.New("HTTP Basic Authorization must be base64(identity:password)")
 )
-
-// Understands a header of the form:
-// Authentication: Basic BASE64(identity:password)
-//
-// If this is not 'Basic' authorization, then ("","",nil) is returned.
-// Any other condition will result in a return either of
-//    ("identity", "password", nil)
-// or ("", "", error)
-func HttpReadBasicAuth(r *http.Request) (identity, password string, err error) {
-	auth := r.Header.Get("Authorization")
-	if strings.Index(auth, "Basic ") != 0 {
-		return
-	}
-	if decoded, e := base64.StdEncoding.DecodeString(auth[6:]); e != nil {
-		err = ErrHttpBasicBase64
-		return
-	} else {
-		parts := strings.Split(string(decoded), ":")
-		if len(parts) == 2 {
-			identity = parts[0]
-			password = parts[1]
-			err = nil
-			return
-		} else {
-			err = ErrHttpBasicIdentPassPair
-			return
-		}
-	}
-}
 
 // Reads the session cookie or the HTTP "Basic" Authorization header to determine whether this request is authorized.
 func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (*Token, error) {
@@ -55,9 +24,9 @@ func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (
 }
 
 func HttpHandlerBasicAuth(central *Central, r *http.Request) (*Token, error) {
-	identity, password, eBasic := HttpReadBasicAuth(r)
-	if eBasic != nil {
-		return nil, eBasic
+	identity, password, basicOK := r.BasicAuth()
+	if !basicOK {
+		return nil, ErrHttpBasicAuth
 	} else {
 		return central.GetTokenFromIdentityPassword(identity, password)
 	}
@@ -70,7 +39,7 @@ func HttpHandlerPreludeWithError(config *ConfigHTTP, central *Central, w http.Re
 	if err != nil {
 		if strings.Index(err.Error(), ErrIdentityEmpty.Error()) == 0 {
 			HttpSendTxt(w, http.StatusUnauthorized, err.Error())
-		} else if err == ErrHttpBasicBase64 || err == ErrHttpBasicIdentPassPair {
+		} else if err == ErrHttpBasicAuth {
 			HttpSendTxt(w, http.StatusBadRequest, err.Error())
 		} else {
 			HttpSendTxt(w, http.StatusForbidden, err.Error())
@@ -101,9 +70,9 @@ func HttpSendTxt(w http.ResponseWriter, responseCode int, responseBody string) {
 // Handle the 'login' request, sending back a session token (via Set-Cookie),
 // if authentication succeeds. You may want to use this as a template to write your own.
 func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
-	identity, password, eBasic := HttpReadBasicAuth(r)
-	if eBasic != nil {
-		HttpSendTxt(w, http.StatusBadRequest, eBasic.Error())
+	identity, password, basicOK := r.BasicAuth()
+	if !basicOK {
+		HttpSendTxt(w, http.StatusBadRequest, ErrHttpBasicAuth.Error())
 		return
 	}
 

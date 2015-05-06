@@ -208,6 +208,65 @@ func TestRenameIdentity(t *testing.T) {
 	}
 }
 
+func TestResetPassword(t *testing.T) {
+	c := setup1(t)
+
+	if _, err := c.ResetPasswordStart("nobody_ever", time.Now()); err != ErrIdentityAuthNotFound {
+		t.Fatalf("ResetPasswordStart should fail with ErrIdentityAuthNotFound instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish("joe", "", "12345"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
+
+	// Create two reset tokens, and verify that the first one is made invalid, and
+	// the second one works.
+	token1, err1 := c.ResetPasswordStart("joe", time.Now().Add(30*time.Second))
+	if err1 != nil || token1 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err1, token1)
+	}
+	token2, err2 := c.ResetPasswordStart("JOE", time.Now().Add(30*time.Second))
+	if err2 != nil || token2 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err2, token2)
+	}
+	if token1 == token2 {
+		t.Fatalf("Two successive password resets should not result in the same token")
+	}
+	if token, err := c.GetTokenFromIdentityPassword("joe", "123"); err != nil || token == nil {
+		t.Fatalf("Old password should remain valid until reset token has been used")
+	}
+	session, _, loginErr := c.Login("joe", "123")
+	if loginErr != nil {
+		t.Fatalf("Login should succeed instead of %v", loginErr)
+	}
+	if err := c.ResetPasswordFinish("nobody_ever", token2, "yes"); err != ErrIdentityAuthNotFound {
+		t.Fatalf("ResetPasswordFinish should fail with ErrIdentityAuthNotFound instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish("JOE", token1, "yes"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish on dead token should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish("JOE", token2, "12345"); err != nil {
+		t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish("JOE", token2, "12345"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish a 2nd time should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
+	if token, err := c.GetTokenFromIdentityPassword("joe", "123"); err == nil || token != nil {
+		t.Fatalf("Old password should be invalid by now")
+	}
+	if tokenFromOldSession, err := c.GetTokenFromSession(session); err == nil || tokenFromOldSession != nil {
+		t.Fatalf("Old session should be invalid by now")
+	}
+	if token, err := c.GetTokenFromIdentityPassword("joe", "12345"); err != nil || token == nil {
+		t.Fatalf("New password should succeed instead of %v", err)
+	}
+
+	// Test time expiry
+	token3, _ := c.ResetPasswordStart("joe", time.Now().Add(-3*time.Second))
+	if err := c.ResetPasswordFinish("joe", token3, "12345"); err != ErrPasswordTokenExpired {
+		t.Fatalf("ResetPasswordFinish should have failed with ErrPasswordTokenExpired instead of %v", err)
+	}
+}
+
 func TestBasicAuth(t *testing.T) {
 	c := setup1(t)
 
