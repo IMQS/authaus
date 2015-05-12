@@ -101,8 +101,8 @@ func CanonicalizeIdentity(identity string) string {
 	return strings.ToLower(identity)
 }
 
-// Returns a random string of 'nchars' characters, sampled uniformly from the given corpus of characters.
-func randomString(nchars int, corpus string) string {
+// Returns a random string of 'nchars' bytes, sampled uniformly from the given corpus of byte characters.
+func RandomString(nchars int, corpus string) string {
 	rbytes := make([]byte, nchars)
 	rstring := make([]byte, nchars)
 	rand.Read(rbytes)
@@ -115,7 +115,7 @@ func randomString(nchars int, corpus string) string {
 func generateSessionKey() string {
 	// It is important not to have any unusual characters in here, especially an equals sign. Old versions of Tomcat
 	// will parse such a cookie incorrectly (imagine Cookie: magic=abracadabra=)
-	return randomString(sessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	return RandomString(sessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 }
 
 func generatePasswordResetToken(expires time.Time) string {
