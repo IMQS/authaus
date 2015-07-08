@@ -203,13 +203,14 @@ For lack of a better name, this is the single hub of authentication that you int
 All public methods of Central are callable from multiple threads.
 */
 type Central struct {
+	// Stats must be first so it can assure 64 bit alignment in the atomics
+	Stats                  CentralStats
 	authenticator          Authenticator
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
 	renameLock             sync.Mutex
 	Log                    *log.Logger
-	Stats                  CentralStats
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
 }
