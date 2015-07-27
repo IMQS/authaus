@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"database/sql"
 	"flag"
+	"github.com/IMQS/log"
 	"golang.org/x/crypto/scrypt"
 	"io/ioutil"
-	"log"
 	"strings"
 	"testing"
 	"time"
@@ -103,8 +103,7 @@ func setup1(t *testing.T) *Central {
 		permitDB = newDummyPermitDB()
 		roleDB = newDummyRoleGroupDB()
 	}
-	logger := log.New(ioutil.Discard, "", log.LstdFlags)
-	central := NewCentral(logger, authenticator, permitDB, sessionDB, roleDB)
+	central := NewCentral(log.Stdout, authenticator, permitDB, sessionDB, roleDB)
 
 	joePermit := setup1_joePermit()
 	if e := authenticator.CreateIdentity("joe", "123"); e != nil {

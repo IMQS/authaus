@@ -2,7 +2,7 @@ package authaus
 
 import (
 	"code.google.com/p/winsvc/svc"
-	"log"
+	"fmt"
 )
 
 type myservice struct {
@@ -41,7 +41,7 @@ loop:
 func RunAsService(handler func()) bool {
 	interactive, err := svc.IsAnIinteractiveSession()
 	if err != nil {
-		log.Fatalf("failed to determine if we are running in an interactive session: %v", err)
+		fmt.Printf("failed to determine if we are running in an interactive session: %v", err)
 		return false
 	}
 	if interactive {

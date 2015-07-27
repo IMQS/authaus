@@ -16,7 +16,7 @@ Full populated config:
 
 {
 	"Log": {
-		"Filename":		"/var/log/authaus/authaus.log"
+		"Filename":		"/var/log/authaus/authaus.log"		// This can also be 'stdout' or 'stderr'. 'stdout' is the default, if unspecified.
 	},
 	"HTTP": {
 		"CookieName":	"session",

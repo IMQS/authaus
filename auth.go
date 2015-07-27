@@ -7,10 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/lumberjack"
-	"io"
-	"log"
-	"os"
+	"github.com/IMQS/log"
 	"strconv"
 	"strings"
 	"sync"
@@ -166,7 +163,7 @@ func isPowerOf2(x uint64) bool {
 func (x *CentralStats) IncrementAndLog(name string, val *uint64, logger *log.Logger) {
 	n := atomic.AddUint64(val, 1)
 	if isPowerOf2(n) || (n&255) == 0 {
-		logger.Printf("%v %v", n, name)
+		logger.Infof("%v %v", n, name)
 	}
 }
 
@@ -217,7 +214,7 @@ type Central struct {
 
 // Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
-func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
+func NewCentral(logfile string, authenticator Authenticator, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
 	c.authenticator = &sanitizingAuthenticator{
 		backend: authenticator,
@@ -229,37 +226,19 @@ func NewCentral(logger *log.Logger, authenticator Authenticator, permitDB Permit
 	}
 	c.MaxActiveSessions = 0
 	c.NewSessionExpiresAfter = time.Duration(defaultSessionExpirySeconds) * time.Second
-	c.Log = logger
-	c.Log.Printf("Authaus successfully started up\n")
+	c.Log = log.New(resolveLogfile(logfile))
+	c.Log.Infof("Authaus successfully started up\n")
 	return c
 }
 
 // Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (central *Central, err error) {
-	var logfile io.Writer
-	if config.Log.Filename != "" {
-		if config.Log.Filename == "stdout" {
-			logfile = os.Stdout
-		} else if config.Log.Filename == "stderr" {
-			logfile = os.Stderr
-		} else {
-			logfile = &lumberjack.Logger{
-				Filename:   config.Log.Filename,
-				MaxSize:    20, // megabytes
-				MaxBackups: 3,
-				MaxAge:     90, // days
-			}
-		}
-	} else {
-		logfile = os.Stdout
-	}
-	logFlags := log.Ldate | log.Ltime | log.Lmicroseconds
-	logger := log.New(logfile, "", logFlags)
-
 	var auth Authenticator
 	var permitDB PermitDB
 	var sessionDB SessionDB
 	var roleGroupDB RoleGroupDB
+
+	startupLogger := log.New(resolveLogfile(config.Log.Filename))
 
 	defer func() {
 		if ePanic := recover(); ePanic != nil {
@@ -275,7 +254,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 			if roleGroupDB != nil {
 				roleGroupDB.Close()
 			}
-			logger.Printf("Error initializing: %v\n", ePanic)
+			startupLogger.Errorf("Error initializing: %v\n", ePanic)
 			err = ePanic.(error)
 		}
 	}()
@@ -306,12 +285,19 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
-	c := NewCentral(logger, auth, permitDB, sessionDB, roleGroupDB)
+	c := NewCentral(config.Log.Filename, auth, permitDB, sessionDB, roleGroupDB)
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
 	}
 	return c, nil
+}
+
+func resolveLogfile(logfile string) string {
+	if logfile != "" {
+		return logfile
+	}
+	return log.Stdout
 }
 
 func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
@@ -383,15 +369,15 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 			t.Identity = identity
 			t.Permit = *permit
 			x.Stats.IncrementGoodOnceOffAuth(x.Log)
-			x.Log.Printf("Once-off auth successful (%v)", identity)
+			x.Log.Infof("Once-off auth successful (%v)", identity)
 			return t, nil
 		} else {
-			x.Log.Printf("Once-off auth GetPermit failed (%v) (%v)", identity, ePermit)
+			x.Log.Infof("Once-off auth GetPermit failed (%v) (%v)", identity, ePermit)
 			return nil, ePermit
 		}
 	} else {
 		x.Stats.IncrementInvalidPasswords(x.Log)
-		x.Log.Printf("Once-off auth Authentication failed (%v) (%v)", identity, eAuth)
+		x.Log.Infof("Once-off auth Authentication failed (%v) (%v)", identity, eAuth)
 		return nil, eAuth
 	}
 }
@@ -402,12 +388,12 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 func (x *Central) Login(identity, password string) (sessionkey string, token *Token, e error) {
 	token = &Token{}
 	if token.Identity, e = x.authenticator.Authenticate(identity, password); e == nil {
-		x.Log.Printf("Login authentication success (%v)", identity)
+		x.Log.Infof("Login authentication success (%v)", identity)
 		var permit *Permit
 		if permit, e = x.permitDB.GetPermit(identity); e == nil {
 			if x.MaxActiveSessions != 0 {
 				if e = x.sessionDB.InvalidateSessionsForIdentity(identity); e != nil {
-					x.Log.Printf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", identity, e)
+					x.Log.Errorf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", identity, e)
 					return "", nil, e
 				}
 			}
@@ -416,15 +402,15 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 			sessionkey = generateSessionKey()
 			if e = x.sessionDB.Write(sessionkey, token); e == nil {
 				x.Stats.IncrementGoodLogin(x.Log)
-				x.Log.Printf("Login successful (%v)", identity)
+				x.Log.Infof("Login successful (%v)", identity)
 				return
 			}
 		} else {
-			x.Log.Printf("Login GetPermit failed (%v) (%v)", identity, e)
+			x.Log.Infof("Login GetPermit failed (%v) (%v)", identity, e)
 		}
 	} else {
 		x.Stats.IncrementInvalidPasswords(x.Log)
-		x.Log.Printf("Login Authentication failed (%v) (%v)", identity, e)
+		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, e)
 	}
 	sessionkey = ""
 	token = nil
@@ -455,20 +441,20 @@ func (x *Central) GetPermits() (map[string]*Permit, error) {
 // Change a Permit.
 func (x *Central) SetPermit(identity string, permit *Permit) error {
 	if err := x.permitDB.SetPermit(identity, permit); err != nil {
-		x.Log.Printf("SetPermit failed (%v) (%v)", identity, err)
+		x.Log.Infof("SetPermit failed (%v) (%v)", identity, err)
 		return err
 	}
-	x.Log.Printf("SetPermit successful (%v)", identity)
+	x.Log.Infof("SetPermit successful (%v)", identity)
 	return x.sessionDB.PermitChanged(identity, permit)
 }
 
 // Change a Password. This invalidates all sessions for this identity.
 func (x *Central) SetPassword(identity, password string) error {
 	if err := x.authenticator.SetPassword(identity, password); err != nil {
-		x.Log.Printf("SetPassword failed (%v) (%v)", identity, password)
+		x.Log.Infof("SetPassword failed (%v) (%v)", identity, password)
 		return err
 	}
-	x.Log.Printf("SetPassword successful (%v)", identity)
+	x.Log.Infof("SetPassword successful (%v)", identity)
 	return x.sessionDB.InvalidateSessionsForIdentity(identity)
 }
 
@@ -478,10 +464,10 @@ func (x *Central) SetPassword(identity, password string) error {
 func (x *Central) ResetPasswordStart(identity string, expires time.Time) (string, error) {
 	token, err := x.authenticator.ResetPasswordStart(identity, expires)
 	if err != nil {
-		x.Log.Printf("ResetPasswordStart failed (%v) (%v)", identity, err)
+		x.Log.Infof("ResetPasswordStart failed (%v) (%v)", identity, err)
 		return "", err
 	}
-	x.Log.Printf("ResetPasswordStart successful (%v)", identity)
+	x.Log.Infof("ResetPasswordStart successful (%v)", identity)
 	return token, err
 }
 
@@ -489,10 +475,10 @@ func (x *Central) ResetPasswordStart(identity string, expires time.Time) (string
 // If this succeeds, then the password is set to 'password', and the token becomes invalid.
 func (x *Central) ResetPasswordFinish(identity string, token string, password string) error {
 	if err := x.authenticator.ResetPasswordFinish(identity, token, password); err != nil {
-		x.Log.Printf("ResetPasswordFinish failed (%v) (%v)", identity, err)
+		x.Log.Infof("ResetPasswordFinish failed (%v) (%v)", identity, err)
 		return err
 	}
-	x.Log.Printf("ResetPasswordFinish successful (%v)", identity)
+	x.Log.Infof("ResetPasswordFinish successful (%v)", identity)
 	x.sessionDB.InvalidateSessionsForIdentity(identity)
 	return nil
 }
@@ -502,9 +488,9 @@ func (x *Central) ResetPasswordFinish(identity string, token string, password st
 func (x *Central) CreateAuthenticatorIdentity(identity, password string) error {
 	e := x.authenticator.CreateIdentity(identity, password)
 	if e == nil {
-		x.Log.Printf("CreateAuthenticatorIdentity successful (%v)", identity)
+		x.Log.Infof("CreateAuthenticatorIdentity successful (%v)", identity)
 	} else {
-		x.Log.Printf("CreateAuthenticatorIdentity failed (%v) (%v)", identity, e)
+		x.Log.Infof("CreateAuthenticatorIdentity failed (%v) (%v)", identity, e)
 	}
 	return e
 }
@@ -520,30 +506,30 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 	newIdent = CanonicalizeIdentity(newIdent)
 	if oldIdent == newIdent {
 		// This just doesn't make sense, and it has the potential to violate assumptions by other pieces of code down below, so we silently allow it
-		x.Log.Printf("RenameIdentity succeeded (%v -> %v) (no action taken)", oldIdent, newIdent)
+		x.Log.Infof("RenameIdentity succeeded (%v -> %v) (no action taken)", oldIdent, newIdent)
 		return nil
 	}
 
 	if err := x.authenticator.RenameIdentity(oldIdent, newIdent); err != nil {
-		x.Log.Printf("RenameIdentity failed (%v -> %v) (%v)", oldIdent, newIdent, err)
+		x.Log.Infof("RenameIdentity failed (%v -> %v) (%v)", oldIdent, newIdent, err)
 		return err
 	}
 
-	x.Log.Printf("RenameIdentity (Authenticator) successful (%v -> %v)", oldIdent, newIdent)
+	x.Log.Infof("RenameIdentity (Authenticator) successful (%v -> %v)", oldIdent, newIdent)
 
 	if err := x.permitDB.RenameIdentity(oldIdent, newIdent); err != nil {
-		x.Log.Printf("RenameIdentity (PermitDB) failed (%v -> %v) (%v)", oldIdent, newIdent, err)
+		x.Log.Warnf("RenameIdentity (PermitDB) failed (%v -> %v) (%v)", oldIdent, newIdent, err)
 
 		errReverse := x.authenticator.RenameIdentity(newIdent, oldIdent)
-		x.Log.Printf("Reverse of rename (Authenticator) (%v -> %v). Result (%v)", newIdent, oldIdent, errReverse)
+		x.Log.Infof("Reverse of rename (Authenticator) (%v -> %v). Result (%v)", newIdent, oldIdent, errReverse)
 
 		return err
 	}
 
-	x.Log.Printf("RenameIdentity (PermitDB) successful (%v -> %v)", oldIdent, newIdent)
+	x.Log.Infof("RenameIdentity (PermitDB) successful (%v -> %v)", oldIdent, newIdent)
 
 	eInvalidate := x.InvalidateSessionsForIdentity(oldIdent)
-	x.Log.Printf("RenameIdentity (%v -> %v), session invalidation result (%v)", oldIdent, newIdent, eInvalidate)
+	x.Log.Infof("RenameIdentity (%v -> %v), session invalidation result (%v)", oldIdent, newIdent, eInvalidate)
 	return nil
 }
 
@@ -559,7 +545,7 @@ func (x *Central) GetRoleGroupDB() RoleGroupDB {
 
 func (x *Central) Close() {
 	if x.Log != nil {
-		x.Log.Printf("Authaus shutting down\n")
+		x.Log.Infof("Authaus shutting down\n")
 		x.Log = nil
 	}
 	if x.authenticator != nil {
