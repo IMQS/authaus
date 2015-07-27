@@ -200,7 +200,9 @@ For lack of a better name, this is the single hub of authentication that you int
 All public methods of Central are callable from multiple threads.
 */
 type Central struct {
-	// Stats must be first so it can assure 64 bit alignment in the atomics
+	// Stats must be first so that we are guaranteed to get it 8-byte aligned. We atomically
+	// increment counters inside CentralStats, and the atomic functions need 8-byte alignment
+	// on their operands.
 	Stats                  CentralStats
 	authenticator          Authenticator
 	permitDB               PermitDB
