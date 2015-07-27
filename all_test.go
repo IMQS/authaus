@@ -6,7 +6,6 @@ import (
 	"flag"
 	"github.com/IMQS/log"
 	"golang.org/x/crypto/scrypt"
-	"io/ioutil"
 	"strings"
 	"testing"
 	"time"
