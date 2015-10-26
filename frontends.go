@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	ErrHttpBasicAuth = errors.New("HTTP Basic Authorization must be base64(identity:password)")
+	ErrHttpBasicAuth     = errors.New("HTTP Basic Authorization must be base64(identity:password)")
+	ErrHttpNotAuthorized = errors.New("No authorization information")
 )
 
 // Reads the session cookie or the HTTP "Basic" Authorization header to determine whether this request is authorized.
@@ -24,6 +25,11 @@ func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (
 }
 
 func HttpHandlerBasicAuth(central *Central, r *http.Request) (*Token, error) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return nil, ErrHttpNotAuthorized
+	}
+
 	identity, password, basicOK := r.BasicAuth()
 	if !basicOK {
 		return nil, ErrHttpBasicAuth
@@ -41,6 +47,8 @@ func HttpHandlerPreludeWithError(config *ConfigHTTP, central *Central, w http.Re
 			HttpSendTxt(w, http.StatusUnauthorized, err.Error())
 		} else if err == ErrHttpBasicAuth {
 			HttpSendTxt(w, http.StatusBadRequest, err.Error())
+		} else if err == ErrHttpNotAuthorized {
+			HttpSendTxt(w, http.StatusUnauthorized, err.Error())
 		} else {
 			HttpSendTxt(w, http.StatusForbidden, err.Error())
 		}
