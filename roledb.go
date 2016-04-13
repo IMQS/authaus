@@ -610,12 +610,12 @@ func NewRoleGroupDB_SQL(conx *DBConnection) (RoleGroupDB, error) {
 	return db, nil
 }
 
-// Create a Postgres DB schema necessary for our Groups database
-func SqlCreateSchema_RoleGroupDB(conx *DBConnection) error {
-	versions := make([]string, 0)
-	versions = append(versions, `
-	CREATE TABLE authgroup (id SERIAL PRIMARY KEY, name VARCHAR, permlist VARCHAR);
-	CREATE UNIQUE INDEX idx_authgroup_name ON authgroup (name);`)
-
-	return MigrateSchema(conx, "authgroup", versions)
-}
+//// Create a Postgres DB schema necessary for our Groups database
+//func SqlCreateSchema_RoleGroupDB(conx *DBConnection) error {
+//	versions := make([]string, 0)
+//	versions = append(versions, `
+//	CREATE TABLE authgroup (id SERIAL PRIMARY KEY, name VARCHAR, permlist VARCHAR);
+//	CREATE UNIQUE INDEX idx_authgroup_name ON authgroup (name);`)
+//
+//	return MigrateSchema(conx, "authgroup", versions)
+//}

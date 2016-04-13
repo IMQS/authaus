@@ -7,8 +7,9 @@ Authaus brings together the following pluggable components:
 	Session Database        This stores session keys and associated tokens (aka cookies).
 	Permit Database         This is where you store the permits (aka permissions granted).
 	Role Groups Database    This knows how to interpret a permit, and turn it into a list of roles.
+	User Store    			This is where we store user details, such as email address, contact details, name, surname etc.
 
-Any of these four components can be swapped out, and in fact the fourth one (Role Groups) is entirely optional.
+Any of these five components can be swapped out, and in fact the fourth, and fifth ones (Role Groups and User Store) are entirely optional.
 
 A typical setup is to use LDAP as an Authenticator, and Postgres as a Session, Permit, and Role Groups database.
 
