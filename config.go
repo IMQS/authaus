@@ -154,6 +154,10 @@ type ConfigAuthenticator struct {
 	DB         DBConnection
 }
 
+type ConfigUserStoreDB struct {
+	DB DBConnection
+}
+
 /*
 Configuration information. This is typically loaded from a .json config file.
 */
@@ -164,6 +168,7 @@ type Config struct {
 	SessionDB     ConfigSessionDB
 	RoleGroupDB   ConfigRoleGroupDB
 	Authenticator ConfigAuthenticator
+	UserStore     ConfigUserStoreDB
 }
 
 func (x *Config) Reset() {

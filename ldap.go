@@ -20,8 +20,7 @@ type ldapAuthenticator struct {
 	con *ldap.LDAPConnection
 }
 
-func (x *ldapAuthenticator) Authenticate(identity, password string) (id string, er error) {
-	id = identity
+func (x *ldapAuthenticator) Authenticate(identity, password string) (er error) {
 	if len(password) == 0 {
 		// Many LDAP servers (or AD) will allow an anonymous BIND.
 		// I've never seen the need for a password-less user authenticated against LDAP.
@@ -35,31 +34,43 @@ func (x *ldapAuthenticator) Authenticate(identity, password string) (id string, 
 	return
 }
 
-func (x *ldapAuthenticator) SetPassword(identity, password string) error {
+func (x *ldapAuthenticator) Close() {
+	if x.con != nil {
+		x.con.Close()
+		x.con = nil
+	}
+}
+
+type ldapUserStore struct {
+	//con *ldap.Conn
+	con *ldap.LDAPConnection
+}
+
+func (x *ldapUserStore) SetPassword(identity, password string) error {
 	return ErrUnsupported
 }
 
-func (x *ldapAuthenticator) ResetPasswordStart(identity string, expires time.Time) (string, error) {
+func (x *ldapUserStore) ResetPasswordStart(identity string, expires time.Time) (string, error) {
 	return "", ErrUnsupported
 }
 
-func (x *ldapAuthenticator) ResetPasswordFinish(identity string, token string, password string) error {
+func (x *ldapUserStore) ResetPasswordFinish(identity string, token string, password string) error {
 	return ErrUnsupported
 }
 
-func (x *ldapAuthenticator) CreateIdentity(identity, password string) error {
+func (x *ldapUserStore) CreateIdentity(identity, password string) error {
 	return ErrUnsupported
 }
 
-func (x *ldapAuthenticator) RenameIdentity(oldIdent, newIdent string) error {
+func (x *ldapUserStore) RenameIdentity(oldIdent, newIdent string) error {
 	return ErrUnsupported
 }
 
-func (x *ldapAuthenticator) GetIdentities() ([]string, error) {
+func (x *ldapUserStore) GetIdentities() ([]string, error) {
 	return []string{}, ErrUnsupported
 }
 
-func (x *ldapAuthenticator) Close() {
+func (x *ldapUserStore) Close() {
 	if x.con != nil {
 		x.con.Close()
 		x.con = nil

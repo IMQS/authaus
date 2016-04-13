@@ -1,10 +1,10 @@
 package authaus
 
 func NewCentralDummy(logfile string) *Central {
-	authenticator := newDummyAuthenticator()
+	userStoreAndAuth := newDummyUserStoreAndAuth()
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
 	roleGroupDB := newDummyRoleGroupDB()
-	central := NewCentral(logfile, authenticator, permitDB, sessionDB, roleGroupDB)
+	central := NewCentral(logfile, userStoreAndAuth, userStoreAndAuth, permitDB, sessionDB, roleGroupDB)
 	return central
 }
