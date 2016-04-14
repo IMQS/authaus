@@ -159,7 +159,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
 		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived) VALUES ($1, $2, $3, $4, $5, $6)`, email, username, firstname, lastname, mobilenumber, false); eCreateUserStore != nil {
-			//fmt.Printf("CreateIdentity failed because: %v", ecreate)
+			//fmt.Printf("Insert into authuserstore failed because: %v\n", eCreateUserStore)
 			if strings.Index(eCreateUserStore.Error(), "duplicate key") != -1 {
 				eCreateUserStore = ErrIdentityExists
 			}
@@ -177,6 +177,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 
 		// Insert into auth user
 		if _, eCreateAuthUser := tx.Exec(`INSERT INTO authuserpwd (userid, password) VALUES ($1, $2)`, userId, hash); eCreateAuthUser != nil {
+			//fmt.Printf("Insert into authuserpwd failed because: %v\n", eCreateAuthUser)
 			if strings.Index(eCreateAuthUser.Error(), "duplicate key") != -1 {
 				eCreateAuthUser = ErrIdentityExists
 			}
@@ -184,7 +185,10 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 			return NullUserId, eCreateAuthUser
 		}
 
-		return UserId(userId), tx.Commit()
+		if eCommit := tx.Commit(); eCommit != nil {
+			return NullUserId, eCommit
+		}
+		return UserId(userId), nil
 	} else {
 		return NullUserId, etx
 	}
@@ -641,26 +645,22 @@ func createMigrations() []migration.Migrator {
 		CREATE UNIQUE INDEX idx_authuserstore_email ON authuserstore (LOWER(email));
 		INSERT INTO authuserstore (email) SELECT identity from authuser;
 
-		CREATE TABLE authsession_temp(id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
-		INSERT INTO authsession_temp (id, sessionkey, identity, permit, expires) SELECT * FROM authsession;
-		DROP TABLE authsession;
-		CREATE TABLE authsession(id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, userid BIGSERIAL, permit VARCHAR, expires TIMESTAMP);
-		CREATE UNIQUE INDEX idx_authsession_token ON authsession (sessionkey);
-		CREATE INDEX idx_authsession_expires  ON authsession (expires);
-		CREATE INDEX idx_authsession_userid ON authsession (userid);
-		INSERT INTO authsession (id, sessionkey, userid, permit, expires)
-		SELECT authtemp.id, authtemp.sessionkey, us.userid, authtemp.permit, authtemp.expires FROM authsession_temp AS authtemp
-		JOIN authuserstore AS us ON us.email = authtemp.identity;
-		DROP TABLE authsession_temp;
+		ALTER TABLE authsession ADD COLUMN userid BIGINT;
+		UPDATE authsession
+			SET userid = authuserstore.userid
+			FROM authuserstore
+			WHERE authuserstore.email = authsession.identity;
+		ALTER TABLE authsession DROP COLUMN identity;
+	
+		CREATE TABLE authuserpwd(userid BIGINT PRIMARY KEY, password VARCHAR, permit VARCHAR, pwdtoken VARCHAR);
+		INSERT INTO authuserpwd (userid, password, permit, pwdtoken)
+			SELECT store.userid, password, permit, pwdtoken
+			FROM authuser
+			INNER JOIN authuserstore AS store
+			ON authuser.identity = store.email;
 
-		CREATE TABLE authuser_temp(id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR, pwdtoken VARCHAR);
-		INSERT INTO authuser_temp (id, identity, password, permit, pwdtoken) SELECT * FROM authuser;
 		DROP TABLE authuser;
-		CREATE TABLE authuserpwd(id BIGSERIAL PRIMARY KEY, userid BIGSERIAL, password VARCHAR, permit VARCHAR, pwdtoken VARCHAR);
-		INSERT INTO authuserpwd (id, userid, password, permit, pwdtoken)
-		SELECT usertemp.id, us.userid, usertemp.password, usertemp.permit, usertemp.pwdtoken FROM authuser_temp AS usertemp
-		JOIN authuserstore AS us ON us.email = usertemp.identity;
-		DROP TABLE authuser_temp;`,
+		`,
 	}
 
 	for _, src := range text {
