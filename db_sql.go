@@ -581,27 +581,20 @@ func SqlCreateDatabase(conx *DBConnection) error {
 	}
 }
 
-func RunMigrations(conx *DBConnection) (bool, error) {
-	// Until March 2016, Authaus used it's own migration tool, but we moved away from that and started using a migration tool by BurntSushi.
-	// This requires us to delete old version tracking tables etc. However, we would like to make sure we have run all the migrations, with the old migration tool, as migration version
-	// storage between tools work differently. Once we are positive that the old migrations that run with the old migration tool
-	// are run, we can proceed with the following:
-	// We need to delete old version tracking tables used by the old migration tool. We need to set the correct migration version number we
-	// are currently on in the new migration version tracking table, as we are keeping our previous migration scripts for obvious maintenance reasons
-	// and for running on brand new systems.
+func RunMigrations(conx *DBConnection) error {
+	// Until March 2016, Authaus used it's own migration tool, but we now use https://github.com/BurntSushi/migration instead.
+	// If the bootstrap process seems contrived, it's because it needs to cater for the upgrade from the old
+	// in-house migration system, to the BurntSushi system.
 	err := runBootstrap(conx)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=disable", conx.Host, conx.User, conx.Password, conx.Database)
-	_, err = migration.Open(conx.Driver, conStr, createMigrations())
-	if err != nil {
-		return false, err
+	db, err := migration.Open(conx.Driver, conx.ConnectionString(), createMigrations())
+	if err == nil {
+		db.Close()
 	}
-	return true, err
-
-	return false, nil
+	return err
 }
 
 func createVersionTable(db *sql.DB, version int) error {
@@ -617,37 +610,40 @@ func createMigrations() []migration.Migrator {
 	var migrations []migration.Migrator
 
 	text := []string{
-		// authgroup migrations
+		// 1. authgroup
 		`CREATE TABLE authgroup (id SERIAL PRIMARY KEY, name VARCHAR, permlist VARCHAR);
 		CREATE UNIQUE INDEX idx_authgroup_name ON authgroup (name);`,
 
-		// authsession migrations
+		// 2. authsession
 		`CREATE TABLE authsession (id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
 		CREATE UNIQUE INDEX idx_authsession_token ON authsession (sessionkey);
 		CREATE INDEX idx_authsession_identity ON authsession (identity);
 		CREATE INDEX idx_authsession_expires  ON authsession (expires);`,
 
+		// 3.
 		`DELETE FROM authsession;`,
 
-		// authuser migrations
+		// 4. authuser
 		`CREATE TABLE authuser (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
 		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);`,
 
+		// 5. authuser (case insensitive)
 		`DROP INDEX idx_authuser_identity;
 		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (LOWER(identity));`,
 
+		// 6. password reset
 		`ALTER TABLE authuser ADD COLUMN pwdtoken VARCHAR;`,
 
-		// Change from using email address as the primary identity of a user, to a 64-bit integer, which we call UserId.
-		// The above migrations were from the old migration system, from this migration on we are using the new migration
-		// system from BurntSushi
+		// END OF OLD (pre BurntSushi) MIGRATIONS
+
+		// 7. Change from using email address as the primary identity of a user, to a 64-bit integer, which we call UserId.
 		`CREATE TABLE authuserstore (userid BIGSERIAL PRIMARY KEY, email VARCHAR, username VARCHAR, firstname VARCHAR, lastname VARCHAR, mobile VARCHAR, archived BOOLEAN);
 		CREATE UNIQUE INDEX idx_authuserstore_email ON authuserstore (LOWER(email));
 		INSERT INTO authuserstore (email) SELECT identity from authuser;
 
 		CREATE TABLE authsession_temp(id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
 		INSERT INTO authsession_temp (id, sessionkey, identity, permit, expires) SELECT * FROM authsession;
-		DROP TABLE IF EXISTS authsession;
+		DROP TABLE authsession;
 		CREATE TABLE authsession(id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, userid BIGSERIAL, permit VARCHAR, expires TIMESTAMP);
 		CREATE UNIQUE INDEX idx_authsession_token ON authsession (sessionkey);
 		CREATE INDEX idx_authsession_expires  ON authsession (expires);
@@ -659,7 +655,7 @@ func createMigrations() []migration.Migrator {
 
 		CREATE TABLE authuser_temp(id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR, pwdtoken VARCHAR);
 		INSERT INTO authuser_temp (id, identity, password, permit, pwdtoken) SELECT * FROM authuser;
-		DROP TABLE IF EXISTS authuser;
+		DROP TABLE authuser;
 		CREATE TABLE authuserpwd(id BIGSERIAL PRIMARY KEY, userid BIGSERIAL, password VARCHAR, permit VARCHAR, pwdtoken VARCHAR);
 		INSERT INTO authuserpwd (id, userid, password, permit, pwdtoken)
 		SELECT usertemp.id, us.userid, usertemp.password, usertemp.permit, usertemp.pwdtoken FROM authuser_temp AS usertemp
@@ -677,25 +673,29 @@ func createMigrations() []migration.Migrator {
 	return migrations
 }
 
-// This function makes sure that the old migrations that were part of the old migration tool have run, returns true on success else false with error
+/* This moves from the old in-house migration system to BurntSushi
+The system can be in one of three permissible states here:
+1. Empty DB
+2. Authaus DB prior to BurntSushi
+3. Using BurntSushi
+*/
 func runBootstrap(conx *DBConnection) error {
 	db, eConnect := conx.Connect()
 	if eConnect != nil {
-		return ErrConnect
+		return NewError(ErrConnect, eConnect.Error())
+	}
+	defer db.Close()
+
+	var version int
+	r := db.QueryRow("SELECT version FROM migration_version")
+	if err := r.Scan(&version); err == nil {
+		// If the table 'migration_version' exists, then we have already upgraded (ie state #3)
+		return nil
 	}
 
-	oldVersionTables := []string{"authgroup_version", "authsession_version", "authuser_version"}
-	// We first want to see if the new migrator has taken over, by checking if old version tracking tables exist
-	tableNameResult := ""
-	query := db.QueryRow(fmt.Sprintf("SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '%v'", oldVersionTables[0]))
-	err := query.Scan(&tableNameResult)
-	if err != nil {
-		if strings.Index(err.Error(), "no rows in result set") != -1 {
-			// Tracking tables dont exist, this is up to date
-			return nil
-		}
-		return err
-	}
+	// The following two arrays are parallel
+	oldVersionTables := []string{"authuser_version", "authgroup_version", "authsession_version"}
+	oldVersionNumbers := []int{3, 1, 2}
 
 	getTableVersion := func(table string) (int, error) {
 		var version int
@@ -708,35 +708,42 @@ func runBootstrap(conx *DBConnection) error {
 		}
 	}
 
-	version1, err1 := getTableVersion(oldVersionTables[0])
-	if err1 != nil {
-		return err1
-	}
-	version2, err2 := getTableVersion(oldVersionTables[1])
-	if err2 != nil {
-		return err2
-	}
-	version3, err3 := getTableVersion(oldVersionTables[2])
-	if err3 != nil {
-		return err3
-	}
-
-	// version1 is the version of authgroup_version, which must be equal to 1
-	// version2 is the version of authsession_version, which must be equal to 2
-	// version3 is the version of authuser_version, which must be equal to 3
-	if version1 == 1 && version2 == 2 && version3 == 3 {
-		// Tracking tables do exist, we need to remove them
-		for _, oldVersionTable := range oldVersionTables {
-			_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %v", oldVersionTable))
-			if err != nil {
-				return err
+	for i := 0; i < 3; i++ {
+		version, err := getTableVersion(oldVersionTables[i])
+		if err != nil {
+			// The old version tables do not exist. Assume this is an empty DB (ie state #1)
+			if strings.Index(err.Error(), "does not exist") != -1 {
+				return nil
 			}
+			return fmt.Errorf("Error when scanning for old Authaus migration system: %v", err)
+		} else if version != oldVersionNumbers[i] {
+			return fmt.Errorf("Unable to upgrade semi-old database (%v at version %v, instead of %v)", oldVersionTables[i], version, oldVersionNumbers[i])
 		}
 	}
 
-	// We need to set the version in new migration version tracking table
-	// We need to keep track of migration version, moving from old to new migration tool
-	createVersionTable(db, 6)
+	// The remainder of this function deals with state #2 (old Authaus migration system is present)
 
-	return nil
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	for _, tab := range oldVersionTables {
+		_, err := db.Exec(fmt.Sprintf("DROP TABLE %v", tab))
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("Error dropping old version table %v: %v", tab, err)
+		}
+	}
+
+	// Under normal usage of the BurntSushi system, we wouldn't perform this step.
+	// However, in our case, we are "pre-seeding" the BurntSushi system, by telling
+	// it that we have already run migrations 1 through 6. The first six migrations
+	// were the ones that were run as part of the old Authaus built-in migration system.
+	err = createVersionTable(db, 6)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("Error bootstrapping BurntSushi migration system: %v", err)
+	}
+	return tx.Commit()
 }

@@ -83,7 +83,7 @@ func setup1(t *testing.T) *Central {
 				t.Fatalf("Unable to wipe database %v: %v", dbName, err)
 			}
 
-			if success, err := RunMigrations(&conx); err != nil || success == false {
+			if err := RunMigrations(&conx); err != nil {
 				t.Fatalf("Unable to run migrations: %v", err)
 			}
 		}

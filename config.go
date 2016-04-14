@@ -88,16 +88,7 @@ type DBConnection struct {
 }
 
 func (x *DBConnection) Connect() (*sql.DB, error) {
-	sslmode := "disable"
-	if x.SSL {
-		sslmode = "require"
-	}
-	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, x.User, x.Password, x.Database, sslmode)
-	if x.Port != 0 {
-		conStr += fmt.Sprintf(" port=%v", x.Port)
-	}
-
-	return sql.Open(x.Driver, conStr)
+	return sql.Open(x.Driver, x.ConnectionString())
 }
 
 func (x *DBConnection) Equals(y *DBConnection) bool {
@@ -108,6 +99,18 @@ func (x *DBConnection) Equals(y *DBConnection) bool {
 		x.User == y.User &&
 		x.Password == y.Password &&
 		x.SSL == y.SSL
+}
+
+func (x *DBConnection) ConnectionString() string {
+	sslmode := "disable"
+	if x.SSL {
+		sslmode = "require"
+	}
+	conStr := fmt.Sprintf("host=%v user=%v password=%v dbname=%v sslmode=%v", x.Host, x.User, x.Password, x.Database, sslmode)
+	if x.Port != 0 {
+		conStr += fmt.Sprintf(" port=%v", x.Port)
+	}
+	return conStr
 }
 
 // Return a concatenation of all struct fields
