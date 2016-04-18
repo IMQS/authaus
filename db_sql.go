@@ -300,7 +300,7 @@ func (x *sqlUserStoreDB) GetIdentityFromUserId(userId UserId) (string, error) {
 }
 
 func (x *sqlUserStoreDB) GetUserIdFromIdentity(identity string) (UserId, error) {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1 AND (archived = false OR archived IS NULL)`, identity)
+	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
 	if scanErr := row.Scan(&userId); scanErr != nil {
 		return 0, scanErr

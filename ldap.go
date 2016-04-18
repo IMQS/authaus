@@ -66,7 +66,37 @@ func (x *ldapUserStore) ResetPasswordFinish(userId UserId, token string, passwor
 }
 
 func (x *ldapUserStore) CreateIdentity(email, username, firstname, lastname, mobilenumber, password string) (UserId, error) {
-	return NullUserId, ErrUnsupported
+	// Insert into user store
+	if tx, etx := x.db.Begin(); etx == nil {
+		// Check if the user exists (is not archived)
+		row := tx.QueryRow("SELECT email FROM authuserstore WHERE LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(email))
+		scanErr := row.Scan()
+		if strings.Index(scanErr.Error(), "no rows in result set") == -1 {
+			tx.Rollback()
+			scanErr = ErrIdentityExists
+			return NullUserId, scanErr
+		}
+
+		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived) VALUES ($1, $2, $3, $4, $5, $6)`, email, username, firstname, lastname, mobilenumber, false); eCreateUserStore != nil {
+			tx.Rollback()
+			return NullUserId, eCreateUserStore
+		}
+
+		// Get user id
+		var userId int64
+		row = tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
+		if scanErr := row.Scan(&userId); scanErr != nil {
+			tx.Rollback()
+			return NullUserId, scanErr
+		}
+
+		if eCommit := tx.Commit(); eCommit != nil {
+			return NullUserId, eCommit
+		}
+		return UserId(userId), nil
+	} else {
+		return NullUserId, etx
+	}
 }
 
 func (x *ldapUserStore) RenameIdentity(oldIdent, newIdent string) error {
