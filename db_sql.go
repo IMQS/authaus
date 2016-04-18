@@ -158,18 +158,23 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
+		// Check if the user exists (is not archived)
+		row := tx.QueryRow("SELECT email FROM authuserstore WHERE LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(email))
+		scanErr := row.Scan()
+		if strings.Index(scanErr.Error(), "no rows in result set") == -1 {
+			tx.Rollback()
+			scanErr = ErrIdentityExists
+			return NullUserId, scanErr
+		}
+
 		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived) VALUES ($1, $2, $3, $4, $5, $6)`, email, username, firstname, lastname, mobilenumber, false); eCreateUserStore != nil {
-			//fmt.Printf("Insert into authuserstore failed because: %v\n", eCreateUserStore)
-			if strings.Index(eCreateUserStore.Error(), "duplicate key") != -1 {
-				eCreateUserStore = ErrIdentityExists
-			}
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
 
 		// Get user id
 		var userId int64
-		row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
+		row = tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
 		if scanErr := row.Scan(&userId); scanErr != nil {
 			tx.Rollback()
 			return NullUserId, scanErr
@@ -232,7 +237,16 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 
 func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
+		// Check if the user exists (is not archived)
+		row := tx.QueryRow("SELECT email FROM authuserstore WHERE LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(newIdent))
+		scanErr := row.Scan()
+		if strings.Index(scanErr.Error(), "no rows in result set") == -1 {
+			tx.Rollback()
+			scanErr = ErrIdentityExists
+			return scanErr
+		}
+
+		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2 AND (archived = false OR archived IS NULL)`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
@@ -240,9 +254,6 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 				return ErrIdentityAuthNotFound
 			}
 		} else {
-			if strings.Index(eupdate.Error(), "duplicate key") != -1 {
-				eupdate = ErrIdentityExists
-			}
 			tx.Rollback()
 			return eupdate
 		}
@@ -295,6 +306,14 @@ func (x *sqlUserStoreDB) GetUserIdFromIdentity(identity string) (UserId, error) 
 		return 0, scanErr
 	}
 	return UserId(userId), nil
+}
+
+func (x *sqlUserStoreDB) GetLdapUsers() ([]AuthUser, error) {
+	return nil, ErrUnsupported
+}
+
+func (x *sqlUserStoreDB) Merge(ldapUsers []AuthUser) error {
+	return ErrUnsupported
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -595,6 +614,7 @@ func RunMigrations(conx *DBConnection) error {
 	}
 
 	db, err := migration.Open(conx.Driver, conx.ConnectionString(), createMigrations())
+
 	if err == nil {
 		db.Close()
 	}
@@ -642,7 +662,7 @@ func createMigrations() []migration.Migrator {
 
 		// 7. Change from using email address as the primary identity of a user, to a 64-bit integer, which we call UserId.
 		`CREATE TABLE authuserstore (userid BIGSERIAL PRIMARY KEY, email VARCHAR, username VARCHAR, firstname VARCHAR, lastname VARCHAR, mobile VARCHAR, archived BOOLEAN);
-		CREATE UNIQUE INDEX idx_authuserstore_email ON authuserstore (LOWER(email));
+		CREATE INDEX idx_authuserstore_email ON authuserstore (LOWER(email));
 		INSERT INTO authuserstore (email) SELECT identity from authuser;
 
 		ALTER TABLE authsession ADD COLUMN userid BIGINT;

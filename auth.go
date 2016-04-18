@@ -214,6 +214,7 @@ type Central struct {
 	Log                    *log.Logger
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
+	Ticker                 *time.Ticker
 }
 
 // Create a new Central object from the specified pieces.
@@ -278,11 +279,12 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		panic(errors.New("SessionExpirySeconds must be 0 or more"))
 	}
 
+	//var ldapAuth LdapAuthenticator
 	if auth, err = createAuthenticator(&config.Authenticator); err != nil {
 		panic(err)
 	}
 
-	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB); err != nil {
+	if userStore, err = createUserStore(&config.Authenticator, &config.UserStore); err != nil {
 		panic(errors.New(fmt.Sprintf("Error connecting to UserStoreDB: %v", err)))
 	}
 
@@ -305,6 +307,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
 	}
+	if config.Authenticator.Type == "ldap" {
+		c.Merge()
+	}
 	return c, nil
 }
 
@@ -321,16 +326,11 @@ func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
 	switch config.Type {
 	case "ldap":
 		ldapMode, legalLdapMode := configLdapNameToMode[config.Encryption]
-		//ldapAddress := config.Authenticator.LdapHost
-		//if config.Authenticator.LdapPort != 0 {
-		//	ldapAddress += ":" + strconv.Itoa(int(config.Authenticator.LdapPort))
-		//}
 		if !legalLdapMode {
 			return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", config.Encryption))
 		}
-		//if auth, err = NewAuthenticator_LDAP(ldapMode, "tcp", ldapAddress); err != nil {
 		if auth, err = NewAuthenticator_LDAP(ldapMode, config.LdapHost, uint16(config.LdapPort)); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error creating LDAP Authenticator: %v", err))
+			return nil, errors.New(fmt.Sprintf("Error creating LDAP Userstore and Authenticator: %v", err))
 		}
 		return auth, nil
 	case "db":
@@ -340,6 +340,30 @@ func createAuthenticator(config *ConfigAuthenticator) (Authenticator, error) {
 		return auth, nil
 	default:
 		return nil, errors.New("Unrecognized Authenticator type '" + config.Type + "'")
+	}
+}
+
+func createUserStore(authConfig *ConfigAuthenticator, userStoreconfig *ConfigUserStoreDB) (UserStore, error) {
+	var err error
+	var userStore UserStore
+	switch authConfig.Type {
+	case "ldap":
+		ldapMode, legalLdapMode := configLdapNameToMode[authConfig.Encryption]
+		if !legalLdapMode {
+			return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", authConfig.Encryption))
+		}
+		if userStore, err = NewUserstore_LDAP(&userStoreconfig.DB, ldapMode, authConfig.LdapHost, uint16(authConfig.LdapPort), authConfig.LdapUsername, authConfig.LdapPassword, authConfig.LdapDomain); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error creating LDAP Userstore: %v", err))
+		}
+
+		return userStore, nil
+	case "db":
+		if userStore, err = NewUserStoreDB_SQL(&userStoreconfig.DB); err != nil {
+			return nil, errors.New(fmt.Sprintf("Unable to connect to UserStoreDB: %v", err))
+		}
+		return userStore, nil
+	default:
+		return nil, errors.New("Unrecognized Authenticator type '" + authConfig.Type + "'")
 	}
 }
 
@@ -447,6 +471,35 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	x.Stats.IncrementGoodLogin(x.Log)
 	x.Log.Infof("Login successful (%v)", userId)
 	return sessionkey, token, nil
+}
+
+// Merges ldap with user store every 10 seconds
+func (x *Central) Merge() error {
+	x.Log.Info("Starting LDAP merge process")
+	x.Ticker = time.NewTicker(time.Second * 10)
+	go func() {
+		for _ = range x.Ticker.C {
+			x.Log.Infof("Merging at (%v)", time.Now().UnixNano()/int64(time.Millisecond))
+			ldapUsers, err := x.userStore.GetLdapUsers()
+			//for _,ldapUser := range ldapUsers {
+			//	x.Log.Infof("User: %v", ldapUser.Username)
+			//}
+			if err != nil {
+				x.Log.Errorf("Failed to retrieve users from LDAP server (%v)", err)
+				break
+			}
+			err = x.userStore.Merge(ldapUsers)
+			if err != nil {
+				x.Log.Errorf("Failed to merge LDAP users (%v)", err)
+				break
+			}
+			x.Log.Infof("Merging complete at (%v)", time.Now().UnixNano()/int64(time.Millisecond))
+		}
+		x.Ticker.Stop()
+	}()
+
+	return nil
+
 }
 
 // Logout, which erases the session key
@@ -622,6 +675,10 @@ func (x *Central) Close() {
 	if x.Log != nil {
 		x.Log.Infof("Authaus shutting down\n")
 		x.Log = nil
+	}
+	if x.Ticker != nil {
+		x.Ticker.Stop()
+		x.Ticker = nil
 	}
 	if x.authenticator != nil {
 		x.authenticator.Close()

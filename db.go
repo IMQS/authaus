@@ -41,6 +41,8 @@ type UserStore interface {
 	GetIdentityFromUserId(userId UserId) (string, error)                                                // Gets the identity from the userid supplied
 	GetUserIdFromIdentity(identity string) (UserId, error)                                              // Gets the userid from the identity supplied
 	GetIdentities() ([]AuthUser, error)                                                                 // Retrieve a list of all identities
+	GetLdapUsers() ([]AuthUser, error)                                                                  // Retrieve the list of users from ldap
+	Merge([]AuthUser) error                                                                             // Merges ldap users with our userstore
 	Close()                                                                                             // Typically used to close a database handle
 }
 
@@ -76,11 +78,26 @@ type AuthUser struct {
 	Mobilenumber string
 }
 
+type LdapUser struct {
+	Username     string
+	Email        string
+	Firstname    string
+	Lastname     string
+	Mobilenumber string
+	Password     string
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Authenticator/Userstore that simply stores identity/passwords in memory
 type dummyUserStoreAndAuth struct {
 	users     map[UserId]*dummyUser
+	usersLock sync.RWMutex
+}
+
+type dummyLdapUserStoreAndAuth struct {
+	imqsUsers map[UserId]*dummyUser
+	ldapUsers []*LdapUser
 	usersLock sync.RWMutex
 }
 
@@ -99,6 +116,13 @@ type dummyUser struct {
 func newDummyUserStoreAndAuth() *dummyUserStoreAndAuth {
 	d := &dummyUserStoreAndAuth{}
 	d.users = make(map[UserId]*dummyUser)
+	return d
+}
+
+func newDummyLdapUserStoreAndAuth() *dummyLdapUserStoreAndAuth {
+	d := &dummyLdapUserStoreAndAuth{}
+	d.imqsUsers = make(map[UserId]*dummyUser)
+	d.ldapUsers = make([]*LdapUser, 0)
 	return d
 }
 
@@ -263,9 +287,30 @@ func (x *dummyUserStoreAndAuth) GetUserIdFromIdentity(identity string) (UserId, 
 	return NullUserId, ErrIdentityAuthNotFound
 }
 
-func (x *dummyUserStoreAndAuth) getUser(email string) *dummyUser {
+func (x *dummyUserStoreAndAuth) GetLdapUsers() ([]AuthUser, error) {
+	return nil, ErrUnsupported
+}
+
+func (x *dummyUserStoreAndAuth) Merge(ldapUsers []AuthUser) error {
+	return ErrUnsupported
+}
+
+func (x *dummyUserStoreAndAuth) getUser(identity string) *dummyUser {
 	for _, v := range x.users {
-		if CanonicalizeIdentity(v.email) == CanonicalizeIdentity(email) {
+		if CanonicalizeIdentity(v.email) == CanonicalizeIdentity(identity) {
+			return v
+		} else if CanonicalizeIdentity(v.username) == CanonicalizeIdentity(identity) {
+			return v
+		}
+	}
+	return nil
+}
+
+func getLdapUser(users []*LdapUser, identity string) *LdapUser {
+	for _, v := range users {
+		if CanonicalizeIdentity(v.Email) == CanonicalizeIdentity(identity) {
+			return v
+		} else if CanonicalizeIdentity(v.Username) == CanonicalizeIdentity(identity) {
 			return v
 		}
 	}
@@ -273,6 +318,169 @@ func (x *dummyUserStoreAndAuth) getUser(email string) *dummyUser {
 }
 
 func (x *dummyUserStoreAndAuth) generateUserId() UserId {
+	nextUserId = nextUserId + 1
+	return nextUserId
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+func (x *dummyLdapUserStoreAndAuth) Authenticate(identity, password string) (er error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+	user := getLdapUser(x.ldapUsers, identity)
+	if user == nil {
+		er = ErrIdentityAuthNotFound
+	} else if user.Password == password {
+		er = nil
+	} else {
+		er = ErrInvalidPassword
+	}
+
+	return
+}
+
+func (x *dummyLdapUserStoreAndAuth) Close() {
+	//Set incrementing user id to 0, for unit test prediction
+	nextUserId = 0
+}
+
+func (x *dummyLdapUserStoreAndAuth) SetPassword(userId UserId, password string) error {
+	return ErrUnsupported
+}
+
+func (x *dummyLdapUserStoreAndAuth) ResetPasswordStart(userId UserId, expires time.Time) (string, error) {
+	return "", ErrUnsupported
+}
+
+func (x *dummyLdapUserStoreAndAuth) ResetPasswordFinish(userId UserId, token string, password string) error {
+	return ErrUnsupported
+}
+
+func (x *dummyLdapUserStoreAndAuth) CreateIdentity(email, username, firstname, lastname, mobilenumber, password string) (UserId, error) {
+	return NullUserId, ErrUnsupported
+}
+
+func (x *dummyLdapUserStoreAndAuth) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.imqsUsers[userId]; exists && !user.archived {
+		user.email = email
+		user.username = username
+		user.firstname = firstname
+		user.lastname = lastname
+		user.mobilenumber = mobilenumber
+	} else {
+		return ErrIdentityAuthNotFound
+	}
+	return nil
+}
+
+func (x *dummyLdapUserStoreAndAuth) ArchiveIdentity(userId UserId) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.imqsUsers[userId]; exists {
+		user.archived = true
+	} else {
+		return ErrIdentityAuthNotFound
+	}
+	return nil
+}
+
+func (x *dummyLdapUserStoreAndAuth) RenameIdentity(oldEmail, newEmail string) error {
+	return ErrUnsupported
+}
+
+func (x *dummyLdapUserStoreAndAuth) GetIdentities() ([]AuthUser, error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+
+	list := []AuthUser{}
+	for _, v := range x.imqsUsers {
+		if v.archived == false {
+			list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber})
+		}
+	}
+	return list, nil
+}
+
+func (x *dummyLdapUserStoreAndAuth) GetIdentityFromUserId(userId UserId) (string, error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+
+	for _, v := range x.imqsUsers {
+		if v.userId == userId {
+			return v.email, nil
+		}
+	}
+
+	return "", ErrIdentityAuthNotFound
+}
+
+func (x *dummyLdapUserStoreAndAuth) GetUserIdFromIdentity(identity string) (UserId, error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+
+	if CanonicalizeIdentity(identity) == "" {
+		return NullUserId, ErrIdentityEmpty
+	}
+
+	for _, v := range x.imqsUsers {
+		if v.email == identity {
+			return v.userId, nil
+		} else if v.username == identity {
+			return v.userId, nil
+		}
+	}
+	return NullUserId, ErrIdentityAuthNotFound
+}
+
+func (x *dummyLdapUserStoreAndAuth) GetLdapUsers() ([]AuthUser, error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+	// We create the dummy ldap users
+	x.ldapUsers = append(x.ldapUsers, &LdapUser{Email: "joe@gmail.com", Username: "joe", Firstname: "Firstname", Lastname: "Lastname", Mobilenumber: "Mobilenumber", Password: "123"})
+	x.ldapUsers = append(x.ldapUsers, &LdapUser{Email: "jack@gmail.com", Username: "jack", Firstname: "Firstname", Lastname: "Lastname", Mobilenumber: "Mobilenumber", Password: "12345"})
+	x.ldapUsers = append(x.ldapUsers, &LdapUser{Email: "Sam@gmail.com", Username: "Sam", Firstname: "Firstname", Lastname: "Lastname", Mobilenumber: "Mobilenumber", Password: "0000"})
+	x.ldapUsers = append(x.ldapUsers, &LdapUser{Email: "iHaveNoPermit@gmail.com", Username: "iHaveNoPermit", Firstname: "Firstname", Lastname: "Lastname", Mobilenumber: "Mobilenumber", Password: "123"})
+
+	//Now we build up and return the list of ldap users ([]AuthUsers)
+	ldapUsers := make([]AuthUser, 0)
+	for _, ldapUser := range x.ldapUsers {
+		ldapUsers = append(ldapUsers, AuthUser{UserId: NullUserId, Email: ldapUser.Email, Username: ldapUser.Username, Firstname: ldapUser.Firstname, Lastname: ldapUser.Lastname, Mobilenumber: ldapUser.Mobilenumber})
+	}
+	return ldapUsers, nil
+}
+
+func (x *dummyLdapUserStoreAndAuth) Merge(ldapUsers []AuthUser) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	// Create dummy LDAP users
+
+	getImqsUser := func(ldapUser AuthUser, imqsUsers map[UserId]*dummyUser) (UserId, *dummyUser) {
+		for i, imqsUser := range imqsUsers {
+			if CanonicalizeIdentity(imqsUser.username) == CanonicalizeIdentity(ldapUser.Username) {
+				return i, imqsUser
+			}
+		}
+		return -1, nil
+	}
+
+	for _, ldapUser := range ldapUsers {
+		imqsIndex, imqsUser := getImqsUser(ldapUser, x.imqsUsers)
+		if imqsUser == nil {
+			userId := x.generateUserId()
+			x.imqsUsers[userId] = &dummyUser{email: ldapUser.Email, username: ldapUser.Username, firstname: ldapUser.Firstname, lastname: ldapUser.Lastname, userId: userId, mobilenumber: ldapUser.Mobilenumber}
+		} else {
+			x.imqsUsers[imqsIndex].email = ldapUser.Email
+			x.imqsUsers[imqsIndex].firstname = ldapUser.Firstname
+			x.imqsUsers[imqsIndex].lastname = ldapUser.Lastname
+			x.imqsUsers[imqsIndex].mobilenumber = ldapUser.Mobilenumber
+		}
+	}
+	return nil
+}
+
+func (x *dummyLdapUserStoreAndAuth) generateUserId() UserId {
 	nextUserId = nextUserId + 1
 	return nextUserId
 }
@@ -389,6 +597,14 @@ func (x *sanitizingUserStore) Close() {
 		x.backend.Close()
 		x.backend = nil
 	}
+}
+
+func (x *sanitizingUserStore) GetLdapUsers() ([]AuthUser, error) {
+	return x.backend.GetLdapUsers()
+}
+
+func (x *sanitizingUserStore) Merge(ldapUsers []AuthUser) error {
+	return x.backend.Merge(ldapUsers)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

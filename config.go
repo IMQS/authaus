@@ -150,11 +150,14 @@ type ConfigRoleGroupDB struct {
 }
 
 type ConfigAuthenticator struct {
-	Type       string // "ldap", "db"
-	LdapHost   string //
-	LdapPort   int32  //
-	Encryption string // "", "TLS", "SSL"
-	DB         DBConnection
+	Type         string // "ldap", "db"
+	LdapHost     string //
+	LdapPort     int32  //
+	Encryption   string // "", "TLS", "SSL"
+	LdapUsername string //
+	LdapPassword string //
+	LdapDomain   string //
+	DB           DBConnection
 }
 
 type ConfigUserStoreDB struct {
