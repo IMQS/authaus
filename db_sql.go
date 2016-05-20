@@ -41,17 +41,17 @@ const (
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-type sqlAuthenticationDB struct {
-	db *sql.DB
+type sqlUserStoreDB struct {
+	enableAuthenticator bool
+	db                  *sql.DB
 }
 
-func (x *sqlAuthenticationDB) Authenticate(identity, password string) error {
+func (x *sqlUserStoreDB) Authenticate(identity, password string) error {
 	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
 	if err := row.Scan(&userId); err != nil {
 		return ErrIdentityAuthNotFound
 	}
-
 	row = x.db.QueryRow(`SELECT password FROM authuserpwd WHERE userid = $1`, userId)
 	dbHash := ""
 	if err := row.Scan(&dbHash); err != nil {
@@ -63,17 +63,6 @@ func (x *sqlAuthenticationDB) Authenticate(identity, password string) error {
 	} else {
 		return ErrInvalidPassword
 	}
-}
-
-func (x *sqlAuthenticationDB) Close() {
-	if x.db != nil {
-		x.db.Close()
-		x.db = nil
-	}
-}
-
-type sqlUserStoreDB struct {
-	db *sql.DB
 }
 
 func (x *sqlUserStoreDB) SetPassword(userId UserId, password string) error {
@@ -159,12 +148,10 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
 		// Check if the user exists (is not archived)
-		row := tx.QueryRow("SELECT email FROM authuserstore WHERE LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(email))
-		scanErr := row.Scan()
-		if strings.Index(scanErr.Error(), "no rows in result set") == -1 {
-			tx.Rollback()
-			scanErr = ErrIdentityExists
-			return NullUserId, scanErr
+		if err := x.identityExists(email); err != nil {
+			if err := x.identityExists(username); err != nil {
+				return NullUserId, err
+			}
 		}
 
 		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived) VALUES ($1, $2, $3, $4, $5, $6)`, email, username, firstname, lastname, mobilenumber, false); eCreateUserStore != nil {
@@ -174,20 +161,22 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 
 		// Get user id
 		var userId int64
-		row = tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
+		row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
 		if scanErr := row.Scan(&userId); scanErr != nil {
 			tx.Rollback()
 			return NullUserId, scanErr
 		}
 
-		// Insert into auth user
-		if _, eCreateAuthUser := tx.Exec(`INSERT INTO authuserpwd (userid, password) VALUES ($1, $2)`, userId, hash); eCreateAuthUser != nil {
-			//fmt.Printf("Insert into authuserpwd failed because: %v\n", eCreateAuthUser)
-			if strings.Index(eCreateAuthUser.Error(), "duplicate key") != -1 {
-				eCreateAuthUser = ErrIdentityExists
+		if x.enableAuthenticator {
+			// Insert into auth user
+			if _, eCreateAuthUser := tx.Exec(`INSERT INTO authuserpwd (userid, password) VALUES ($1, $2)`, userId, hash); eCreateAuthUser != nil {
+				//fmt.Printf("Insert into authuserpwd failed because: %v\n", eCreateAuthUser)
+				if strings.Index(eCreateAuthUser.Error(), "duplicate key") != -1 {
+					eCreateAuthUser = ErrIdentityExists
+				}
+				tx.Rollback()
+				return NullUserId, eCreateAuthUser
 			}
-			tx.Rollback()
-			return NullUserId, eCreateAuthUser
 		}
 
 		if eCommit := tx.Commit(); eCommit != nil {
@@ -197,6 +186,16 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 	} else {
 		return NullUserId, etx
 	}
+}
+
+func (x *sqlUserStoreDB) identityExists(identity string) error {
+	row := x.db.QueryRow("SELECT userid FROM authuserstore WHERE LOWER(username) = $1 OR LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(identity))
+	err := row.Scan()
+	if strings.Index(err.Error(), "no rows in result set") == -1 {
+		err = ErrIdentityExists
+		return err
+	}
+	return nil
 }
 
 func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string) error {
@@ -300,7 +299,7 @@ func (x *sqlUserStoreDB) GetIdentityFromUserId(userId UserId) (string, error) {
 }
 
 func (x *sqlUserStoreDB) GetUserIdFromIdentity(identity string) (UserId, error) {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 OR LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
 	if scanErr := row.Scan(&userId); scanErr != nil {
 		return 0, scanErr
@@ -310,10 +309,6 @@ func (x *sqlUserStoreDB) GetUserIdFromIdentity(identity string) (UserId, error) 
 
 func (x *sqlUserStoreDB) GetLdapUsers() ([]AuthUser, error) {
 	return nil, ErrUnsupported
-}
-
-func (x *sqlUserStoreDB) Merge(ldapUsers []AuthUser) error {
-	return ErrUnsupported
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -518,17 +513,11 @@ func computeAuthausHash(password string) (string, error) {
 	return base64.StdEncoding.EncodeToString(cblock[:]), nil
 }
 
-func NewAuthenticationDB_SQL(conx *DBConnection) (Authenticator, error) {
-	db := new(sqlAuthenticationDB)
-	var err error
-	if db.db, err = conx.Connect(); err != nil {
-		return nil, err
-	}
-	return db, nil
-}
-
-func NewUserStoreDB_SQL(conx *DBConnection) (UserStore, error) {
+func NewUserStoreDB_SQL(conx *DBConnection, ldapUsed bool) (UserStore, error) {
 	db := new(sqlUserStoreDB)
+	if !ldapUsed {
+		db.enableAuthenticator = true
+	}
 	var err error
 	if db.db, err = conx.Connect(); err != nil {
 		return nil, err

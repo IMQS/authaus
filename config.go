@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
+	"time"
 )
 
 /*
@@ -24,11 +25,14 @@ Full populated config:
 		"Port":			8080,
 		"Bind":			"127.0.0.1"
 	},
-	"Authenticator": {
-		"Type":			"ldap",
-		"LdapHost":		"domaincontroller.example.com",
+	"LDAP": {
+		"LdapHost":		"example.local",
 		"LdapPort":		389,
-		"Encryption":	"ssl"
+		"Encryption":	"",
+		"LdapUsername":	"joe@example.local",
+		"LdapPassword":	"1234abcd",
+		"LdapDomain":	"example.local",
+		"LdapTickerTime": 300 // Seconds
 	},
 	"PermitDB": {
 		"DB": {
@@ -149,15 +153,14 @@ type ConfigRoleGroupDB struct {
 	DB DBConnection
 }
 
-type ConfigAuthenticator struct {
-	Type         string // "ldap", "db"
-	LdapHost     string //
-	LdapPort     int32  //
-	Encryption   string // "", "TLS", "SSL"
-	LdapUsername string //
-	LdapPassword string //
-	LdapDomain   string //
-	DB           DBConnection
+type ConfigLDAP struct {
+	LdapHost       string        //
+	LdapPort       uint16        //
+	Encryption     string        // "", "TLS", "SSL"
+	LdapUsername   string        //
+	LdapPassword   string        //
+	LdapDomain     string        //
+	LdapTickerTime time.Duration //
 }
 
 type ConfigUserStoreDB struct {
@@ -168,13 +171,13 @@ type ConfigUserStoreDB struct {
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
-	Log           ConfigLog
-	HTTP          ConfigHTTP
-	PermitDB      ConfigPermitDB
-	SessionDB     ConfigSessionDB
-	RoleGroupDB   ConfigRoleGroupDB
-	Authenticator ConfigAuthenticator
-	UserStore     ConfigUserStoreDB
+	Log         ConfigLog
+	HTTP        ConfigHTTP
+	PermitDB    ConfigPermitDB
+	SessionDB   ConfigSessionDB
+	RoleGroupDB ConfigRoleGroupDB
+	LDAP        ConfigLDAP
+	UserStore   ConfigUserStoreDB
 }
 
 func (x *Config) Reset() {
