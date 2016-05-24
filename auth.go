@@ -302,8 +302,10 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		panic(errors.New("SessionExpirySeconds must be 0 or more"))
 	}
 
-	if ldap, err = NewAuthenticator_LDAP(&config.LDAP); err != nil {
-		panic(fmt.Errorf("Error creating LDAP Authenticator: %v", err))
+	if ldapUsed {
+		if ldap, err = NewAuthenticator_LDAP(&config.LDAP); err != nil {
+			panic(fmt.Errorf("Error creating LDAP Authenticator: %v", err))
+		}
 	}
 
 	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB, ldapUsed); err != nil {
