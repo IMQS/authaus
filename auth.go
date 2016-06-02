@@ -39,11 +39,11 @@ var (
 	ErrIdentityEmpty          = errors.New("Identity may not be empty")
 	ErrIdentityExists         = errors.New("Identity already exists")
 	// We should perhaps keep a consistent error, like ErrInvalidCredentials throught the app, as it can be a security risk returning InvalidPassword to a user that may be malicious
-	ErrInvalidPassword        = errors.New("Invalid password")
-	ErrInvalidSessionToken    = errors.New("Invalid session token")
-	ErrInvalidPasswordToken   = errors.New("Invalid password token")
-	ErrPasswordTokenExpired   = errors.New("Password token has expired")
-	ErrInvalidCredentials     = errors.New("Invalid Credentials") // This error was created for LDAP authentication. LDAP does not return 'identity not found' or 'invalid password' but simply invalid credentials
+	ErrInvalidPassword      = errors.New("Invalid password")
+	ErrInvalidSessionToken  = errors.New("Invalid session token")
+	ErrInvalidPasswordToken = errors.New("Invalid password token")
+	ErrPasswordTokenExpired = errors.New("Password token has expired")
+	ErrInvalidCredentials   = errors.New("Invalid Credentials") // This error was created for LDAP authentication. LDAP does not return 'identity not found' or 'invalid password' but simply invalid credentials
 )
 
 // Use this whenever you return an Authaus error. We rely upon the prefix
@@ -502,7 +502,7 @@ func (x *Central) MergeTick() {
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
 	}
-	imqsUsers, err := x.userStore.GetIdentities()
+	imqsUsers, err := x.userStore.GetIdentities(x.ldapUsed)
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
 	}
@@ -724,7 +724,7 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 
 // Retrieve all identities known to the Authenticator.
 func (x *Central) GetAuthenticatorIdentities() ([]AuthUser, error) {
-	return x.userStore.GetIdentities()
+	return x.userStore.GetIdentities(x.ldapUsed)
 }
 
 // Retrieve the Role Group Database (which may be nil)

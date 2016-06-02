@@ -145,26 +145,38 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 		return NullUserId, ehash
 	}
 
+	//Check identity exists
+	if len(username) > 0 {
+		if err := x.identityExists(username); err != nil {
+			return NullUserId, err
+		}
+	} else {
+		if err := x.identityExists(email); err != nil {
+			return NullUserId, err
+		}
+	}
+
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
-		// Check if the user exists (is not archived)
-		if err := x.identityExists(email); err != nil {
-			if err := x.identityExists(username); err != nil {
-				return NullUserId, err
-			}
-		}
-
 		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived) VALUES ($1, $2, $3, $4, $5, $6)`, email, username, firstname, lastname, mobilenumber, false); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
-
 		// Get user id
 		var userId int64
-		row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE email = $1`, email)
-		if scanErr := row.Scan(&userId); scanErr != nil {
-			tx.Rollback()
-			return NullUserId, scanErr
+		if len(username) > 0 {
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(username))
+			if scanErr := row.Scan(&userId); scanErr != nil {
+				tx.Rollback()
+				return NullUserId, scanErr
+
+			}
+		} else {
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(email))
+			if scanErr := row.Scan(&userId); scanErr != nil {
+				tx.Rollback()
+				return NullUserId, scanErr
+			}
 		}
 
 		if x.enableAuthenticator {
@@ -189,7 +201,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 }
 
 func (x *sqlUserStoreDB) identityExists(identity string) error {
-	row := x.db.QueryRow("SELECT userid FROM authuserstore WHERE LOWER(username) = $1 OR LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(identity))
+	row := x.db.QueryRow("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1 AND (archived = false OR archived IS NULL)) OR (LOWER(email) = $1 AND (archived = false OR archived IS NULL))", CanonicalizeIdentity(identity))
 	err := row.Scan()
 	if strings.Index(err.Error(), "no rows in result set") == -1 {
 		err = ErrIdentityExists
@@ -237,12 +249,8 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	if tx, etx := x.db.Begin(); etx == nil {
 		// Check if the user exists (is not archived)
-		row := tx.QueryRow("SELECT email FROM authuserstore WHERE LOWER(email) = $1 AND archived = false", CanonicalizeIdentity(newIdent))
-		scanErr := row.Scan()
-		if strings.Index(scanErr.Error(), "no rows in result set") == -1 {
-			tx.Rollback()
-			scanErr = ErrIdentityExists
-			return scanErr
+		if err := x.identityExists(newIdent); err != nil {
+			return err
 		}
 
 		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2 AND (archived = false OR archived IS NULL)`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
@@ -261,8 +269,13 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	}
 }
 
-func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
-	rows, err := x.db.Query(`SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL) ORDER BY email`)
+func (x *sqlUserStoreDB) GetIdentities(orderByUsername bool) ([]AuthUser, error) {
+	identity := "email"
+	if orderByUsername {
+		identity = "username"
+	}
+	rows, err := x.db.Query(fmt.Sprintf("SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL) ORDER BY %v", identity))
+	//rows, err := x.db.Query(`SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL) ORDER BY email`)
 	if err != nil {
 		return []AuthUser{}, err
 	}
@@ -299,7 +312,7 @@ func (x *sqlUserStoreDB) GetIdentityFromUserId(userId UserId) (string, error) {
 }
 
 func (x *sqlUserStoreDB) GetUserIdFromIdentity(identity string) (UserId, error) {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 OR LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 AND (archived = false OR archived IS NULL)) OR (LOWER(username) = $1 AND (archived = false OR archived IS NULL))`, CanonicalizeIdentity(identity))
 	var userId int64
 	if scanErr := row.Scan(&userId); scanErr != nil {
 		return 0, scanErr

@@ -200,10 +200,10 @@ func setup1(t *testing.T) *Central {
 		if _, e := userStore.CreateIdentity(jackIdentity, "jackUsername", "jackName", "jackSurname", "jack084", jackPwd); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
-		if _, e := userStore.CreateIdentity(SamIdentity, "SamUsername", "SamName", "SamSurname", "Sam084", SamPwd); e != nil {
+		if _, e := userStore.CreateIdentity(SamIdentity, "", "SamName", "SamSurname", "Sam084", SamPwd); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
-		if _, e := userStore.CreateIdentity(iHaveNoPermitIdentity, "iHaveNoPermitUsername", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", iHaveNoPermitPwd); e != nil {
+		if _, e := userStore.CreateIdentity(iHaveNoPermitIdentity, "", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", iHaveNoPermitPwd); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
 		permit := setup1_permit()

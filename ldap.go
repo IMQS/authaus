@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mavricknz/ldap"
+	"strings"
 	"time"
-"strings"
 )
 
 type LdapConnectionMode int
@@ -64,7 +64,7 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	searchRequest := ldap.NewSearchRequest(
 		"dc=imqs,dc=local",
 		ldap.ScopeWholeSubtree, ldap.DerefAlways, 0, 0, false,
-		"(objectclass=user)",
+		"(&(objectCategory=person)(objectClass=user))",
 		attributes,
 		nil)
 
