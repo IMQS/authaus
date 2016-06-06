@@ -101,6 +101,7 @@ var conx_ldap = ConfigLDAP{
 	LdapUsername:   (joeIdentity + "@imqs.local"),
 	LdapPort:       389,
 	LdapTickerTime: 5,
+	BaseDN:         "dc=imqs,dc=local",
 }
 
 func isBackendTest() bool {

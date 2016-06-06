@@ -62,7 +62,7 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		"mobile"}
 
 	searchRequest := ldap.NewSearchRequest(
-		"dc=imqs,dc=local",
+		x.config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.DerefAlways, 0, 0, false,
 		"(&(objectCategory=person)(objectClass=user))",
 		attributes,

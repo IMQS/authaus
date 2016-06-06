@@ -32,7 +32,8 @@ Full populated config:
 		"LdapUsername":	"joe@example.local",
 		"LdapPassword":	"1234abcd",
 		"LdapDomain":	"example.local",
-		"LdapTickerTime": 300 // Seconds
+		"LdapTickerTime": 300 // Seconds,
+		"BaseDN":        "dc=exmaple1,dc=example2",
 	},
 	"PermitDB": {
 		"DB": {
@@ -161,6 +162,7 @@ type ConfigLDAP struct {
 	LdapPassword   string        //
 	LdapDomain     string        //
 	LdapTickerTime time.Duration //
+	BaseDN         string        //
 }
 
 type ConfigUserStoreDB struct {
