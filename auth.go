@@ -502,7 +502,7 @@ func (x *Central) MergeTick() {
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
 	}
-	imqsUsers, err := x.userStore.GetIdentities(x.ldapUsed)
+	imqsUsers, err := x.userStore.GetIdentities()
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
 	}
@@ -722,9 +722,16 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 	return nil
 }
 
+type dataSlice []*data
+
+type data struct {
+	count int64
+	size  int64
+}
+
 // Retrieve all identities known to the Authenticator.
 func (x *Central) GetAuthenticatorIdentities() ([]AuthUser, error) {
-	return x.userStore.GetIdentities(x.ldapUsed)
+	return x.userStore.GetIdentities()
 }
 
 // Retrieve the Role Group Database (which may be nil)

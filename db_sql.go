@@ -269,13 +269,8 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	}
 }
 
-func (x *sqlUserStoreDB) GetIdentities(orderByUsername bool) ([]AuthUser, error) {
-	identity := "email"
-	if orderByUsername {
-		identity = "username"
-	}
-	rows, err := x.db.Query(fmt.Sprintf("SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL) ORDER BY %v", identity))
-	//rows, err := x.db.Query(`SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL) ORDER BY email`)
+func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
+	rows, err := x.db.Query("SELECT userid, email, username, firstname, lastname, mobile FROM authuserstore WHERE (archived = false OR archived IS NULL)")
 	if err != nil {
 		return []AuthUser{}, err
 	}

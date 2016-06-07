@@ -36,7 +36,11 @@ func (x *LdapImpl) Authenticate(identity, password string) (er error) {
 		return err
 	}
 	defer con.Close()
-	err = con.Bind(fmt.Sprintf(`%v@%v`, identity, x.config.LdapDomain), password)
+	// We need to know whether or not we must add the domain to the identity by checking if it contains '@'
+	if !strings.Contains(identity, "@") {
+		identity = fmt.Sprintf(`%v@%v`, identity, x.config.LdapDomain)
+	}
+	err = con.Bind(identity, password)
 	if err != nil {
 		if strings.Index(err.Error(), "Invalid Credentials") != 0 {
 			er = NewError(ErrInvalidCredentials, err.Error())
@@ -73,7 +77,8 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		return nil, err
 	}
 	defer con.Close()
-	sr, err := con.Search(searchRequest)
+	sr, err := con.SearchWithPaging(searchRequest, 100)
+	//sr, err := con.Search(searchRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +116,8 @@ func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 	//fmt.Printf("Connect: Username: %v, Password: %v, Host: %v, Port: %v, Encryption: %v, Domain: %v", config.LdapUsername, config.LdapPassword, config.LdapHost, config.LdapPort, config.Encryption, config.LdapDomain)
 	con := ldap.NewLDAPConnection(config.LdapHost, config.LdapPort)
-	con.NetworkConnectTimeout = 5 * time.Second
-	con.ReadTimeout = 5 * time.Second
+	con.NetworkConnectTimeout = 30 * time.Second
+	con.ReadTimeout = 30 * time.Second
 	ldapMode, legalLdapMode := configLdapNameToMode[config.Encryption]
 	if !legalLdapMode {
 		return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", config.Encryption))

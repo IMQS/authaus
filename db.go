@@ -34,7 +34,7 @@ type UserStore interface {
 	RenameIdentity(oldIdent, newIdent string) error                                                     // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetIdentityFromUserId(userId UserId) (string, error)                                                // Gets the identity from the userid supplied
 	GetUserIdFromIdentity(identity string) (UserId, error)                                              // Gets the userid from the identity supplied
-	GetIdentities(orderByUsername bool) ([]AuthUser, error)                                             // Retrieve a list of all identities
+	GetIdentities() ([]AuthUser, error)                                                                 // Retrieve a list of all identities
 	Close()                                                                                             // Typically used to close a database handle
 }
 
@@ -246,7 +246,7 @@ func (x *dummyUserStore) RenameIdentity(oldEmail, newEmail string) error {
 	}
 }
 
-func (x *dummyUserStore) GetIdentities(orderByUsername bool) ([]AuthUser, error) {
+func (x *dummyUserStore) GetIdentities() ([]AuthUser, error) {
 	x.usersLock.RLock()
 	defer x.usersLock.RUnlock()
 
@@ -470,8 +470,8 @@ func (x *sanitizingUserStore) RenameIdentity(oldIdent, newIdent string) error {
 	return x.backend.RenameIdentity(oldIdent, newIdent)
 }
 
-func (x *sanitizingUserStore) GetIdentities(orderByUsername bool) ([]AuthUser, error) {
-	return x.backend.GetIdentities(orderByUsername)
+func (x *sanitizingUserStore) GetIdentities() ([]AuthUser, error) {
+	return x.backend.GetIdentities()
 }
 
 func (x *sanitizingUserStore) GetIdentityFromUserId(userId UserId) (string, error) {
