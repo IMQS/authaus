@@ -43,7 +43,7 @@ func (x *LdapImpl) Authenticate(identity, password string) (er error) {
 	err = con.Bind(identity, password)
 	if err != nil {
 		if strings.Index(err.Error(), "Invalid Credentials") != 0 {
-			er = NewError(ErrInvalidCredentials, err.Error())
+			er = ErrInvalidCredentials
 		} else {
 			err = er
 		}
