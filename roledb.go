@@ -376,6 +376,7 @@ func readAllGroups(rows *sql.Rows, queryError error) ([]*AuthGroup, error) {
 	if queryError != nil {
 		return nil, queryError
 	}
+	defer rows.Close()
 	groups := make([]*AuthGroup, 0)
 	for rows.Next() {
 		bitsB64 := ""

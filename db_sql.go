@@ -463,6 +463,7 @@ func getPermitsFromDB(db *sql.DB, tableName, permitField, userIdField string) (m
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var strUserId sql.NullString
 		var permit sql.NullString
