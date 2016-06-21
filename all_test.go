@@ -230,6 +230,7 @@ func firstError(errors []error) error {
 
 func sqlDeleteAllTables(db *sql.DB) error {
 	statements := []string{
+		"DROP TABLE IF EXISTS authuser",
 		"DROP TABLE IF EXISTS authgroup",
 		"DROP TABLE IF EXISTS authsession",
 		"DROP TABLE IF EXISTS authuserpwd",
