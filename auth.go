@@ -210,12 +210,11 @@ type Central struct {
 	// on their operands.
 	Stats                  CentralStats
 	ldap                   LDAP
-	authenticator          Authenticator
 	userStore              UserStore
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
-	renameLock             sync.Mutex
+	renameLock             sync.Mutex //
 	Log                    *log.Logger
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
@@ -239,10 +238,6 @@ func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitD
 	}
 	c.userStore = &sanitizingUserStore{
 		backend: userStore,
-	}
-	c.authenticator = &sanitizingAuthenticator{
-		userStore: c.userStore,
-		ldap:      c.ldap,
 	}
 	c.permitDB = permitDB
 	c.sessionDB = newCachedSessionDB(sessionDB)
@@ -308,7 +303,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
-	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB, ldapUsed); err != nil {
+	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB); err != nil {
 		panic(fmt.Errorf("Error connecting to UserStoreDB: %v", err))
 	}
 
@@ -381,11 +376,8 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	userId, eGetIdent := x.userStore.GetUserIdFromIdentity(identity)
-	if eGetIdent != nil {
-		return nil, ErrIdentityAuthNotFound
-	}
-	if eAuth := x.authenticator.Authenticate(identity, password); eAuth == nil {
+	userId, eAuth := x.authenticate(identity, password)
+	if eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(userId); ePermit == nil {
 			t := &Token{}
 			t.Expires = veryFarFuture
@@ -410,16 +402,11 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
 func (x *Central) Login(identity, password string) (sessionkey string, token *Token, err error) {
-	token = &Token{}
-	if err = x.authenticator.Authenticate(identity, password); err != nil {
+	userId, authErr := x.authenticate(identity, password)
+	if authErr != nil {
+		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
 		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, err)
-		return sessionkey, token, err
-	}
-	var userId UserId
-	userId, err = x.userStore.GetUserIdFromIdentity(identity)
-	if err != nil {
-		x.Log.Errorf("UserId could not be found for identity (%v), (%v)", identity, err)
 		return sessionkey, token, err
 	}
 	x.Log.Infof("Login authentication success (%v)", userId)
@@ -437,6 +424,7 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 		}
 	}
 
+	token = &Token{}
 	token.Expires = time.Now().Add(x.NewSessionExpiresAfter)
 	token.Permit = *permit
 	token.Identity = identity
@@ -452,27 +440,28 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	return sessionkey, token, nil
 }
 
-//// Merges ldap with user store every merge tick
-//func (x *Central) StartMergeTicker() error {
-//	x.Log.Info("Starting LDAP merge process")
-//	x.userStoreMergeTicker = time.NewTicker(x.ldapMergeTickerSeconds)
-//	x.tickerStopReq = make(chan bool)
-//	x.tickerStopResp = make(chan bool)
-//	go func() {
-//		x.MergeTick()
-//		for _ = range x.userStoreMergeTicker.C {
-//			select {
-//				case <-x.tickerStopReq:
-//					x.tickerStopResp <- true
-//					break
-//				default:
-//					x.MergeTick()
-//			}
-//		}
-//	}()
-//
-//	return nil
-//}
+func (x *Central) authenticate(identity, password string) (UserId, error) {
+	user, err := x.userStore.GetUserFromIdentity(identity)
+	if err != nil {
+		return user.UserId, ErrIdentityAuthNotFound
+	}
+
+	if user.Type == UserTypeLDAP {
+		err = x.ldap.Authenticate(identity, password)
+		// We want to return Invalid Password or IdentityAuthNotFound, not Invalid Credentials
+		// as LDAP doesnt differentiate between the 2
+		if err == ErrInvalidCredentials {
+			// The user already exists on our system, which means it exists on LDAP due to our Merge, with
+			// that knowledge we can say the password is invalid
+			return user.UserId, ErrInvalidPassword
+
+		}
+		return user.UserId, err
+	} else {
+		err = x.userStore.Authenticate(identity, password)
+		return user.UserId, err
+	}
+}
 
 // Merges ldap with user store every merge tick
 func (x *Central) StartMergeTicker() error {
@@ -506,9 +495,7 @@ func (x *Central) MergeTick() {
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
 	}
-	if err = x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers); err != nil {
-		x.Log.Errorf("Failed to merge LDAP users (%v)", err)
-	}
+	x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers)
 	timeComplete := time.Now().UnixNano() / int64(time.Millisecond)
 	x.mergeCount++
 	if x.mergeCount%60 == 0 {
@@ -517,43 +504,52 @@ func (x *Central) MergeTick() {
 }
 
 // We are reading users from LDAP/AD and merging them into the IMQS userstore
-func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) error {
+func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
 	imqsUserMap := make(map[string]AuthUser)
 	for _, imqsUser := range imqsUsers {
-		imqsUserMap[imqsUser.Username] = imqsUser
+		//fmt.Printf("IMQS user %v\n", imqsUser.Username)
+		imqsUserMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
 	}
 
 	ldapUserMap := make(map[string]AuthUser)
 	for _, ldapUser := range ldapUsers {
-		ldapUserMap[ldapUser.Username] = ldapUser
+		//fmt.Printf("LDAP user %v %v\n", ldapUser.Username, ldapUser.Email)
+		ldapUserMap[CanonicalizeIdentity(ldapUser.Username)] = ldapUser
 	}
 
 	// Insert or update
 	for _, ldapUser := range ldapUsers {
-		imqsUser, found := imqsUserMap[ldapUser.Username]
+		imqsUser, found := imqsUserMap[CanonicalizeIdentity(ldapUser.Username)]
 		if !found {
-			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, ""); err != nil {
-				return err
+			//fmt.Printf("Create identity %v\n", ldapUser.Username)
+			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", UserTypeLDAP); err != nil {
+				x.Log.Errorf("LDAP merge: Create identity failed with (%v)", err)
 			}
-		} else if !ldapUser.equals(imqsUser) {
-			if err := x.userStore.UpdateIdentity(imqsUser.UserId, ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber); err != nil {
-				return err
+		} else if ldapUser.Email != imqsUser.Email || ldapUser.Firstname != imqsUser.Firstname || ldapUser.Lastname != imqsUser.Lastname || ldapUser.Mobilenumber != imqsUser.Mobilenumber {
+			//fmt.Printf("Updating identity %v %v\n", ldapUser.Username, ldapUser.Lastname)
+			if imqsUser.Type == UserTypeDefault {
+				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
+			}
+			if err := x.userStore.UpdateIdentity(imqsUser.UserId, ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, UserTypeLDAP); err != nil {
+				x.Log.Errorf("LDAP merge: Update identity failed with (%v)", err)
 			}
 		}
 	}
 
 	// Remove
 	for _, imqsUser := range imqsUsers {
-		_, found := ldapUserMap[imqsUser.Username]
+		_, found := ldapUserMap[CanonicalizeIdentity(imqsUser.Username)]
 		if !found {
-			if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
-				return err
+			//fmt.Printf("Archiving identity %v\n", imqsUser.Username)
+			// We only archive ldap users that are not on the ldap system, but are not on ours, imqs users should remain
+			if imqsUser.Type == UserTypeLDAP {
+				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
+					x.Log.Errorf("LDAP merge: Archive identity failed with (%v)", err)
+				}
 			}
 		}
 	}
-
-	return nil
 }
 
 func (u AuthUser) equals(user AuthUser) bool {
@@ -631,7 +627,7 @@ func (x *Central) ResetPasswordFinish(userId UserId, token string, password stri
 
 // Create an identity in the AuthUserStore.
 func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, mobilenumber, password string) (UserId, error) {
-	userId, e := x.userStore.CreateIdentity(email, username, firstname, lastname, mobilenumber, password)
+	userId, e := x.userStore.CreateIdentity(email, username, firstname, lastname, mobilenumber, password, UserTypeDefault)
 	if e == nil {
 		x.Log.Infof("CreateAuthenticatorIdentity successful: (%v)", userId)
 	} else {
@@ -641,8 +637,8 @@ func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, 
 }
 
 // Update a user in the AuthUserStore.
-func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string) error {
-	e := x.userStore.UpdateIdentity(userId, email, username, firstname, lastname, mobilenumber)
+func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
+	e := x.userStore.UpdateIdentity(userId, email, username, firstname, lastname, mobilenumber, authUserType)
 	if e != nil {
 		x.Log.Errorf("Update Identity failed (%v) (%v)", userId, e)
 		return e
@@ -667,26 +663,26 @@ func (x *Central) ArchiveIdentity(userId UserId) error {
 	return nil
 }
 
-// Get userid from identity.
-func (x *Central) GetUserIdFromIdentity(identity string) (UserId, error) {
-	userId, e := x.userStore.GetUserIdFromIdentity(identity)
+// Get AuthUser object from identity.
+func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
+	user, e := x.userStore.GetUserFromIdentity(identity)
 	if e == nil {
-		return userId, nil
+		return user, nil
 	} else {
 		x.Log.Infof("GetUserIdFromIdentity failed (%v) (%v)", identity, e)
 	}
-	return NullUserId, e
+	return AuthUser{}, e
 }
 
-// Get identity from userid.
-func (x *Central) GetIdentityFromUserId(userId UserId) (string, error) {
-	identity, e := x.userStore.GetIdentityFromUserId(userId)
+// Get AuthUser object from userid.
+func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
+	user, e := x.userStore.GetUserFromUserId(userId)
 	if e == nil {
-		return identity, nil
+		return user, nil
 	} else {
-		x.Log.Infof("GetIdentityFromUserId failed (%v) (%v)", identity, e)
+		x.Log.Infof("GetIdentityFromUserId failed (%v) (%v)", userId, e)
 	}
-	return "", e
+	return AuthUser{}, e
 }
 
 // Rename an identity. Invalidates all existing sessions for that identity
@@ -704,7 +700,7 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 		return nil
 	}
 
-	userId, eGetUserId := x.userStore.GetUserIdFromIdentity(oldIdent)
+	user, eGetUserId := x.userStore.GetUserFromIdentity(oldIdent)
 	if eGetUserId != nil {
 		x.Log.Infof("Could not find userId for identity (%v) (%v)", oldIdent, ErrIdentityAuthNotFound)
 		return ErrIdentityAuthNotFound
@@ -717,8 +713,8 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 
 	x.Log.Infof("RenameIdentity (UserStore) successful (%v -> %v)", oldIdent, newIdent)
 
-	eInvalidate := x.InvalidateSessionsForIdentity(userId)
-	x.Log.Infof("RenameIdentity (%v -> %v), session invalidation result (%v) for (%v)", oldIdent, newIdent, eInvalidate, userId)
+	eInvalidate := x.InvalidateSessionsForIdentity(user.UserId)
+	x.Log.Infof("RenameIdentity (%v -> %v), session invalidation result (%v) for (%v)", oldIdent, newIdent, eInvalidate, user.UserId)
 	return nil
 }
 

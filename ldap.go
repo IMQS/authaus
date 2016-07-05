@@ -2,7 +2,6 @@ package authaus
 
 import (
 	//"github.com/mmitton/ldap"
-	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/mavricknz/ldap"
@@ -19,7 +18,6 @@ const (
 )
 
 type LdapImpl struct {
-	db     *sql.DB
 	config *ConfigLDAP
 }
 
@@ -68,7 +66,7 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	searchRequest := ldap.NewSearchRequest(
 		x.config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.DerefAlways, 0, 0, false,
-		"(&(objectCategory=person)(objectClass=user))",
+		x.config.LdapSearchFilter,
 		attributes,
 		nil)
 
@@ -78,7 +76,6 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	}
 	defer con.Close()
 	sr, err := con.SearchWithPaging(searchRequest, 100)
-	//sr, err := con.Search(searchRequest)
 	if err != nil {
 		return nil, err
 	}
