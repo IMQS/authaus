@@ -94,14 +94,16 @@ var conx_postgres = DBConnection{
 }
 
 var conx_ldap = ConfigLDAP{
-	Encryption:     "",
-	LdapDomain:     "imqs.local",
-	LdapHost:       "imqs.local",
-	LdapPassword:   joePwd,
-	LdapUsername:   (joeIdentity + "@imqs.local"),
-	LdapPort:       389,
-	LdapTickerTime: 5,
-	BaseDN:         "dc=imqs,dc=local",
+	Encryption:       "",
+	LdapDomain:       "imqs.local",
+	LdapHost:         "imqs.local",
+	LdapPassword:     joePwd,
+	LdapUsername:     (joeIdentity + "@imqs.local"),
+	LdapPort:         389,
+	LdapTickerTime:   5,
+	BaseDN:           "dc=imqs,dc=local",
+	SysAdminEmail:    "joeAdmin@example.com",
+	LdapSearchFilter: "(&(objectCategory=person)(objectClass=user))",
 }
 
 func isBackendTest() bool {
@@ -142,7 +144,7 @@ func setup1(t *testing.T) *Central {
 		}
 
 		var err [4]error
-		userStore, err[0] = NewUserStoreDB_SQL(&conx, *backend_ldap)
+		userStore, err[0] = NewUserStoreDB_SQL(&conx)
 		sessionDB, err[1] = NewSessionDB_SQL(&conx)
 		permitDB, err[2] = NewPermitDB_SQL(&conx)
 		roleDB, err[3] = NewRoleGroupDB_SQL(&conx)
@@ -188,23 +190,23 @@ func setup1(t *testing.T) *Central {
 		central.MergeTick()
 
 		// Get joe userid to assign permit to
-		userid, err := userStore.GetUserIdFromIdentity(joeIdentity)
+		user, err := userStore.GetUserFromIdentity(joeIdentity)
 		if err != nil {
 			t.Errorf("Get userid for set permit failed: %v", err)
 		}
 		permit := setup1_permit()
-		permitDB.SetPermit(userid, &permit)
+		permitDB.SetPermit(user.UserId, &permit)
 	} else {
-		if _, e := userStore.CreateIdentity(joeIdentity, "joeUsername", "joeName", "joeSurname", "joe084", joePwd); e != nil {
+		if _, e := userStore.CreateIdentity(joeIdentity, "joeUsername", "joeName", "joeSurname", "joe084", joePwd, UserTypeDefault); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
-		if _, e := userStore.CreateIdentity(jackIdentity, "jackUsername", "jackName", "jackSurname", "jack084", jackPwd); e != nil {
+		if _, e := userStore.CreateIdentity(jackIdentity, "jackUsername", "jackName", "jackSurname", "jack084", jackPwd, UserTypeDefault); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
-		if _, e := userStore.CreateIdentity(SamIdentity, "", "SamName", "SamSurname", "Sam084", SamPwd); e != nil {
+		if _, e := userStore.CreateIdentity(SamIdentity, "", "SamName", "SamSurname", "Sam084", SamPwd, UserTypeDefault); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
-		if _, e := userStore.CreateIdentity(iHaveNoPermitIdentity, "", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", iHaveNoPermitPwd); e != nil {
+		if _, e := userStore.CreateIdentity(iHaveNoPermitIdentity, "", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", iHaveNoPermitPwd, UserTypeDefault); e != nil {
 			t.Errorf("CreateIdentity failed: %v", e)
 		}
 		permit := setup1_permit()
@@ -230,6 +232,7 @@ func firstError(errors []error) error {
 
 func sqlDeleteAllTables(db *sql.DB) error {
 	statements := []string{
+		"DROP TABLE IF EXISTS authuser",
 		"DROP TABLE IF EXISTS authgroup",
 		"DROP TABLE IF EXISTS authsession",
 		"DROP TABLE IF EXISTS authuserpwd",
@@ -294,51 +297,96 @@ func TestMergeLdap(t *testing.T) {
 		c := setup1(t)
 		defer Teardown(c)
 		if *backend_postgres {
-			userId, err := c.userStore.GetUserIdFromIdentity(joeIdentity)
+			user, err := c.userStore.GetUserFromIdentity(joeIdentity)
 			userPermit := setup1_permit()
-			c.permitDB.SetPermit(userId, &userPermit)
+			c.permitDB.SetPermit(user.UserId, &userPermit)
 			if err != nil {
 				t.Fatalf("TestMergeLdap failed, could not get userid for: %v", joeIdentity)
 			}
 			if _, _, err := c.Login(joeIdentity, joePwd); err != nil {
-				t.Fatalf("Login should have successed, but error was : %v", err)
+				t.Fatalf("Login should have succeeded, but error was : %v", err)
 			}
 		} else {
-			// Add new users to ldap, wait for merge then login
+			// Test merge, when adding and removing from ldap
 			ldapTest.AddLdapUser(tomIdentity, tomPwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
-			// Merge
 			c.MergeTick()
-			// Set permit to tom
+
 			tomhPermit := setup1_permit()
 			c.permitDB.SetPermit(tomUserId, &tomhPermit)
+
 			if _, _, err := c.Login(tomIdentity, tomPwd); err != nil {
 				t.Fatalf("Login should have succeeded, but error was : %v", err)
 			}
-			// Remove a user from ldap and wait for merge
+
 			ldapTest.RemoveLdapUser(tomIdentity)
-			// Merge
 			c.MergeTick()
+
 			if _, _, err := c.Login(tomIdentity, tomPwd); err == nil {
 				t.Fatalf("Login should not have succeeded")
+			}
+
+			// Test merge when updating ldap user
+			ldapTest.AddLdapUser(tomIdentity, tomPwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
+			c.MergeTick()
+
+			newEmail := "newEmail"
+			newName := "newName"
+			newSurname := "newSurname"
+			newMobile := "newMobile"
+			ldapTest.UpdateLdapUser(tomIdentity, newEmail, newName, newSurname, newMobile)
+
+			c.MergeTick()
+
+			tomUser, err := c.GetUserFromIdentity(tomIdentity)
+			if err != nil {
+				t.Fatalf("TestMergeLdap failed, error: %v", err)
+			}
+			if !(tomUser.Email == newEmail && tomUser.Firstname == newName && tomUser.Lastname == newSurname && tomUser.Mobilenumber == newMobile) {
+				t.Fatalf("Expected merge update to succeed, but failed, as not all attributes were updated")
+			}
+
+			// Test merge when ldap username exists on the imqs system (local pg DB).
+			// After merging, we should find the username already exist. We will update
+			// the IMQS user with that username to become of type LDAPuser, so we test against that
+			newUser := "IMQSUserWithUsername"
+			_, e := c.CreateUserStoreIdentity(newUser, newUser, "firstname", "lastname", "", "pwd")
+			if e != nil {
+				t.Fatalf("TestMergeLdap failed, create user: %v", e)
+			}
+
+			joeUser, err := c.GetUserFromIdentity(newUser)
+			if err != nil {
+				t.Fatalf("TestMergeLdap failed, error: %v", err)
+			}
+			if joeUser.Type != UserTypeDefault {
+				t.Fatalf("TestMergeLdap failed, expected newly created user to be IMQS user type (0), instead %v", joeUser.Type)
+			}
+
+			ldapTest.AddLdapUser(newUser, "pwd", newUser, "tom", "hanks", "08467531243")
+			c.MergeTick()
+
+			joeUser, err = c.GetUserFromIdentity(newUser)
+			if err != nil {
+				t.Fatalf("TestMergeLdap failed, error: %v", err)
+			}
+			if joeUser.Type != UserTypeLDAP {
+				t.Fatalf("TestMergeLdap failed, expected merged user to be LDAP user type (1), instead %v", joeUser.Type)
 			}
 		}
 	}
 }
 
 func TestIdentityCaseSensitivity(t *testing.T) {
-	if *backend_ldap {
-		return
-	} else {
-		t.Log("Testing case sensitivity")
-		c := setup1(t)
-		defer Teardown(c)
+	t.Log("Testing case sensitivity")
+	c := setup1(t)
+	defer Teardown(c)
 
-		if _, e := c.CreateUserStoreIdentity("JOE", "JOEusername", "JOEfirstname", "JOElastname", "JOE084", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
-			t.Errorf("CreateIdentity should fail because identities are case-insensitive. Instead, error is %v", e)
-		}
+	if _, e := c.CreateUserStoreIdentity("JOE", "JOE", "JOEfirstname", "JOElastname", "JOE084", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
+		t.Errorf("CreateIdentity should fail because identities are case-insensitive. Instead, error is %v", e)
 	}
 }
 
+// TODO This test should be removed, as rename identity is now a deprecated function, replaced in in May 2016 by UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string)
 func TestRenameIdentity(t *testing.T) {
 	if *backend_ldap {
 		return
@@ -377,66 +425,84 @@ func TestRenameIdentity(t *testing.T) {
 }
 
 func TestResetPassword(t *testing.T) {
+	c := setup1(t)
+	defer Teardown(c)
+
+	// We need to determine which user we are going to run this test with, if we use an LDAP backend, we need
+	// to create an IMQS user and use that, otherwise we can just use joe user and password
+	var testUserId UserId
+	var testIdentity string
+	var testPassword string
 	if *backend_ldap {
-		return
+		// Using LDAP back, we need to create an IMQS user to run this test
+		userId, err := c.userStore.CreateIdentity(tomIdentity, "", "Tom", "Hanks", "", tomPwd, UserTypeDefault)
+		if err != nil {
+			t.Fatalf("ResetPasswordStart failed when trying to create IMQS user (%v)", err)
+		}
+		userPermit := setup1_permit()
+		c.permitDB.SetPermit(userId, &userPermit)
+		testUserId = userId
+		testIdentity = tomIdentity
+		testPassword = tomPwd
 	} else {
-		c := setup1(t)
-		defer Teardown(c)
+		testUserId = joeUserId
+		testIdentity = joeIdentity
+		testPassword = joePwd
+	}
 
-		if _, err := c.ResetPasswordStart(notFoundUserId, time.Now()); err != ErrIdentityAuthNotFound {
-			t.Fatalf("ResetPasswordStart should fail with ErrIdentityAuthNotFound instead of %v", err)
-		}
-		if err := c.ResetPasswordFinish(joeUserId, "", "12345"); err != ErrInvalidPasswordToken {
-			t.Fatalf("ResetPasswordFinish should fail with ErrInvalidPasswordToken instead of %v", err)
-		}
+	if _, err := c.ResetPasswordStart(notFoundUserId, time.Now()); err != ErrIdentityAuthNotFound {
+		t.Fatalf("ResetPasswordStart should fail with ErrIdentityAuthNotFound instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish(testUserId, "", "12345"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
 
-		// Create two reset tokens, and verify that the first one is made invalid, and
-		// the second one works.
-		token1, err1 := c.ResetPasswordStart(joeUserId, time.Now().Add(30*time.Second))
-		if err1 != nil || token1 == "" {
-			t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err1, token1)
-		}
-		token2, err2 := c.ResetPasswordStart(joeUserId, time.Now().Add(30*time.Second))
-		if err2 != nil || token2 == "" {
-			t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err2, token2)
-		}
-		if token1 == token2 {
-			t.Fatalf("Two successive password resets should not result in the same token")
-		}
-		if token, err := c.GetTokenFromIdentityPassword(joeIdentity, joePwd); err != nil || token == nil {
-			t.Fatalf("Old password should remain valid until reset token has been used")
-		}
-		session, _, loginErr := c.Login(joeIdentity, joePwd)
-		if loginErr != nil {
-			t.Fatalf("Login should succeed instead of %v", loginErr)
-		}
-		if err := c.ResetPasswordFinish(notFoundUserId, token2, "yes"); err != ErrIdentityAuthNotFound {
-			t.Fatalf("ResetPasswordFinish should fail with ErrIdentityAuthNotFound instead of %v", err)
-		}
-		if err := c.ResetPasswordFinish(joeUserId, token1, "yes"); err != ErrInvalidPasswordToken {
-			t.Fatalf("ResetPasswordFinish on dead token should fail with ErrInvalidPasswordToken instead of %v", err)
-		}
-		if err := c.ResetPasswordFinish(joeUserId, token2, "12345"); err != nil {
-			t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
-		}
-		if err := c.ResetPasswordFinish(joeUserId, token2, "12345"); err != ErrInvalidPasswordToken {
-			t.Fatalf("ResetPasswordFinish a 2nd time should fail with ErrInvalidPasswordToken instead of %v", err)
-		}
-		if token, err := c.GetTokenFromIdentityPassword(joeIdentity, joePwd); err == nil || token != nil {
-			t.Fatalf("Old password should be invalid by now")
-		}
-		if tokenFromOldSession, err := c.GetTokenFromSession(session); err == nil || tokenFromOldSession != nil {
-			t.Fatalf("Old session should be invalid by now")
-		}
-		if token, err := c.GetTokenFromIdentityPassword(joeIdentity, "12345"); err != nil || token == nil {
-			t.Fatalf("New password should succeed instead of %v", err)
-		}
+	// Create two reset tokens, and verify that the first one is made invalid, and
+	// the second one works.
+	token1, err1 := c.ResetPasswordStart(testUserId, time.Now().Add(30*time.Second))
+	if err1 != nil || token1 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err1, token1)
+	}
+	token2, err2 := c.ResetPasswordStart(testUserId, time.Now().Add(30*time.Second))
+	if err2 != nil || token2 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err2, token2)
+	}
+	if token1 == token2 {
+		t.Fatalf("Two successive password resets should not result in the same token")
+	}
+	if token, err := c.GetTokenFromIdentityPassword(testIdentity, testPassword); err != nil || token == nil {
+		t.Fatalf("Old password should remain valid until reset token has been used, but (%v)", err)
+	}
+	session, _, loginErr := c.Login(testIdentity, testPassword)
+	if loginErr != nil {
+		t.Fatalf("Login should succeed instead of %v", loginErr)
+	}
+	if err := c.ResetPasswordFinish(notFoundUserId, token2, "yes"); err != ErrIdentityAuthNotFound {
+		t.Fatalf("ResetPasswordFinish should fail with ErrIdentityAuthNotFound instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish(testUserId, token1, "yes"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish on dead token should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish(testUserId, token2, "12345"); err != nil {
+		t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
+	}
+	if err := c.ResetPasswordFinish(testUserId, token2, "12345"); err != ErrInvalidPasswordToken {
+		t.Fatalf("ResetPasswordFinish a 2nd time should fail with ErrInvalidPasswordToken instead of %v", err)
+	}
+	if token, err := c.GetTokenFromIdentityPassword(testIdentity, testPassword); err == nil || token != nil {
+		t.Fatalf("Old password should be invalid by now")
+	}
+	if tokenFromOldSession, err := c.GetTokenFromSession(session); err == nil || tokenFromOldSession != nil {
+		t.Fatalf("Old session should be invalid by now")
+	}
+	if token, err := c.GetTokenFromIdentityPassword(testIdentity, "12345"); err != nil || token == nil {
+		t.Fatalf("New password should succeed instead of %v", err)
+	}
 
-		// Test time expiry
-		token3, _ := c.ResetPasswordStart(joeUserId, time.Now().Add(-3*time.Second))
-		if err := c.ResetPasswordFinish(joeUserId, token3, "12345"); err != ErrPasswordTokenExpired {
-			t.Fatalf("ResetPasswordFinish should have failed with ErrPasswordTokenExpired instead of %v", err)
-		}
+	// Test time expiry
+	token3, _ := c.ResetPasswordStart(testUserId, time.Now().Add(-3*time.Second))
+	if err := c.ResetPasswordFinish(testUserId, token3, "12345"); err != ErrPasswordTokenExpired {
+		t.Fatalf("ResetPasswordFinish should have failed with ErrPasswordTokenExpired instead of %v", err)
 	}
 }
 
@@ -454,23 +520,16 @@ func TestBasicAuth(t *testing.T) {
 			t.Errorf("%v:%v -> Expected '%v' prefix (but error starts with '%v')", username, password, expectErrorStart, err.Error())
 		}
 		// Get user id
-		expectedUserId, _ := c.userStore.GetUserIdFromIdentity(expectIdentity)
+		expectedUser, _ := c.userStore.GetUserFromIdentity(expectIdentity)
 
-		if token != nil && token.UserId != expectedUserId {
-			t.Errorf("%v:%v -> Expected token identity '%v', returned '%v' ", username, password, expectedUserId, token.UserId)
+		if token != nil && token.UserId != expectedUser.UserId {
+			t.Errorf("%v:%v -> Expected token identity '%v', returned '%v' ", username, password, expectedUser.UserId, token.UserId)
 		}
 	}
 
 	expect_username_password(joePwd, joeIdentity, ErrIdentityAuthNotFound.Error(), joePwd)
 	expect_username_password(iHaveNoPermitIdentity, iHaveNoPermitPwd, ErrIdentityPermitNotFound.Error(), iHaveNoPermitIdentity)
-	if *backend_ldap {
-
-		expect_username_password(joeIdentity, "wrong", ErrInvalidCredentials.Error(), joeIdentity)
-
-	} else {
-		expect_username_password(joeIdentity, "wrong", ErrInvalidPassword.Error(), joeIdentity)
-	}
-
+	expect_username_password(joeIdentity, "wrong", ErrInvalidPassword.Error(), joeIdentity)
 	expect_username_password(joeIdentity, "", ErrInvalidPassword.Error(), joeIdentity)
 	expect_username_password(joeIdentity, " ", ErrInvalidPassword.Error(), joeIdentity)
 	expect_username_password("", "123", ErrIdentityEmpty.Error(), "")
@@ -479,6 +538,20 @@ func TestBasicAuth(t *testing.T) {
 	expect_username_password("JOE", joePwd, "", joeIdentity)
 	expect_username_password(SamIdentity, SamPwd, "", SamIdentity)
 	expect_username_password("sam", SamPwd, "", SamIdentity)
+
+	// When we use LDAP backend, the users with authusertype LDAP will be authenticated by LDAP. Lets
+	// create a user with an IMQS type and authenticate with the LDAP backend
+	if *backend_ldap {
+		userId, err := c.userStore.CreateIdentity(tomIdentity, "tomh", "Tom", "Hanks", "", tomPwd, UserTypeDefault)
+		if err != nil {
+			t.Errorf("TestBasicAuth failed, expected create IMQS user success, but instead error (%v)", err)
+		}
+		permit := setup1_permit()
+		c.permitDB.SetPermit(userId, &permit)
+
+		expect_username_password(tomIdentity, tomPwd, "", tomIdentity)
+		expect_username_password(tomIdentity, "invalidpassword", ErrInvalidPassword.Error(), tomIdentity)
+	}
 }
 
 func TestPermit(t *testing.T) {
@@ -546,50 +619,52 @@ func TestLoad(t *testing.T) {
 
 // This verifies that long-lived security tokens are updated correctly when their permits change
 func TestPermitChange(t *testing.T) {
-	if *backend_ldap {
-		return
-	} else {
-		c := setup1(t)
-		defer Teardown(c)
-		perm1 := setup1_permit()
-		perm2 := &Permit{}
-		perm2_roles := [3]byte{5, 6, 7}
-		perm2.Roles = perm2_roles[:]
-		for nsessions := 1; nsessions < 100; nsessions *= 2 {
-			// Restore password and permit
-			if e := c.SetPassword(joeUserId, joePwd); e != nil {
-				t.Fatalf("Password restore failed: %v (nsessions = %v)", e, nsessions)
-			}
-			if e := c.SetPermit(joeUserId, &perm1); e != nil {
-				t.Fatalf("Permit restore failed: %v", e)
-			}
+	c := setup1(t)
+	defer Teardown(c)
+	perm1 := setup1_permit()
+	perm2 := &Permit{}
+	perm2_roles := [3]byte{5, 6, 7}
+	perm2.Roles = perm2_roles[:]
+	for nsessions := 1; nsessions < 100; nsessions *= 2 {
+		userId := joeUserId
+		// We need to get the userid, as it changes when using ldap backend
+		if *backend_ldap {
+			user, _ := c.GetUserFromIdentity(joeIdentity)
+			userId = user.UserId
+		}
+		c.InvalidateSessionsForIdentity(userId)
+		if e := c.SetPermit(userId, &perm1); e != nil {
+			t.Fatalf("Permit restore failed: %v", e)
+		}
 
-			keys := make([]string, nsessions)
-			tokens := make([]*Token, nsessions)
-			for i := 0; i < nsessions; i++ {
-				keys[i], tokens[i], _ = c.Login(joeIdentity, joePwd)
-				if !bytes.Equal(tokens[i].Permit.Roles, perm1.Roles) {
-					t.Fatalf("Permits not equal %v %v\n", tokens[i].Permit.Roles, perm1.Roles)
-				}
+		keys := make([]string, nsessions)
+		tokens := make([]*Token, nsessions)
+		for i := 0; i < nsessions; i++ {
+			keys[i], tokens[i], _ = c.Login(joeIdentity, joePwd)
+			if !bytes.Equal(tokens[i].Permit.Roles, perm1.Roles) {
+				t.Fatalf("Permits not equal %v %v\n", tokens[i].Permit.Roles, perm1.Roles)
 			}
-			// Set a new permit
-			c.SetPermit(joeUserId, perm2)
-			for i := 0; i < nsessions; i++ {
-				token, e := c.GetTokenFromSession(keys[i])
-				if e != nil {
-					t.Fatalf("Permit from session not found after permit change: %v\n", e)
-				}
-				if !bytes.Equal(token.Permit.Roles, perm2.Roles) {
-					t.Fatalf("Permits not equal %v %v\n", token.Permit.Roles, perm2.Roles)
-				}
+		}
+		// Set a new permit
+		if e := c.SetPermit(userId, perm2); e != nil {
+			t.Fatalf("Setting restore failed: %v", e)
+		}
+		for i := 0; i < nsessions; i++ {
+			token, e := c.GetTokenFromSession(keys[i])
+			if e != nil {
+				t.Fatalf("Permit from session not found after permit change: %v\n", e)
 			}
-			// Change a password. This invalidates all sessions.
-			c.SetPassword(joeUserId, "456")
-			for i := 0; i < nsessions; i++ {
-				_, e := c.GetTokenFromSession(keys[i])
-				if e == nil {
-					t.Fatalf("Session not correctly invalidated after password change")
-				}
+			if !bytes.Equal(token.Permit.Roles, perm2.Roles) {
+				t.Fatalf("Permits not equal %v %v\n", token.Permit.Roles, perm2.Roles)
+			}
+		}
+
+		// This invalidates all sessions.
+		c.InvalidateSessionsForIdentity(userId)
+		for i := 0; i < nsessions; i++ {
+			_, e := c.GetTokenFromSession(keys[i])
+			if e == nil {
+				t.Fatalf("Session not correctly invalidated after password change")
 			}
 		}
 	}
@@ -710,11 +785,11 @@ func TestUpdateIdentity(t *testing.T) {
 	newSurname := "newSurname"
 	newMobile := "newMobile"
 
-	if err := c.UpdateIdentity(notFoundUserId, newEmail, newUsername, newName, newSurname, newMobile); err != ErrIdentityAuthNotFound {
+	if err := c.UpdateIdentity(notFoundUserId, newEmail, newUsername, newName, newSurname, newMobile, UserTypeLDAP); err != ErrIdentityAuthNotFound {
 		t.Fatalf("TestUpdateIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
 	}
 
-	if err := c.UpdateIdentity(joeUserId, newEmail, newUsername, newName, newSurname, newMobile); err != nil {
+	if err := c.UpdateIdentity(joeUserId, newEmail, newUsername, newName, newSurname, newMobile, UserTypeLDAP); err != nil {
 		t.Fatalf("Update should not have failed: %v", err)
 	}
 
@@ -725,7 +800,7 @@ func TestUpdateIdentity(t *testing.T) {
 
 	updateSuccess := false
 	for _, user := range users {
-		if user.UserId == joeUserId && CanonicalizeIdentity(user.Email) == CanonicalizeIdentity(newEmail) && user.Username == newUsername && user.Firstname == newName && user.Lastname == newSurname && user.Mobilenumber == newMobile {
+		if user.UserId == joeUserId && CanonicalizeIdentity(user.Email) == CanonicalizeIdentity(newEmail) && user.Username == newUsername && user.Firstname == newName && user.Lastname == newSurname && user.Mobilenumber == newMobile && user.Type == UserTypeLDAP {
 			updateSuccess = true
 			break
 		}
@@ -736,54 +811,53 @@ func TestUpdateIdentity(t *testing.T) {
 }
 
 func TestArchiveIdentity(t *testing.T) {
-	if *backend_ldap {
-		return
-	} else {
-		c := setup1(t)
-		defer Teardown(c)
+	c := setup1(t)
+	defer Teardown(c)
 
-		if err := c.ArchiveIdentity(notFoundUserId); err != ErrIdentityAuthNotFound {
-			t.Fatalf("TestArchiveIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
-		}
+	if err := c.ArchiveIdentity(notFoundUserId); err != ErrIdentityAuthNotFound {
+		t.Fatalf("TestArchiveIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
+	}
 
-		if err := c.ArchiveIdentity(joeUserId); err != nil {
-			t.Fatalf("Archive should not have failed: %v", err)
-		}
+	if err := c.ArchiveIdentity(joeUserId); err != nil {
+		t.Fatalf("Archive should not have failed: %v", err)
+	}
 
-		users, e := c.GetAuthenticatorIdentities()
-		if e != nil {
-			t.Fatalf("TestArchiveIdentity failed: %v", e)
-		}
+	users, e := c.GetAuthenticatorIdentities()
+	if e != nil {
+		t.Fatalf("TestArchiveIdentity failed: %v", e)
+	}
 
-		archiveSuccess := true
-		for _, user := range users {
-			if user.UserId == joeUserId {
-				archiveSuccess = false
-				break
-			}
+	archiveSuccess := true
+	for _, user := range users {
+		if user.UserId == joeUserId {
+			archiveSuccess = false
+			break
 		}
-		if !archiveSuccess {
-			t.Fatalf("TestArchiveIdentity failed, archived user should not be found")
-		}
+	}
+	if !archiveSuccess {
+		t.Fatalf("TestArchiveIdentity failed, archived user should not be found")
+	}
 
+	// Using an ldap backend, authentication will succeed, as we cannot archive users on the ldap system.
+	if !*backend_ldap {
 		// Try to authenticate with archived user
-		if _, err := c.GetTokenFromIdentityPassword("joe", "123"); err != ErrIdentityAuthNotFound {
+		if _, err := c.GetTokenFromIdentityPassword(joeIdentity, joePwd); err != ErrIdentityAuthNotFound {
 			t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to authenticate: %v", err)
 		}
+	}
 
-		// Try to update archived user
-		if err := c.UpdateIdentity(joeUserId, "newEmail", "newUsername", "newName", "newSurname", "newMobile"); err != ErrIdentityAuthNotFound {
-			t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be updated: %v", err)
-		}
+	// Try to update archived user
+	if err := c.UpdateIdentity(joeUserId, "newEmail", "newUsername", "newName", "newSurname", "newMobile", UserTypeDefault); err != ErrIdentityAuthNotFound {
+		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be updated: %v", err)
+	}
 
-		// Try resetting password of archived user
-		if _, err := c.ResetPasswordStart(joeUserId, time.Now()); err != ErrIdentityAuthNotFound {
-			t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be reset password: %v", err)
-		}
+	// Try resetting password of archived user
+	if _, err := c.ResetPasswordStart(joeUserId, time.Now()); err != ErrIdentityAuthNotFound {
+		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be reset password: %v", err)
+	}
 
-		// Try renaming email of archived user
-		if err := c.RenameIdentity(joeIdentity, "newJoe"); err != ErrIdentityAuthNotFound {
-			t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be rename identity: %v", err)
-		}
+	// Try renaming email of archived user
+	if err := c.RenameIdentity(joeIdentity, "newJoe"); err != ErrIdentityAuthNotFound {
+		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be rename identity: %v", err)
 	}
 }

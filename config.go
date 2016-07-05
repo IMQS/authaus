@@ -34,6 +34,8 @@ Full populated config:
 		"LdapDomain":	"example.local",
 		"LdapTickerTime": 300 // Seconds,
 		"BaseDN":        "dc=exmaple1,dc=example2",
+		"SysAdminEmail":  "joeAdmin@example.com",
+		"LdapSearchFilter": "(&(objectCategory=person)(objectClass=user))"
 	},
 	"PermitDB": {
 		"DB": {
@@ -155,14 +157,16 @@ type ConfigRoleGroupDB struct {
 }
 
 type ConfigLDAP struct {
-	LdapHost       string        //
-	LdapPort       uint16        //
-	Encryption     string        // "", "TLS", "SSL"
-	LdapUsername   string        //
-	LdapPassword   string        //
-	LdapDomain     string        //
-	LdapTickerTime time.Duration //
-	BaseDN         string        //
+	LdapHost         string        //
+	LdapPort         uint16        //
+	Encryption       string        // "", "TLS", "SSL"
+	LdapUsername     string        //
+	LdapPassword     string        //
+	LdapDomain       string        //
+	LdapTickerTime   time.Duration //
+	BaseDN           string        //
+	SysAdminEmail    string        //
+	LdapSearchFilter string
 }
 
 type ConfigUserStoreDB struct {
