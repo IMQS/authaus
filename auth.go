@@ -447,7 +447,7 @@ func (x *Central) authenticate(identity, password string) (UserId, error) {
 	}
 
 	if user.Type == UserTypeLDAP {
-		err = x.ldap.Authenticate(identity, password)
+		err = x.ldap.Authenticate(user.Username, password)
 		// We want to return Invalid Password or IdentityAuthNotFound, not Invalid Credentials
 		// as LDAP doesnt differentiate between the 2
 		if err == ErrInvalidCredentials {
