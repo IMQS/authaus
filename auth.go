@@ -376,7 +376,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	userId, eAuth := x.authenticate(identity, password)
+	userId, identity, eAuth := x.authenticate(identity, password)
 	if eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(userId); ePermit == nil {
 			t := &Token{}
@@ -402,7 +402,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
 func (x *Central) Login(identity, password string) (sessionkey string, token *Token, err error) {
-	userId, authErr := x.authenticate(identity, password)
+	userId, identity, authErr := x.authenticate(identity, password)
 	if authErr != nil {
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
@@ -440,10 +440,12 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	return sessionkey, token, nil
 }
 
-func (x *Central) authenticate(identity, password string) (UserId, error) {
+// Authenticate the identity and password.
+// Returns the userId of the user account, the identity of the user account, and an error if one occurred, else nil.
+func (x *Central) authenticate(identity, password string) (UserId, string, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
-		return user.UserId, ErrIdentityAuthNotFound
+		return user.UserId, "", ErrIdentityAuthNotFound
 	}
 
 	if user.Type == UserTypeLDAP {
@@ -453,13 +455,13 @@ func (x *Central) authenticate(identity, password string) (UserId, error) {
 		if err == ErrInvalidCredentials {
 			// The user already exists on our system, which means it exists on LDAP due to our Merge, with
 			// that knowledge we can say the password is invalid
-			return user.UserId, ErrInvalidPassword
+			return user.UserId, "", ErrInvalidPassword
 
 		}
-		return user.UserId, err
+		return user.UserId, user.Username, err
 	} else {
 		err = x.userStore.Authenticate(identity, password)
-		return user.UserId, err
+		return user.UserId, user.Email, err
 	}
 }
 
