@@ -200,9 +200,9 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 func (x *sqlUserStoreDB) identityExists(identity string, authUserType AuthUserType) error {
 	var row *sql.Row
 	if authUserType.EmailAsIdentity() {
-		row = x.db.QueryRow("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 AND (archived = false OR archived IS NULL) AND authusertype = $2)", CanonicalizeIdentity(identity), authUserType)
+		row = x.db.QueryRow("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 AND (archived = false OR archived IS NULL))", CanonicalizeIdentity(identity))
 	} else {
-		row = x.db.QueryRow("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1 AND (archived = false OR archived IS NULL) AND authusertype = $2)", CanonicalizeIdentity(identity), authUserType)
+		row = x.db.QueryRow("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1 AND (archived = false OR archived IS NULL))", CanonicalizeIdentity(identity))
 	}
 	var userId int64
 	err := row.Scan(&userId)
@@ -304,14 +304,22 @@ func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
 }
 
 func (x *sqlUserStoreDB) GetUserFromIdentity(identity string) (AuthUser, error) {
-	return x.getUser(x.db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE (LOWER(email) = $1 AND (archived = false OR archived IS NULL)) OR (LOWER(username) = $1 AND (archived = false OR archived IS NULL))", CanonicalizeIdentity(identity)))
+	return getUserFromIdentity(x.db, identity)
 }
 
 func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
-	return x.getUser(x.db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE userid = $1 AND (archived = false OR archived IS NULL)", userId))
+	return getUserFromUserId(x.db, userId)
 }
 
-func (x *sqlUserStoreDB) getUser(row *sql.Row) (AuthUser, error) {
+func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
+	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)", CanonicalizeIdentity(identity)))
+}
+
+func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
+	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE userid = $1 AND (archived = false OR archived IS NULL)", userId))
+}
+
+func getUser(row *sql.Row) (AuthUser, error) {
 	type sqlUser struct {
 		userId       sql.NullInt64
 		email        sql.NullString
@@ -346,21 +354,35 @@ type sqlSessionDB struct {
 }
 
 func (x *sqlSessionDB) Write(sessionkey string, token *Token) error {
-	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, userid, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, token.UserId, token.Permit.Serialize(), token.Expires)
+	// We convert 'token.expires' to UTC before putting it in the DB, as the column, Expires, is TIMESTAMP without timezone, and it returns a time equivalent to UTC.
+	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, userid, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, token.UserId, token.Permit.Serialize(), token.Expires.UTC())
+
 	return err
 }
 
 func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 	x.purgeExpiredSessions()
-	row := x.db.QueryRow(`SELECT identity, permit, expires FROM authsession WHERE sessionkey = $1`, sessionkey)
+	row := x.db.QueryRow(`SELECT userid, permit, expires FROM authsession WHERE sessionkey = $1`, sessionkey)
 	token := &Token{}
 	epermit := ""
-	if err := row.Scan(&token.UserId, &epermit, &token.Expires); err != nil {
+	var userId int64
+	if err := row.Scan(&userId, &epermit, &token.Expires); err != nil {
 		return nil, ErrInvalidSessionToken
 	} else {
 		if err := token.Permit.Deserialize(epermit); err != nil {
 			return nil, ErrInvalidSessionToken
 		} else {
+			token.UserId = UserId(userId)
+			user, err := getUserFromUserId(x.db, token.UserId)
+			if err != nil {
+				return nil, ErrInvalidSessionToken
+			}
+			if user.Type.EmailAsIdentity() {
+				token.Identity = user.Email
+			} else {
+				token.Identity = user.Username
+			}
+
 			return token, nil
 		}
 	}
@@ -389,7 +411,7 @@ func (x *sqlSessionDB) Close() {
 }
 
 func (x *sqlSessionDB) purgeExpiredSessions() {
-	x.db.Exec(`DELETE FROM authsession WHERE expires < current_timestamp`)
+	x.db.Exec(`DELETE FROM authsession WHERE expires < $1`, time.Now().UTC())
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -386,6 +386,22 @@ func TestIdentityCaseSensitivity(t *testing.T) {
 	}
 }
 
+func TestLoginCaseSensitivity(t *testing.T) {
+	t.Log("Testing Login case sensitivity")
+	c := setup1(t)
+	defer Teardown(c)
+
+	const joeCapitalizedIdentity = "JOE"
+
+	_, token, e := c.Login(joeCapitalizedIdentity, joePwd);
+	if e != nil {
+		t.Fatalf("An unexpected error occurred: %v", e)
+	}
+	if joeIdentity != token.Identity {
+		t.Errorf("Identities should match")
+	}
+}
+
 // TODO This test should be removed, as rename identity is now a deprecated function, replaced in in May 2016 by UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string)
 func TestRenameIdentity(t *testing.T) {
 	if *backend_ldap {
@@ -673,27 +689,40 @@ func TestPermitChange(t *testing.T) {
 func TestSessionExpiry(t *testing.T) {
 	c := setup1(t)
 	defer Teardown(c)
-	c.NewSessionExpiresAfter = time.Millisecond * 500
-	key, _, _ := c.Login(joeIdentity, joePwd)
-	expire_time := time.Now().Add(c.NewSessionExpiresAfter)
-	t.Logf("Expect failure at %v", expire_time)
-	num_expire := 0
-	for num_expire < 5 {
-		expect_ok := time.Now().UnixNano() < expire_time.UnixNano()
-		token, err := c.GetTokenFromSession(key)
-		t.Logf("Expect: %v\n", expect_ok)
-		if (token != nil) != expect_ok {
-			t.Fatalf("Session timeout failed - unexpected token return value %v", token)
+	testSessionExpiry := func(inMemCache bool) {
+		c.NewSessionExpiresAfter = time.Millisecond * 500
+		key, _, _ := c.Login(joeIdentity, joePwd)
+		if !inMemCache {
+			// Clear in memory session cache, relying on the db to get cache
+			c.debugEnableSessionDB(false)
+			c.sessionDB.Delete(key)
+			c.debugEnableSessionDB(true)
 		}
-		if (err == nil) != expect_ok {
-			t.Fatalf("Session timeout failed - unexpected error return value %v", err)
+		expire_time := time.Now().Add(c.NewSessionExpiresAfter)
+		t.Logf("Expect failure at %v", expire_time)
+		num_expire := 0
+		for num_expire < 5 {
+			expect_ok := time.Now().UnixNano() < expire_time.UnixNano()
+			token, err := c.GetTokenFromSession(key)
+			t.Logf("Expect: %v\n", expect_ok)
+			if (token != nil) != expect_ok {
+				t.Fatalf("Session timeout failed - unexpected token return value %v", token)
+			}
+			if (err == nil) != expect_ok {
+				t.Fatalf("Session timeout failed - unexpected error return value %v", err)
+			}
+			if err != nil {
+				num_expire += 1
+			}
+			// make sure this is relatively prime to our expiry time or you'll be subject to false-positive-inducing races
+			time.Sleep(time.Millisecond * 300)
 		}
-		if err != nil {
-			num_expire += 1
-		}
-		// make sure this is relatively prime to our expiry time or you'll be subject to false-positive-inducing races
-		time.Sleep(time.Millisecond * 300)
 	}
+	// In cache
+	testSessionExpiry(true)
+	// In Postgres
+	testSessionExpiry(false)
+	//t.Fail()
 }
 
 func TestMaxSessionLimit(t *testing.T) {
@@ -717,6 +746,34 @@ func TestMaxSessionLimit(t *testing.T) {
 	_, err = c.GetTokenFromSession(key2)
 	if err != nil {
 		t.Fatalf("Expected key2 to be valid")
+	}
+}
+
+func TestDBSession(t *testing.T) {
+	c := setup1(t)
+	defer Teardown(c)
+	c.MaxActiveSessions = 1
+
+	// Login first time
+	key, _, _ := c.Login(joeIdentity, joePwd)
+	token1, err := c.GetTokenFromSession(key)
+	if err != nil {
+		t.Fatalf("Expected key to be valid")
+	}
+
+	// Clear in memory session cache, relying on the db to get cache
+	c.debugEnableSessionDB(false)
+	c.sessionDB.Delete(key)
+	c.debugEnableSessionDB(true)
+
+	token2, err := c.GetTokenFromSession(key)
+	if err != nil {
+		t.Fatalf("Expected key to be valid")
+	}
+
+	// Compare tokens
+	if !(token1.UserId == token2.UserId && token1.Identity == token2.Identity && token1.Expires.Unix() == token2.Expires.Unix() && token1.Permit.Serialize() == token2.Permit.Serialize()) {
+		t.Fatalf("Tokens must match")
 	}
 }
 
