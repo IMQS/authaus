@@ -252,9 +252,7 @@ func isPrefix(prefix, str string) bool {
 }
 
 func TestMergeLoad(t *testing.T) {
-	if !*backend_ldap {
-		return
-	} else {
+	if *backend_ldap {
 		t.Log("Testing ldap merge load")
 		c := setup1(t)
 		defer Teardown(c)
@@ -290,9 +288,7 @@ func TestMergeLoad(t *testing.T) {
 }
 
 func TestMergeLdap(t *testing.T) {
-	if !*backend_ldap {
-		return
-	} else {
+	if *backend_ldap {
 		t.Log("Testing ldap merge")
 		c := setup1(t)
 		defer Teardown(c)
@@ -376,6 +372,42 @@ func TestMergeLdap(t *testing.T) {
 	}
 }
 
+// This test makes sure that after a connection recovery, all users do not get deleted by merge.
+// The last part of the merge deletes users that are in the Imqsauth DB, and not on LDAP. If the connection fails,
+// the LDAP array will contain nothing, and compare IMQS users with an empty array, deleting all LDAP users
+// from the Imqsauth DB.
+func TestLdapConnectionRecovery(t *testing.T) {
+	if *backend_ldap && *backend_postgres {
+		t.Log("Testing ldap connection recovery")
+		c := setup1(t)
+		defer Teardown(c)
+
+		user, err := c.GetUserFromIdentity(joeIdentity)
+		if err != nil {
+			t.Error("An unexpected error occured getting userid for identity: %v", joeIdentity)
+		}
+
+		joePermit := setup1_permit()
+		c.permitDB.SetPermit(user.UserId, &joePermit)
+
+		if _, _, err := c.Login(joeIdentity, joePwd); err != nil {
+			t.Fatalf("Login should have succeeded, but error was : %v", err)
+		}
+
+		// Force connection to LDAP to fail
+		host := conx_ldap.LdapHost
+		conx_ldap.LdapHost = "invalid.host"
+		c.MergeTick()
+
+		conx_ldap.LdapHost = host
+		c.MergeTick()
+
+		if _, _, err := c.Login(joeIdentity, joePwd); err != nil {
+			t.Fatalf("Login should have succeeded, but error was : %v", err)
+		}
+	}
+}
+
 func TestIdentityCaseSensitivity(t *testing.T) {
 	t.Log("Testing case sensitivity")
 	c := setup1(t)
@@ -393,7 +425,7 @@ func TestLoginCaseSensitivity(t *testing.T) {
 
 	const joeCapitalizedIdentity = "JOE"
 
-	_, token, e := c.Login(joeCapitalizedIdentity, joePwd);
+	_, token, e := c.Login(joeCapitalizedIdentity, joePwd)
 	if e != nil {
 		t.Fatalf("An unexpected error occurred: %v", e)
 	}
@@ -404,9 +436,7 @@ func TestLoginCaseSensitivity(t *testing.T) {
 
 // TODO This test should be removed, as rename identity is now a deprecated function, replaced in in May 2016 by UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string)
 func TestRenameIdentity(t *testing.T) {
-	if *backend_ldap {
-		return
-	} else {
+	if !*backend_ldap {
 		c := setup1(t)
 		defer Teardown(c)
 

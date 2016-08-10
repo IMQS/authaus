@@ -111,7 +111,6 @@ func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 }
 
 func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
-	//fmt.Printf("Connect: Username: %v, Password: %v, Host: %v, Port: %v, Encryption: %v, Domain: %v", config.LdapUsername, config.LdapPassword, config.LdapHost, config.LdapPort, config.Encryption, config.LdapDomain)
 	con := ldap.NewLDAPConnection(config.LdapHost, config.LdapPort)
 	con.NetworkConnectTimeout = 30 * time.Second
 	con.ReadTimeout = 30 * time.Second

@@ -492,10 +492,12 @@ func (x *Central) MergeTick() {
 	ldapUsers, err := x.ldap.GetLdapUsers()
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
+		return
 	}
 	imqsUsers, err := x.userStore.GetIdentities()
 	if err != nil {
 		x.Log.Errorf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
+		return
 	}
 	x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers)
 	timeComplete := time.Now().UnixNano() / int64(time.Millisecond)
@@ -510,13 +512,11 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 	// Create maps from arrays
 	imqsUserMap := make(map[string]AuthUser)
 	for _, imqsUser := range imqsUsers {
-		//fmt.Printf("IMQS user %v\n", imqsUser.Username)
 		imqsUserMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
 	}
 
 	ldapUserMap := make(map[string]AuthUser)
 	for _, ldapUser := range ldapUsers {
-		//fmt.Printf("LDAP user %v %v\n", ldapUser.Username, ldapUser.Email)
 		ldapUserMap[CanonicalizeIdentity(ldapUser.Username)] = ldapUser
 	}
 
@@ -524,12 +524,10 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 	for _, ldapUser := range ldapUsers {
 		imqsUser, found := imqsUserMap[CanonicalizeIdentity(ldapUser.Username)]
 		if !found {
-			//fmt.Printf("Create identity %v\n", ldapUser.Username)
 			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", UserTypeLDAP); err != nil {
 				x.Log.Errorf("LDAP merge: Create identity failed with (%v)", err)
 			}
 		} else if ldapUser.Email != imqsUser.Email || ldapUser.Firstname != imqsUser.Firstname || ldapUser.Lastname != imqsUser.Lastname || ldapUser.Mobilenumber != imqsUser.Mobilenumber {
-			//fmt.Printf("Updating identity %v %v\n", ldapUser.Username, ldapUser.Lastname)
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
@@ -543,7 +541,6 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 	for _, imqsUser := range imqsUsers {
 		_, found := ldapUserMap[CanonicalizeIdentity(imqsUser.Username)]
 		if !found {
-			//fmt.Printf("Archiving identity %v\n", imqsUser.Username)
 			// We only archive ldap users that are not on the ldap system, but are not on ours, imqs users should remain
 			if imqsUser.Type == UserTypeLDAP {
 				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
