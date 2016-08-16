@@ -419,7 +419,7 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 
 	if x.MaxActiveSessions != 0 {
 		if err = x.sessionDB.InvalidateSessionsForIdentity(userId); err != nil {
-			x.Log.Errorf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", userId, err)
+			x.Log.Warnf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", userId, err)
 			return sessionkey, token, err
 		}
 	}
@@ -431,7 +431,7 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	token.UserId = userId
 	sessionkey = generateSessionKey()
 	if err = x.sessionDB.Write(sessionkey, token); err != nil {
-		x.Log.Errorf("Writing session key failed (%v)", err)
+		x.Log.Warnf("Writing session key failed (%v)", err)
 		return sessionkey, token, err
 	}
 
@@ -491,12 +491,12 @@ func (x *Central) MergeTick() {
 	timeStart := time.Now().UnixNano() / int64(time.Millisecond)
 	ldapUsers, err := x.ldap.GetLdapUsers()
 	if err != nil {
-		x.Log.Errorf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
+		x.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
 		return
 	}
 	imqsUsers, err := x.userStore.GetIdentities()
 	if err != nil {
-		x.Log.Errorf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
+		x.Log.Warnf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
 		return
 	}
 	x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers)
@@ -525,14 +525,14 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 		imqsUser, found := imqsUserMap[CanonicalizeIdentity(ldapUser.Username)]
 		if !found {
 			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", UserTypeLDAP); err != nil {
-				x.Log.Errorf("LDAP merge: Create identity failed with (%v)", err)
+				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
 		} else if ldapUser.Email != imqsUser.Email || ldapUser.Firstname != imqsUser.Firstname || ldapUser.Lastname != imqsUser.Lastname || ldapUser.Mobilenumber != imqsUser.Mobilenumber {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
 			if err := x.userStore.UpdateIdentity(imqsUser.UserId, ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, UserTypeLDAP); err != nil {
-				x.Log.Errorf("LDAP merge: Update identity failed with (%v)", err)
+				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
 			}
 		}
 	}
@@ -544,7 +544,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			// We only archive ldap users that are not on the ldap system, but are not on ours, imqs users should remain
 			if imqsUser.Type == UserTypeLDAP {
 				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
-					x.Log.Errorf("LDAP merge: Archive identity failed with (%v)", err)
+					x.Log.Warnf("LDAP merge: Archive identity failed with (%v)", err)
 				}
 			}
 		}
@@ -630,7 +630,7 @@ func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, 
 	if e == nil {
 		x.Log.Infof("CreateAuthenticatorIdentity successful: (%v)", userId)
 	} else {
-		x.Log.Errorf("CreateAuthenticatorIdentity failed: (%v), (%v)", userId, e)
+		x.Log.Warnf("CreateAuthenticatorIdentity failed: (%v), (%v)", userId, e)
 	}
 	return userId, e
 }
@@ -639,7 +639,7 @@ func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, 
 func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
 	e := x.userStore.UpdateIdentity(userId, email, username, firstname, lastname, mobilenumber, authUserType)
 	if e != nil {
-		x.Log.Errorf("Update Identity failed (%v) (%v)", userId, e)
+		x.Log.Warnf("Update Identity failed (%v) (%v)", userId, e)
 		return e
 	}
 
@@ -651,12 +651,12 @@ func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, last
 func (x *Central) ArchiveIdentity(userId UserId) error {
 	e := x.userStore.ArchiveIdentity(userId)
 	if e != nil {
-		x.Log.Errorf("Archive Identity failed: (%v), (%v)", userId, e)
+		x.Log.Warnf("Archive Identity failed: (%v), (%v)", userId, e)
 		return e
 	}
 	e = x.InvalidateSessionsForIdentity(userId)
 	if e != nil {
-		x.Log.Errorf("Archive Identity failed, error invalidating sessions (%v) (%v)", userId, e)
+		x.Log.Warnf("Archive Identity failed, error invalidating sessions (%v) (%v)", userId, e)
 		return e
 	}
 	return nil
