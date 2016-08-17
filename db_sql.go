@@ -331,13 +331,12 @@ func getUser(row *sql.Row) (AuthUser, error) {
 	}
 	user := sqlUser{}
 	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.authUserType); err != nil {
-		return AuthUser{}, err
+		if strings.Index(err.Error(), "no rows in result set") == -1 {
+			return AuthUser{}, err
+		}
+		return AuthUser{}, ErrIdentityAuthNotFound
 	}
 	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, AuthUserType(user.authUserType.Int64)}, nil
-}
-
-func (x *sqlUserStoreDB) GetLdapUsers() ([]AuthUser, error) {
-	return nil, ErrUnsupported
 }
 
 func (x *sqlUserStoreDB) Close() {
