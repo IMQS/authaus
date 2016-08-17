@@ -510,9 +510,14 @@ func (x *Central) MergeTick() {
 // We are reading users from LDAP/AD and merging them into the IMQS userstore
 func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
-	imqsUserMap := make(map[string]AuthUser)
+	imqsUserUsernameMap := make(map[string]AuthUser)
 	for _, imqsUser := range imqsUsers {
-		imqsUserMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
+		imqsUserUsernameMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
+	}
+
+	imqsUserEmailMap := make(map[string]AuthUser)
+	for _, imqsUser := range imqsUsers {
+		imqsUserEmailMap[CanonicalizeIdentity(imqsUser.Email)] = imqsUser
 	}
 
 	ldapUserMap := make(map[string]AuthUser)
@@ -522,12 +527,16 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 	// Insert or update
 	for _, ldapUser := range ldapUsers {
-		imqsUser, found := imqsUserMap[CanonicalizeIdentity(ldapUser.Username)]
-		if !found {
+		imqsUser, foundWithUsername := imqsUserUsernameMap[CanonicalizeIdentity(ldapUser.Username)]
+		foundWithEmail := false
+		if !foundWithUsername {
+			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
+		}
+		if !foundWithUsername && !foundWithEmail {
 			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", UserTypeLDAP); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
-		} else if ldapUser.Email != imqsUser.Email || ldapUser.Firstname != imqsUser.Firstname || ldapUser.Lastname != imqsUser.Lastname || ldapUser.Mobilenumber != imqsUser.Mobilenumber {
+		} else if foundWithEmail || !ldapUser.equals(imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
