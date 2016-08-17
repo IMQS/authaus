@@ -372,6 +372,64 @@ func TestMergeLdap(t *testing.T) {
 	}
 }
 
+// This tests that if an IMQS user exists that has the same email address as an LDAP user during
+// an LDAP merge, that it converts the IMQS User to be an LDAP user.
+func TestIMQSUserToLDAPUserConversion(t *testing.T) {
+	if *backend_ldap && !*backend_postgres {
+		t.Log("Testing IMQS user conversion")
+		c := setup1(t)
+		defer Teardown(c)
+
+		// We need to add a new user to ldap and to imqs.
+		newEmail := "peter@example.com"
+		newLDAPUsername := "peter"
+		// We want the passwords to be different for testing purposes.
+		newIMQSPwd := "petersIMQSpassword"
+		newLDAPPwd := "peterLDAPpassword"
+
+		// Create user in IMQS and LDAP
+		peterUserId, err := c.CreateUserStoreIdentity(newEmail, "", "", "", "", newIMQSPwd)
+		if err != nil {
+			t.Fatalf("Create user should have succeeded, but error was : %v", err)
+		}
+		ldapTest.AddLdapUser(newLDAPUsername, newLDAPPwd, newEmail, "", "", "")
+
+		// Test IMQS user login.
+		permit := setup1_permit()
+		c.permitDB.SetPermit(peterUserId, &permit)
+		_, _, err = c.Login(newEmail, newIMQSPwd)
+		if err != nil {
+			t.Fatalf("Login should have succeeded, but error was : %v", err)
+		}
+
+		// The IMQS to LDAP user conversion will now take place, and login with the IMQS user's credentials
+		// should no longer work. However, login with the LDAP user should work.
+		c.MergeTick()
+
+		_, _, err = c.Login(newEmail, newIMQSPwd)
+		if err == nil {
+			t.Fatalf("Login should have failed")
+		}
+
+		// Login with both email address and username of the LDAP account to make sure the account is
+		// one and the same.
+		_, emailLoginToken, err := c.Login(newEmail, newLDAPPwd)
+		if err != nil {
+			t.Fatalf("Login should have succeeded, but error was : %v", err)
+		}
+		_, usernameLoginToken, err := c.Login(newLDAPUsername, newLDAPPwd)
+		if err != nil {
+			t.Fatalf("Login should have succeeded, but error was : %v", err)
+		}
+
+		// We compare user ids to make sure it is all the same user account.
+		if peterUserId != emailLoginToken.UserId && peterUserId != usernameLoginToken.UserId {
+			t.Fatalf("Expected user ids to match")
+		}
+
+	}
+}
+
 // This test makes sure that after a connection recovery, all users do not get deleted by merge.
 // The last part of the merge deletes users that are in the Imqsauth DB, and not on LDAP. If the connection fails,
 // the LDAP array will contain nothing, and compare IMQS users with an empty array, deleting all LDAP users
