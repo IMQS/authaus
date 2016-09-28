@@ -18,7 +18,7 @@ const (
 )
 
 func setup1_withRoleDB(t *testing.T) *Central {
-	c := setup1(t)
+	c := setup(t)
 
 	groupY := &AuthGroup{}
 	groupY.Name = groupNameY
@@ -34,7 +34,7 @@ func setup1_withRoleDB(t *testing.T) *Central {
 	return c
 }
 
-func TestRoleDB(t *testing.T) {
+func TestAuthRoleDB(t *testing.T) {
 	c := setup1_withRoleDB(t)
 	roleGroupDBCache := c.roleGroupDB.(*RoleGroupCache)
 
