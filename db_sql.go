@@ -217,7 +217,7 @@ func (x *sqlUserStoreDB) identityExists(identity string, authUserType AuthUserTy
 
 func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, authusertype = $6 WHERE userid = $7 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(email), username, firstname, lastname, mobilenumber, authUserType, userId); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, authusertype = $6 WHERE userid = $7 AND (archived = false OR archived IS NULL)`, email, username, firstname, lastname, mobilenumber, authUserType, userId); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
