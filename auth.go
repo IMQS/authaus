@@ -456,7 +456,6 @@ func (x *Central) authenticate(identity, password string) (UserId, string, error
 			// The user already exists on our system, which means it exists on LDAP due to our Merge, with
 			// that knowledge we can say the password is invalid
 			return user.UserId, "", ErrInvalidPassword
-
 		}
 		return user.UserId, user.Username, err
 	} else {

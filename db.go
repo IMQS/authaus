@@ -16,7 +16,7 @@ const (
 // These constants are embedded inside our database (in the table AuthUserStore). They may never change.
 const (
 	UserTypeDefault AuthUserType = 0
-	UserTypeLDAP                 = 1
+	UserTypeLDAP    AuthUserType = 1
 )
 
 var (
