@@ -46,7 +46,7 @@ type sqlUserStoreDB struct {
 }
 
 func (x *sqlUserStoreDB) Authenticate(identity, password string) error {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
 	if err := row.Scan(&userId); err != nil {
 		return ErrIdentityAuthNotFound
