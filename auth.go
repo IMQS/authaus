@@ -744,8 +744,7 @@ func (x *Central) GetRoleGroupDB() RoleGroupDB {
 
 func (x *Central) Close() {
 	if x.Log != nil {
-		x.Log.Infof("Authaus shutting down\n")
-		x.Log = nil
+		x.Log.Infof("Authaus has started shutting down")
 	}
 	if x.userStoreMergeTicker != nil {
 		x.userStoreMergeTicker.Stop()
@@ -772,6 +771,10 @@ func (x *Central) Close() {
 	if x.roleGroupDB != nil {
 		x.roleGroupDB.Close()
 		x.roleGroupDB = nil
+	}
+	if x.Log != nil {
+		x.Log.Infof("Authaus has shut down")
+		x.Log = nil
 	}
 }
 
