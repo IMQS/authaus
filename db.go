@@ -46,24 +46,6 @@ func (u AuthUserType) CanRenameIdentity() bool {
 	}
 }
 
-func (u AuthUserType) EmailAsIdentity() bool {
-	switch u {
-	case UserTypeDefault:
-		return true
-	default:
-		return false
-	}
-}
-
-func (u AuthUserType) UsernameAsIdentity() bool {
-	switch u {
-	case UserTypeLDAP:
-		return true
-	default:
-		return false
-	}
-}
-
 // The primary job of the UserStore, is to store and authenticate users.
 // It is also responsible for adding new users, changing passwords etc.
 // All operations except for Close must be thread-safe.
@@ -231,11 +213,7 @@ func (x *dummyUserStore) CreateIdentity(email, username, firstname, lastname, mo
 	x.usersLock.Lock()
 	defer x.usersLock.Unlock()
 	var user *dummyUser
-	if authUserType.EmailAsIdentity() {
-		user = x.getDummyUser(email)
-	} else if authUserType.UsernameAsIdentity() {
-		user = x.getDummyUser(username)
-	}
+	user = x.getDummyUser(email)
 	if user == nil {
 		userId := x.generateUserId()
 		x.users[userId] = &dummyUser{userId, email, username, firstname, lastname, mobilenumber, password, "", false, authUserType}
