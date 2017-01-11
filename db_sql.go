@@ -146,24 +146,42 @@ func (x *sqlUserStoreDB) identityExists(identity string) error {
 	return identityFromRow(row)
 }
 
-func (x *sqlUserStoreDB) emailOrUsernameExistExcludingUserid(email string, username string, userid UserId) error {
+func (x *sqlUserStoreDB) filterOutUserIds(sql string, userIds []UserId) string {
+	var newSql string
+	newSql = sql
+	filterTemplate := "AND userid != %d"
+	for count := 0; count < len(userIds); count++ {
+		filter := fmt.Sprintf(filterTemplate, userIds[count])
+		joinArg := []string{newSql, filter}
+		newSql = strings.Join(joinArg, " ")
+	}
+	return newSql
+}
+
+func (x *sqlUserStoreDB) emailOrUsernameExistExcludingUserids(email string, username string, userids []UserId) error {
 	var row *sql.Row
-	var sql = fmt.Sprintf("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL) AND userid != %d", userid)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
+	sql := "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)"
+	tmp := x.filterOutUserIds(sql, userids)
+	fmt.Print(tmp)
+	row = x.db.QueryRow(tmp, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
 	return identityFromRow(row)
 }
 
-func (x *sqlUserStoreDB) emailExistExcludingUserid(email string, userid UserId) error {
+func (x *sqlUserStoreDB) emailExistExcludingUserids(email string, userids []UserId) error {
 	var row *sql.Row
-	var sql = fmt.Sprintf("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1) AND (archived = false OR archived IS NULL) AND userid != %d", userid)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(email))
+	sql := "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1) AND (archived = false OR archived IS NULL)"
+	tmp := x.filterOutUserIds(sql, userids)
+	fmt.Print(tmp)
+	row = x.db.QueryRow(tmp, CanonicalizeIdentity(email))
 	return identityFromRow(row)
 }
 
-func (x *sqlUserStoreDB) usernameExistExcludingUserid(username string, userid UserId) error {
+func (x *sqlUserStoreDB) usernameExistExcludingUserids(username string, userids []UserId) error {
 	var row *sql.Row
-	var sql = fmt.Sprintf("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1) AND (archived = false OR archived IS NULL) AND userid != %d", userid)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(username))
+	sql := "SELECT userid FROM authuserstore WHERE (LOWER(username) = $1) AND (archived = false OR archived IS NULL)"
+	tmp := x.filterOutUserIds(sql, userids)
+	fmt.Print(tmp)
+	row = x.db.QueryRow(tmp, CanonicalizeIdentity(username))
 	return identityFromRow(row)
 }
 
@@ -172,6 +190,28 @@ func (x *sqlUserStoreDB) emailOrUsernameExist(email string, username string) err
 	var sql = fmt.Sprintf("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)")
 	row = x.db.QueryRow(sql, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
 	return identityFromRow(row)
+}
+
+// Checks that either a valid email, or a valid username exists from the
+// given input, without using the intended target userId
+func (x *sqlUserStoreDB) checkIdentityExistsExlucludingUserId(email string, username string, userIds []UserId) error {
+	checkEmail := &email == nil || len(email) > 0
+	checkUsername := &username != nil && len(username) > 0
+
+	if !checkEmail && !checkUsername {
+		return ErrIdentityEmpty
+	}
+
+	var err error
+	// emails may be blank (a legacy requirement), in which case we don't check if they exist
+	if checkEmail && checkUsername {
+		err = x.emailOrUsernameExistExcludingUserids(email, username, userIds)
+	} else if !checkEmail && checkUsername {
+		err = x.usernameExistExcludingUserids(username, userIds)
+	} else {
+		err = x.emailExistExcludingUserids(email, userIds)
+	}
+	return err
 }
 
 func identityFromRow(row *sql.Row) error {
@@ -192,15 +232,9 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 		return NullUserId, ehash
 	}
 
-	// we assume email address exists and is validated
-	if &username != nil && len(username) > 0 {
-		if err := x.emailOrUsernameExist(email, username); err != nil {
-			return NullUserId, err
-		}
-	} else {
-		if err := x.identityExists(email); err != nil {
-			return NullUserId, err
-		}
+	err := x.checkIdentityExistsExlucludingUserId(email, username, []UserId{})
+	if err != nil {
+		return NullUserId, ErrIdentityExists
 	}
 
 	// Insert into user store
@@ -209,6 +243,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
+
 		// Get user id
 		var userId int64
 		if len(username) > 0 {
@@ -248,23 +283,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 
 func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
 
-	checkEmail := &email == nil || len(email) > 0
-	checkUsername := &username != nil && len(username) > 0
-
-	if !checkEmail && !checkUsername {
-		return ErrIdentityEmpty
-	}
-
-	var err error
-	// emails may be blank (a legacy requirement), in which case we don't check if they exist
-	if checkEmail && checkUsername {
-		err = x.emailOrUsernameExistExcludingUserid(email, username, userId)
-	} else if !checkEmail && checkUsername {
-		err = x.usernameExistExcludingUserid(username, userId)
-	} else {
-		err = x.emailExistExcludingUserid(email, userId)
-	}
-
+	err := x.checkIdentityExistsExlucludingUserId(email, username, []UserId{userId})
 	if err != nil {
 		return ErrIdentityExists
 	}
