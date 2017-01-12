@@ -147,41 +147,33 @@ func (x *sqlUserStoreDB) identityExists(identity string) error {
 }
 
 func (x *sqlUserStoreDB) filterOutUserIds(sql string, userIds []UserId) string {
-	var newSql string
-	newSql = sql
 	filterTemplate := "AND userid != %d"
 	for count := 0; count < len(userIds); count++ {
 		filter := fmt.Sprintf(filterTemplate, userIds[count])
-		joinArg := []string{newSql, filter}
-		newSql = strings.Join(joinArg, " ")
+		joinArg := []string{sql, filter}
+		sql = strings.Join(joinArg, " ")
 	}
-	return newSql
+	return sql
 }
 
 func (x *sqlUserStoreDB) emailOrUsernameExistExcludingUserids(email string, username string, userids []UserId) error {
 	var row *sql.Row
-	sql := "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)"
-	tmp := x.filterOutUserIds(sql, userids)
-	fmt.Print(tmp)
-	row = x.db.QueryRow(tmp, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
+	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)", userids)
+	row = x.db.QueryRow(sql, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
 	return identityFromRow(row)
 }
 
 func (x *sqlUserStoreDB) emailExistExcludingUserids(email string, userids []UserId) error {
 	var row *sql.Row
-	sql := "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1) AND (archived = false OR archived IS NULL)"
-	tmp := x.filterOutUserIds(sql, userids)
-	fmt.Print(tmp)
-	row = x.db.QueryRow(tmp, CanonicalizeIdentity(email))
+	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1) AND (archived = false OR archived IS NULL)", userids)
+	row = x.db.QueryRow(sql, CanonicalizeIdentity(email))
 	return identityFromRow(row)
 }
 
 func (x *sqlUserStoreDB) usernameExistExcludingUserids(username string, userids []UserId) error {
 	var row *sql.Row
-	sql := "SELECT userid FROM authuserstore WHERE (LOWER(username) = $1) AND (archived = false OR archived IS NULL)"
-	tmp := x.filterOutUserIds(sql, userids)
-	fmt.Print(tmp)
-	row = x.db.QueryRow(tmp, CanonicalizeIdentity(username))
+	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1) AND (archived = false OR archived IS NULL)", userids)
+	row = x.db.QueryRow(sql, CanonicalizeIdentity(username))
 	return identityFromRow(row)
 }
 
@@ -193,9 +185,10 @@ func (x *sqlUserStoreDB) emailOrUsernameExist(email string, username string) err
 }
 
 // Checks that either a valid email, or a valid username exists from the
-// given input, without using the intended target userId
-func (x *sqlUserStoreDB) checkIdentityExistsExlucludingUserId(email string, username string, userIds []UserId) error {
-	checkEmail := &email == nil || len(email) > 0
+// given input, without checking any member of the intended target userIds
+func (x *sqlUserStoreDB) checkIdentityExistsExcludingUserId(email string, username string, userIds []UserId) error {
+
+	checkEmail := &email != nil && len(email) > 0
 	checkUsername := &username != nil && len(username) > 0
 
 	if !checkEmail && !checkUsername {
@@ -232,7 +225,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 		return NullUserId, ehash
 	}
 
-	err := x.checkIdentityExistsExlucludingUserId(email, username, []UserId{})
+	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{})
 	if err != nil {
 		return NullUserId, ErrIdentityExists
 	}
@@ -283,7 +276,7 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 
 func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
 
-	err := x.checkIdentityExistsExlucludingUserId(email, username, []UserId{userId})
+	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{userId})
 	if err != nil {
 		return ErrIdentityExists
 	}
