@@ -853,3 +853,10 @@ func (x *dummyPermitDB) SetPermit(userId UserId, permit *Permit) error {
 
 func (x *dummyPermitDB) Close() {
 }
+
+func (a *AuthUser) getIdentity() string {
+	if (len(a.Email) == 0) {
+		return a.Username
+	}
+	return a.Email
+}
