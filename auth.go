@@ -7,12 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/IMQS/log"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/IMQS/log"
 )
 
 const (
@@ -448,6 +449,8 @@ func (x *Central) authenticate(identity, password string) (UserId, string, error
 		return user.UserId, "", ErrIdentityAuthNotFound
 	}
 
+	// We are consistent here with the behaviour of sqlSessionDB.Read, which prioritizes the LDAP identity
+	// over the email address, as the return value of "identity".
 	if user.Type == UserTypeLDAP {
 		err = x.ldap.Authenticate(user.Username, password)
 		// We want to return Invalid Password or IdentityAuthNotFound, not Invalid Credentials
