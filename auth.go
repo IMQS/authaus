@@ -463,7 +463,7 @@ func (x *Central) authenticate(identity, password string) (UserId, string, error
 		return user.UserId, user.Username, err
 	} else {
 		err = x.userStore.Authenticate(identity, password)
-		return user.UserId, user.Email, err
+		return user.UserId, user.getIdentity(), err
 	}
 }
 
