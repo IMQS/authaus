@@ -441,11 +441,9 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 			if err != nil {
 				return nil, ErrInvalidSessionToken
 			}
-			// Use identical rules to 'authenticate', which first tries to make Identity the username,
-			// and if that doesn't exist, then it falls back to email.
-			if &user.Username != nil {
+			if user.Type == UserTypeLDAP {
 				token.Identity = user.Username
-			} else if &user.Email != nil {
+			} else {
 				token.Identity = user.Email
 			}
 
