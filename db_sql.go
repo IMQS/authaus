@@ -441,6 +441,8 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 			if err != nil {
 				return nil, ErrInvalidSessionToken
 			}
+			token.Username = user.Username
+			token.Email = user.Email
 			if user.Type == UserTypeLDAP {
 				token.Identity = user.Username
 			} else {

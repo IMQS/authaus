@@ -93,6 +93,8 @@ the permit belonging to this identity.
 type Token struct {
 	Identity string
 	UserId   UserId
+	Email    string
+	Username string
 	Expires  time.Time
 	Permit   Permit
 }
