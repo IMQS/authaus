@@ -453,7 +453,7 @@ func (x *Central) authenticate(identity, password string) (UserId, string, error
 
 	// We are consistent here with the behaviour of sqlSessionDB.Read, which prioritizes the LDAP identity
 	// over the email address, as the return value of "identity".
-	if user.Type == UserTypeLDAP {
+	if user.Type == UserTypeLDAP && x.ldap != nil {
 		err = x.ldap.Authenticate(user.Username, password)
 		// We want to return Invalid Password or IdentityAuthNotFound, not Invalid Credentials
 		// as LDAP doesnt differentiate between the 2
