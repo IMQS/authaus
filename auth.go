@@ -102,8 +102,9 @@ type Token struct {
 // Transform an identity into its canonical form. What this means is that any two identities
 // are considered equal if their canonical forms are equal. This is simply a lower-casing
 // of the identity, so that "bob@enterprise.com" is equal to "Bob@enterprise.com".
+// It also trims the whitespace around the identity.
 func CanonicalizeIdentity(identity string) string {
-	return strings.ToLower(identity)
+	return strings.TrimSpace(strings.ToLower(identity))
 }
 
 // Returns a random string of 'nchars' bytes, sampled uniformly from the given corpus of byte characters.
