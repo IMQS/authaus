@@ -443,6 +443,40 @@ func TestAuthLdapMerge(t *testing.T) {
 	}
 }
 
+// Test Ldap merging when the new Ldap user have a space in the Username or Email.
+// This used to cause an "Identity already exists" error before the fix.
+// This scenario seems to be extremely unlikely to occur, but not impossible.
+func TestAuthLdapMergeSpace(t *testing.T) {
+	t.Log("Testing ldap merge including spaces")
+	c := setupLdap(t)
+	defer Teardown(c)
+
+	newUserEmail := "IMQSUserWithEmail@imqsemail.co.za"
+	_, e := c.CreateUserStoreIdentity(newUserEmail, "", "firstname", "lastname", "", "pwd")
+	if e != nil {
+		t.Fatalf("TestMergeLdap failed, create user: %v", e)
+	}
+
+	johnUser, err := c.GetUserFromIdentity(newUserEmail)
+	if err != nil {
+		t.Fatalf("TestMergeLdap failed, error: %v", err)
+	}
+	if johnUser.Type != UserTypeDefault {
+		t.Fatalf("TestMergeLdap failed, expected newly created user to be IMQS user type (0), instead %v", johnUser.Type)
+	}
+
+	ldapTest.AddLdapUser("LdapUsername", "pwd", newUserEmail+" ", "Tom", "hanks", "08467531243")
+	c.MergeTick()
+
+	johnUser, err = c.GetUserFromIdentity(newUserEmail)
+	if err != nil {
+		t.Fatalf("TestMergeLdap failed, error: %v", err)
+	}
+	if johnUser.Type != UserTypeLDAP {
+		t.Fatalf("TestMergeLdap failed, expected merged user to be LDAP user type (1), instead %v", johnUser.Type)
+	}
+}
+
 // This tests that if an IMQS user exists that has the same email address as an LDAP user during
 // an LDAP merge, that it converts the IMQS User to be an LDAP user.
 func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
@@ -971,14 +1005,14 @@ func TestAuthUpdateDuplicateIdentity(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
 
-	if (isBackendPostgresTest()) {
+	if isBackendPostgresTest() {
 		newUsername := "newUsername"
 		newName := "newName"
 		newSurname := "newSurname"
 		newMobile := "newMobile"
 
 		user, err := c.GetUserFromIdentity(joeEmail)
-		if (err != nil) {
+		if err != nil {
 			t.Fatal("Couldn't find setup user")
 		}
 		userid := user.UserId
