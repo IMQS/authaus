@@ -89,6 +89,7 @@ type RoleGroupDB interface {
 	GetByName(name string) (*AuthGroup, error)
 	GetByID(id GroupIDU32) (*AuthGroup, error)
 	InsertGroup(group *AuthGroup) error
+	DeleteGroup(group *AuthGroup) error
 	UpdateGroup(group *AuthGroup) error
 	Close()
 }
@@ -111,6 +112,14 @@ func LoadOrCreateGroup(roleDB RoleGroupDB, groupName string, createIfNotExist bo
 	} else {
 		return nil, eget
 	}
+}
+
+func DeleteGroup(roleDB RoleGroupDB, groupName string) error {
+	group, eget := roleDB.GetByName(groupName)
+	if eget != nil {
+		return eget
+	}
+	return roleDB.DeleteGroup(group)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -241,6 +250,17 @@ func (x *dummyRoleGroupDB) InsertGroup(group *AuthGroup) error {
 		x.groupsNextID += 1
 		return nil
 	}
+}
+
+func (x *dummyRoleGroupDB) DeleteGroup(group *AuthGroup) error {
+	x.groupsLock.Lock()
+	defer x.groupsLock.Unlock()
+	if existingByName := x.groupsByName[group.Name]; existingByName == nil {
+		return ErrGroupNotExist
+	}
+	delete(x.groupsByID, group.ID)
+	delete(x.groupsByName, group.Name)
+	return nil
 }
 
 func (x *dummyRoleGroupDB) UpdateGroup(group *AuthGroup) error {
@@ -424,6 +444,18 @@ func (x *sqlGroupDB) InsertGroup(group *AuthGroup) error {
 	}
 }
 
+// Delete an existing group
+func (x *sqlGroupDB) DeleteGroup(group *AuthGroup) error {
+	if existingByName, _ := x.GetByName(group.Name); existingByName == nil {
+		return ErrGroupNotExist
+	}
+	if _, err := x.db.Exec("DELETE FROM authgroup WHERE id=$1", group.ID); err == nil {
+		return nil
+	} else {
+		return err
+	}
+}
+
 // Update an existing group (by ID)
 func (x *sqlGroupDB) UpdateGroup(group *AuthGroup) error {
 	if group.ID == 0 {
@@ -516,6 +548,15 @@ func (x *RoleGroupCache) InsertGroup(group *AuthGroup) (err error) {
 	return
 }
 
+func (x *RoleGroupCache) DeleteGroup(group *AuthGroup) (err error) {
+	x.groupsLock.Lock()
+	if err = x.backend.DeleteGroup(group); err == nil {
+		x.removeFromCache(group)
+	}
+	x.groupsLock.Unlock()
+	return
+}
+
 func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) (err error) {
 	// Same comment here about locking, as in InsertGroup
 	x.groupsLock.Lock()
@@ -590,6 +631,11 @@ func (x *RoleGroupCache) insertInCache(group *AuthGroup) {
 	gcopy := group.Clone()
 	x.groupsByID[group.ID] = gcopy
 	x.groupsByName[group.Name] = gcopy
+}
+
+func (x *RoleGroupCache) removeFromCache(group *AuthGroup) {
+	delete(x.groupsByID, group.ID)
+	delete(x.groupsByName, group.Name)
 }
 
 // Create a new RoleGroupDB that transparently caches reads of groups
