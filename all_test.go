@@ -532,6 +532,63 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 	}
 }
 
+// This tests that if an IMQS user and an LDAP user both have email addresses or usernames containing empty strings, they will not
+// override each other
+func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) {
+	t.Log("Testing IMQS username or email with empty strings cases")
+	c := setupLdap(t)
+	defer Teardown(c)
+
+	emptyStringEmail := ""
+	emptyStringUsername := ""
+	imqsUsername := "Peter"
+	imqsEmail := "Peter@test.co.za"
+	imqsPassword := "test123"
+	ldapUsername := "John"
+	ldapEmail := "John@haha.co.za"
+
+	// Testing blank email case
+	imqsUserId, err := c.CreateUserStoreIdentity(emptyStringEmail, imqsUsername, "", "", "", imqsPassword)
+	if err != nil {
+		t.Fatalf("Create user should have succeeded, but error was : %v", err)
+	}
+	ldapTest.AddLdapUser(ldapUsername, "", emptyStringEmail, "", "", "")
+
+	permit := setupPermit()
+	c.permitDB.SetPermit(imqsUserId, &permit)
+	_, _, err = c.Login(imqsUsername, imqsPassword)
+	if err != nil {
+		t.Fatalf("Login should have succeeded, but error was : %v", err)
+	}
+
+	// This merge should have zero affect, no merge on this user should take place
+	c.MergeTick()
+	_, _, err = c.Login(imqsUsername, imqsPassword)
+	if err != nil {
+		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
+	}
+
+	// Testing blank username case
+	imqsUserId, err = c.CreateUserStoreIdentity(imqsEmail, emptyStringUsername, "", "", "", imqsPassword)
+	if err != nil {
+		t.Fatalf("Create user should have succeeded, but error was : %v", err)
+	}
+	ldapTest.AddLdapUser(emptyStringUsername, "", ldapEmail, "", "", "")
+
+	c.permitDB.SetPermit(imqsUserId, &permit)
+	_, _, err = c.Login(imqsEmail, imqsPassword)
+	if err != nil {
+		t.Fatalf("Login should have succeeded, but error was : %v", err)
+	}
+
+	// This merge should have zero affect, no merge on this user should take place
+	c.MergeTick()
+	_, _, err = c.Login(imqsEmail, imqsPassword)
+	if err != nil {
+		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -517,12 +517,16 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 	// Create maps from arrays
 	imqsUserUsernameMap := make(map[string]AuthUser)
 	for _, imqsUser := range imqsUsers {
-		imqsUserUsernameMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
+		if len(imqsUser.Username) > 0 {
+			imqsUserUsernameMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
+		}
 	}
 
 	imqsUserEmailMap := make(map[string]AuthUser)
 	for _, imqsUser := range imqsUsers {
-		imqsUserEmailMap[CanonicalizeIdentity(imqsUser.Email)] = imqsUser
+		if len(imqsUser.Email) > 0 {
+			imqsUserEmailMap[CanonicalizeIdentity(imqsUser.Email)] = imqsUser
+		}
 	}
 
 	ldapUserMap := make(map[string]AuthUser)
