@@ -154,16 +154,18 @@ func getCentral(t *testing.T) *Central {
 func setup(t *testing.T) *Central {
 	central := getCentral(t)
 
-	if _, e := central.userStore.CreateIdentity(joeEmail, "joeUsername", "joeName", "joeSurname", "joe084", joePwd, UserTypeDefault); e != nil {
+	now := time.Now().Unix()
+
+	if _, e := central.userStore.CreateIdentity(joeEmail, "joeUsername", "joeName", "joeSurname", "joe084", "joe021", "joe test", now, "joeCreatedBy", now, "joeModifiedBy", joePwd, UserTypeDefault); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
-	if _, e := central.userStore.CreateIdentity(jackEmail, "jackUsername", "jackName", "jackSurname", "jack084", jackPwd, UserTypeDefault); e != nil {
+	if _, e := central.userStore.CreateIdentity(jackEmail, "jackUsername", "jackName", "jackSurname", "jack084", "jack021", "jack test", now, "jackCreatedBy", now, "jackModifiedBy", jackPwd, UserTypeDefault); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
-	if _, e := central.userStore.CreateIdentity(samEmail, "", "SamName", "SamSurname", "Sam084", SamPwd, UserTypeDefault); e != nil {
+	if _, e := central.userStore.CreateIdentity(samEmail, "", "SamName", "SamSurname", "Sam084", "Sam021", "Sam test", now, "SamCreatedBy", now, "SamModifiedBy", SamPwd, UserTypeDefault); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
-	if _, e := central.userStore.CreateIdentity(iHaveNoPermitIdentity, "", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", iHaveNoPermitPwd, UserTypeDefault); e != nil {
+	if _, e := central.userStore.CreateIdentity(iHaveNoPermitIdentity, "", "iHaveNoPermitName", "iHaveNoPermitSurname", "iHaveNoPermit084", "iHaveNoPermit021", "iHaveNoPermit test", now, "iHaveNoPermitCreatedBy", now, "iHaveNoPermitModifiedBy", iHaveNoPermitPwd, UserTypeDefault); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
 	permit := setupPermit()
@@ -418,7 +420,9 @@ func TestAuthLdapMerge(t *testing.T) {
 	// After merging, we should find the username already exist. We will update
 	// the IMQS user with that username to become of type LDAPuser, so we test against that
 	newUser := "IMQSUserWithUsername"
-	_, e := c.CreateUserStoreIdentity(newUser, newUser, "firstname", "lastname", "", "pwd")
+	now := time.Now().Unix()
+
+	_, e := c.CreateUserStoreIdentity(newUser, newUser, "firstname", "lastname", "", "", "", now, "", now, "", "pwd")
 	if e != nil {
 		t.Fatalf("TestMergeLdap failed, create user: %v", e)
 	}
@@ -452,7 +456,9 @@ func TestAuthLdapMergeSpace(t *testing.T) {
 	defer Teardown(c)
 
 	newUserEmail := "IMQSUserWithEmail@imqsemail.co.za"
-	_, e := c.CreateUserStoreIdentity(newUserEmail, "", "firstname", "lastname", "", "pwd")
+	now := time.Now().Unix()
+
+	_, e := c.CreateUserStoreIdentity(newUserEmail, "", "firstname", "lastname", "", "", "", now, "", now, "", "pwd")
 	if e != nil {
 		t.Fatalf("TestMergeLdap failed, create user: %v", e)
 	}
@@ -491,8 +497,10 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 	newIMQSPwd := "petersIMQSpassword"
 	newLDAPPwd := "peterLDAPpassword"
 
+	now := time.Now().Unix()
+
 	// Create user in IMQS and LDAP
-	peterUserId, err := c.CreateUserStoreIdentity(newEmail, "", "", "", "", newIMQSPwd)
+	peterUserId, err := c.CreateUserStoreIdentity(newEmail, "", "", "", "", "", "", now, "", now, "", newIMQSPwd)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
@@ -546,9 +554,10 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 	imqsPassword := "test123"
 	ldapUsername := "John"
 	ldapEmail := "John@haha.co.za"
+	now := time.Now().Unix()
 
 	// Testing blank email case
-	imqsUserId, err := c.CreateUserStoreIdentity(emptyStringEmail, imqsUsername, "", "", "", imqsPassword)
+	imqsUserId, err := c.CreateUserStoreIdentity(emptyStringEmail, imqsUsername, "", "", "", "", "", now, "", now, "", imqsPassword)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
@@ -569,7 +578,7 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 	}
 
 	// Testing blank username case
-	imqsUserId, err = c.CreateUserStoreIdentity(imqsEmail, emptyStringUsername, "", "", "", imqsPassword)
+	imqsUserId, err = c.CreateUserStoreIdentity(imqsEmail, emptyStringUsername, "", "", "", "", "", now, "", now, "", imqsPassword)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
@@ -599,8 +608,9 @@ func TestAuthIdentityCaseSensitivity(t *testing.T) {
 	t.Log("Testing case sensitivity")
 	c := setup(t)
 	defer Teardown(c)
+	now := time.Now().Unix()
 
-	if _, e := c.CreateUserStoreIdentity("JOE@email.test", "JOE", "JOEfirstname", "JOElastname", "JOE084", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
+	if _, e := c.CreateUserStoreIdentity("JOE@email.test", "JOE", "JOEfirstname", "JOElastname", "JOE084", "JOE021", "JOEremarks", now, "JOEcreatedby", now, "JOEmodifiedby", "123"); e == nil || !isPrefix(ErrIdentityExists.Error(), e.Error()) {
 		t.Errorf("CreateIdentity should fail because identities are case-insensitive. Instead, error is %v", e)
 	}
 }
@@ -753,8 +763,9 @@ func TestAuthBasicAuth(t *testing.T) {
 	// create a user with an IMQS type and authenticate with the LDAP backend
 	c = setupLdap(t)
 	defer Teardown(c)
+	now := time.Now().Unix()
 
-	userId, err := c.userStore.CreateIdentity(testLdapIdentity, "tomh", "Tom", "Hanks", "", testLdapPwd, UserTypeDefault)
+	userId, err := c.userStore.CreateIdentity(testLdapIdentity, "tomh", "Tom", "Hanks", "", "", "", now, "", now, "", testLdapPwd, UserTypeDefault)
 	if err != nil {
 		t.Errorf("TestBasicAuth failed, expected create IMQS user success, but instead error (%v)", err)
 	}
@@ -1030,12 +1041,17 @@ func TestAuthUpdateIdentity(t *testing.T) {
 	newName := "newName"
 	newSurname := "newSurname"
 	newMobile := "newMobile"
+	newPhone := "newPhone"
+	newRemarks := "newRemarks"
+	newModifiedBy := "newModifiedBy"
 
-	if err := c.UpdateIdentity(notFoundUserId, newEmail, newUsername, newName, newSurname, newMobile, UserTypeLDAP); err != ErrIdentityAuthNotFound {
+	now := time.Now().Unix()
+
+	if err := c.UpdateIdentity(notFoundUserId, newEmail, newUsername, newName, newSurname, newMobile, newPhone, newRemarks, now, newModifiedBy, UserTypeLDAP); err != ErrIdentityAuthNotFound {
 		t.Fatalf("TestUpdateIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
 	}
 
-	if err := c.UpdateIdentity(joeUserId, newEmail, newUsername, newName, newSurname, newMobile, UserTypeLDAP); err != nil {
+	if err := c.UpdateIdentity(joeUserId, newEmail, newUsername, newName, newSurname, newMobile, newPhone, newRemarks, now, newModifiedBy, UserTypeLDAP); err != nil {
 		t.Fatalf("Update should not have failed: %v", err)
 	}
 
@@ -1067,13 +1083,18 @@ func TestAuthUpdateDuplicateIdentity(t *testing.T) {
 		newName := "newName"
 		newSurname := "newSurname"
 		newMobile := "newMobile"
+		newPhone := "newPhone"
+		newRemarks := "newRemarks"
+		newModifiedBy := "newModifiedBy"
+
+		now := time.Now().Unix()
 
 		user, err := c.GetUserFromIdentity(joeEmail)
 		if err != nil {
 			t.Fatal("Couldn't find setup user")
 		}
 		userid := user.UserId
-		err = c.UpdateIdentity(userid, jackEmail, newUsername, newName, newSurname, newMobile, UserTypeDefault)
+		err = c.UpdateIdentity(userid, jackEmail, newUsername, newName, newSurname, newMobile, newPhone, newRemarks, now, newModifiedBy, UserTypeDefault)
 
 		if err != ErrIdentityExists {
 			t.Fatalf("TestAuthupdateDuplicateIdentity failed: Expected ErrIdentityExists, but got: %v", err)
@@ -1084,6 +1105,8 @@ func TestAuthUpdateDuplicateIdentity(t *testing.T) {
 func TestAuthArchiveIdentity(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
+
+	now := time.Now().Unix()
 
 	if err := c.ArchiveIdentity(notFoundUserId); err != ErrIdentityAuthNotFound {
 		t.Fatalf("TestArchiveIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
@@ -1118,7 +1141,7 @@ func TestAuthArchiveIdentity(t *testing.T) {
 	}
 
 	// Try to update archived user
-	if err := c.UpdateIdentity(joeUserId, "newEmail", "newUsername", "newName", "newSurname", "newMobile", UserTypeDefault); err != ErrIdentityAuthNotFound {
+	if err := c.UpdateIdentity(joeUserId, "newEmail", "newUsername", "newName", "newSurname", "newMobile", "newPhone", "newRemarks", now, "newModifiedBy", UserTypeDefault); err != ErrIdentityAuthNotFound {
 		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be updated: %v", err)
 	}
 

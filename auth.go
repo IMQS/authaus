@@ -542,14 +542,14 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
 		}
 		if !foundWithUsername && !foundWithEmail {
-			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", UserTypeLDAP); err != nil {
+			if _, err := x.userStore.CreateIdentity(ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", "", 0, "", 0, "", "", UserTypeLDAP); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
 		} else if foundWithEmail || !ldapUser.equals(imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
-			if err := x.userStore.UpdateIdentity(imqsUser.UserId, ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, UserTypeLDAP); err != nil {
+			if err := x.userStore.UpdateIdentity(imqsUser.UserId, ldapUser.Email, ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Mobilenumber, "", "", 0, "", UserTypeLDAP); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
 			}
 		}
@@ -643,8 +643,8 @@ func (x *Central) ResetPasswordFinish(userId UserId, token string, password stri
 }
 
 // Create an identity in the AuthUserStore.
-func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, mobilenumber, password string) (UserId, error) {
-	userId, e := x.userStore.CreateIdentity(email, username, firstname, lastname, mobilenumber, password, UserTypeDefault)
+func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, mobilenumber, telephonenumber, remarks string, created int64, createdby string, modified int64, modifiedby, password string) (UserId, error) {
+	userId, e := x.userStore.CreateIdentity(email, username, firstname, lastname, mobilenumber, telephonenumber, remarks, created, createdby, modified, modifiedby, password, UserTypeDefault)
 	if e == nil {
 		x.Log.Infof("CreateAuthenticatorIdentity successful: (%v)", userId)
 	} else {
@@ -654,8 +654,8 @@ func (x *Central) CreateUserStoreIdentity(email, username, firstname, lastname, 
 }
 
 // Update a user in the AuthUserStore.
-func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
-	e := x.userStore.UpdateIdentity(userId, email, username, firstname, lastname, mobilenumber, authUserType)
+func (x *Central) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber, telephonenumber, remarks string, modified int64, modifiedby string, authUserType AuthUserType) error {
+	e := x.userStore.UpdateIdentity(userId, email, username, firstname, lastname, mobilenumber, telephonenumber, remarks, modified, modifiedby, authUserType)
 	if e != nil {
 		x.Log.Warnf("Update Identity failed (%v) (%v)", userId, e)
 		return e
