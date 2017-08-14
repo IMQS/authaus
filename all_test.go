@@ -70,9 +70,9 @@ var conx_postgres = DBConnection{
 	Driver:   "postgres",
 	Host:     "localhost",
 	Port:     5432,
-	Database: "authaus_test",
-	User:     "authaus_test",
-	Password: "authaus_test",
+	Database: "unit_test_authaus",
+	User:     "unit_test_user",
+	Password: "unit_test_password",
 	SSL:      false,
 }
 
@@ -313,19 +313,19 @@ func TestIntegratedLdapAuthenticateFailure(t *testing.T) {
 
 	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
 	if err != nil {
-		t.Error("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
-	if _, _, err := c.Login(imqsLdapIdentity, "invalidpassword"); err != nil {
+	if _, _, err := c.Login(imqsLdapIdentity, "invalidpassword", "::1"); err != nil {
 		if !strings.Contains(err.Error(), ErrInvalidPassword.Error()) {
 			t.Fatalf("Login should have failed with invalid password, but error was: %v", err)
 		}
 	}
 
-	if _, _, err := c.Login("somerandomusername", "invalidpassword"); err != nil {
+	if _, _, err := c.Login("somerandomusername", "invalidpassword", "::1"); err != nil {
 		if !strings.Contains(err.Error(), ErrIdentityAuthNotFound.Error()) {
 			t.Fatalf("Login should have failed with identity not found, but error was: %v", err)
 		}
@@ -340,14 +340,14 @@ func TestIntegratedLdapLoginWithAnonymousBind(t *testing.T) {
 
 	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
 	if err != nil {
-		t.Error("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
 	// Note, we are logging in with no password
-	if _, _, err := c.Login(imqsLdapIdentity, ""); err != nil {
+	if _, _, err := c.Login(imqsLdapIdentity, "", "::1"); err != nil {
 		if !strings.Contains(err.Error(), ErrInvalidPassword.Error()) {
 			t.Fatalf("Login should have failed with invalid password, but error was: %v", err)
 		}
@@ -365,13 +365,13 @@ func TestIntegratedLdapConnectionRecovery(t *testing.T) {
 
 	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
 	if err != nil {
-		t.Error("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
-	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd); err != nil {
+	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd, "::1"); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
@@ -383,7 +383,7 @@ func TestIntegratedLdapConnectionRecovery(t *testing.T) {
 	conx_ldap.LdapHost = host
 	c.MergeTick()
 
-	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd); err != nil {
+	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd, "::1"); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 }
@@ -404,7 +404,7 @@ func TestIntegratedLdapMergeLoad(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				_, _, err = c.Login(imqsLdapIdentity, imqsLdapPwd)
+				_, _, err = c.Login(imqsLdapIdentity, imqsLdapPwd, "::1")
 				if err != nil {
 					t.Errorf("Login failed %v", err)
 				}
@@ -444,14 +444,14 @@ func TestAuthLdapMerge(t *testing.T) {
 	tomhPermit := setupPermit()
 	c.permitDB.SetPermit(testLdapUser.UserId, &tomhPermit)
 
-	if _, _, err := c.Login(testLdapIdentity, testLdapPwd); err != nil {
+	if _, _, err := c.Login(testLdapIdentity, testLdapPwd, "::1"); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	ldapTest.RemoveLdapUser(testLdapIdentity)
 	c.MergeTick()
 
-	if _, _, err := c.Login(testLdapIdentity, testLdapPwd); err == nil {
+	if _, _, err := c.Login(testLdapIdentity, testLdapPwd, "::1"); err == nil {
 		t.Fatalf("Login should not have succeeded")
 	}
 
@@ -610,7 +610,7 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 	// Test IMQS user login.
 	permit := setupPermit()
 	c.permitDB.SetPermit(peterUserId, &permit)
-	_, _, err = c.Login(newEmail, newIMQSPwd)
+	_, _, err = c.Login(newEmail, newIMQSPwd, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
@@ -619,18 +619,18 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 	// should no longer work. However, login with the LDAP user should work.
 	c.MergeTick()
 
-	_, _, err = c.Login(newEmail, newIMQSPwd)
+	_, _, err = c.Login(newEmail, newIMQSPwd, "::1")
 	if err == nil {
 		t.Fatalf("Login should have failed")
 	}
 
 	// Login with both email address and username of the LDAP account to make sure the account is
 	// one and the same.
-	_, emailLoginToken, err := c.Login(newEmail, newLDAPPwd)
+	_, emailLoginToken, err := c.Login(newEmail, newLDAPPwd, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
-	_, usernameLoginToken, err := c.Login(newLDAPUsername, newLDAPPwd)
+	_, usernameLoginToken, err := c.Login(newLDAPUsername, newLDAPPwd, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
@@ -679,14 +679,14 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 
 	permit := setupPermit()
 	c.permitDB.SetPermit(imqsUserId, &permit)
-	_, _, err = c.Login(imqsUsername, imqsPassword)
+	_, _, err = c.Login(imqsUsername, imqsPassword, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	// This merge should have zero affect, no merge on this user should take place
 	c.MergeTick()
-	_, _, err = c.Login(imqsUsername, imqsPassword)
+	_, _, err = c.Login(imqsUsername, imqsPassword, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
 	}
@@ -712,14 +712,14 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 	ldapTest.AddLdapUser(emptyStringUsername, "", ldapEmail, "", "", "")
 
 	c.permitDB.SetPermit(imqsUserId, &permit)
-	_, _, err = c.Login(imqsEmail, imqsPassword)
+	_, _, err = c.Login(imqsEmail, imqsPassword, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	// This merge should have zero affect, no merge on this user should take place
 	c.MergeTick()
-	_, _, err = c.Login(imqsEmail, imqsPassword)
+	_, _, err = c.Login(imqsEmail, imqsPassword, "::1")
 	if err != nil {
 		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestAuthLoginCaseSensitivity(t *testing.T) {
 
 	const joeCapitalizedIdentity = "JOE@email.test"
 
-	_, token, e := c.Login(joeCapitalizedIdentity, joePwd)
+	_, token, e := c.Login(joeCapitalizedIdentity, joePwd, "::1")
 	if e != nil {
 		t.Fatalf("An unexpected error occurred: %v", e)
 	}
@@ -786,7 +786,7 @@ func TestAuthRenameIdentity(t *testing.T) {
 	}
 
 	// Succeed renaming 'joe' to 'sarah'
-	session, _, _ := c.Login(joeEmail, joePwd)
+	session, _, _ := c.Login(joeEmail, joePwd, "::1")
 	if _, err := c.GetTokenFromSession(session); err != nil {
 		t.Fatalf("Expected good login")
 	}
@@ -799,7 +799,7 @@ func TestAuthRenameIdentity(t *testing.T) {
 		t.Fatalf("All sessions for 'joe' should have been invalidated by rename, %s", err)
 	}
 
-	if _, _, err := c.Login("sarah", joePwd); err != nil {
+	if _, _, err := c.Login("sarah", joePwd, "::1"); err != nil {
 		t.Fatalf("Login as 'sarah' failed (%v)", err)
 	}
 }
@@ -831,7 +831,7 @@ func TestAuthResetPassword(t *testing.T) {
 	if token, err := c.GetTokenFromIdentityPassword(joeEmail, joePwd); err != nil || token == nil {
 		t.Fatalf("Old password should remain valid until reset token has been used, but (%v)", err)
 	}
-	session, _, loginErr := c.Login(joeEmail, joePwd)
+	session, _, loginErr := c.Login(joeEmail, joePwd, "::1")
 	if loginErr != nil {
 		t.Fatalf("Login should succeed instead of %v", loginErr)
 	}
@@ -956,7 +956,7 @@ func TestAuthLoad(t *testing.T) {
 		sessionKeys := make([]string, times)
 		for iter := int64(0); iter < times; iter++ {
 			//t.Logf("%v: %v/%v login\n", myid, iter, times)
-			key, token, err := c.Login(joeEmail, joePwd)
+			key, token, err := c.Login(joeEmail, joePwd, "::1")
 			if err != nil {
 				t.Errorf("Login failed. Error should not be %v", err)
 			}
@@ -1009,7 +1009,7 @@ func TestAuthPermitChange(t *testing.T) {
 		keys := make([]string, nsessions)
 		tokens := make([]*Token, nsessions)
 		for i := 0; i < nsessions; i++ {
-			keys[i], tokens[i], _ = c.Login(joeEmail, joePwd)
+			keys[i], tokens[i], _ = c.Login(joeEmail, joePwd, "::1")
 			if !bytes.Equal(tokens[i].Permit.Roles, perm1.Roles) {
 				t.Fatalf("Permits not equal %v %v\n", tokens[i].Permit.Roles, perm1.Roles)
 			}
@@ -1044,7 +1044,7 @@ func TestAuthSessionExpiry(t *testing.T) {
 	defer Teardown(c)
 	testSessionExpiry := func(inMemCache bool) {
 		c.NewSessionExpiresAfter = time.Millisecond * 500
-		key, _, _ := c.Login(joeEmail, joePwd)
+		key, _, _ := c.Login(joeEmail, joePwd, "::1")
 		if !inMemCache {
 			// Clear in memory session cache, relying on the db to get cache
 			c.debugEnableSessionDB(false)
@@ -1084,14 +1084,14 @@ func TestAuthMaxSessionLimit(t *testing.T) {
 	c.MaxActiveSessions = 1
 
 	// Login first time
-	key1, _, _ := c.Login(joeEmail, joePwd)
+	key1, _, _ := c.Login(joeEmail, joePwd, "::1")
 	_, err := c.GetTokenFromSession(key1)
 	if err != nil {
 		t.Fatalf("Expected key1 to be valid")
 	}
 
 	// Login second time. After this, key1 must be invalid
-	key2, _, _ := c.Login(joeEmail, joePwd)
+	key2, _, _ := c.Login(joeEmail, joePwd, "::1")
 	_, err = c.GetTokenFromSession(key1)
 	if err == nil {
 		t.Fatalf("Expected key1 to be invalid")
@@ -1108,7 +1108,7 @@ func TestAuthDBSession(t *testing.T) {
 	c.MaxActiveSessions = 1
 
 	// Login first time
-	key, _, _ := c.Login(joeEmail, joePwd)
+	key, _, _ := c.Login(joeEmail, joePwd, "::1")
 	token1, err := c.GetTokenFromSession(key)
 	if err != nil {
 		t.Fatalf("Expected key to be valid")
@@ -1134,7 +1134,7 @@ func TestAuthSessionCacheEviction(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
 	login := func(username, password string) string {
-		sessionkey, token, error := c.Login(username, password)
+		sessionkey, token, error := c.Login(username, password, "::1")
 		if token == nil || error != nil {
 			t.Errorf("Login failed '%v'", error)
 		}
@@ -1173,7 +1173,7 @@ func TestAuthSessionCacheEviction(t *testing.T) {
 func TestAuthSessionDelete(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
-	key, _, _ := c.Login(joeEmail, joePwd)
+	key, _, _ := c.Login(joeEmail, joePwd, "::1")
 	_, err := c.GetTokenFromSession(key)
 	if err != nil {
 		t.Error("Login should not fail so early")
