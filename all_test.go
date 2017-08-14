@@ -70,9 +70,9 @@ var conx_postgres = DBConnection{
 	Driver:   "postgres",
 	Host:     "localhost",
 	Port:     5432,
-	Database: "authaus_test",
-	User:     "authaus_test",
-	Password: "authaus_test",
+	Database: "unit_test_authaus",
+	User:     "unit_test_user",
+	Password: "unit_test_password",
 	SSL:      false,
 }
 

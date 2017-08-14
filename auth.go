@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IMQS/log"
+	"github.com/IMQS/serviceauth"
 )
 
 const (
@@ -411,9 +413,15 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
 		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, err)
+
+		// Send failed login to audit service
+		auditUserAction(identity, password, "Login Authentication failed")
 		return sessionkey, token, err
 	}
 	x.Log.Infof("Login authentication success (%v)", userId)
+
+	// Send success login to audit service
+	auditUserAction(identity, password, "Login Authentication success")
 
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(userId); err != nil {
@@ -442,6 +450,39 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	x.Stats.IncrementGoodLogin(x.Log)
 	x.Log.Infof("Login successful (%v)", userId)
 	return sessionkey, token, nil
+}
+
+func auditUserAction(identity, password, actionDescription string) error {
+	auditServiceUrl := "http://localhost:2016/auth-logaction"
+	client := &http.Client{}
+
+	currentTime := time.Now().Unix()
+	currentLocation := time.Now().Location().String()
+
+	actionStr := []byte(fmt.Sprintf(`{"who": "User %v with password %v","did_what": "%v", "to_what": "IMQS Web V8", "at_time": %v, "context": {"location": "%v"}}`, identity, password, actionDescription, currentTime, currentLocation))
+
+	req, err := http.NewRequest("POST", auditServiceUrl, bytes.NewBuffer(actionStr))
+	if err != nil {
+		return err
+	}
+
+	// Date header is required for inter-service interactions
+	req.Header.Add("Date", time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+	req.Header.Set("Content-Type", "application/json")
+
+	err = serviceauth.CreateInterServiceRequest(req, actionStr)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	return nil
 }
 
 // Authenticate the identity and password.
