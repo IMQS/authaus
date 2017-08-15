@@ -7,13 +7,12 @@ import (
 	"encoding/base64"
 	//"errors"
 	"fmt"
+	"github.com/BurntSushi/migration"
+	"github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
+	"golang.org/x/crypto/scrypt"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/BurntSushi/migration"
-	_ "github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
-	"golang.org/x/crypto/scrypt"
 )
 
 /*
@@ -219,42 +218,42 @@ func identityFromRow(row *sql.Row) error {
 	return ErrIdentityExists
 }
 
-func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mobilenumber, telephonenumber, remarks string, created int64, createdby string, modified int64, modifiedby, password string, authUserType AuthUserType) (UserId, error) {
+func (x *sqlUserStoreDB) CreateIdentity(user AuthUser, password string) (UserId, error) {
 	hash, ehash := computeAuthausHash(password)
 	if ehash != nil {
 		return NullUserId, ehash
 	}
 
-	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{})
+	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{})
 	if err != nil {
 		return NullUserId, ErrIdentityExists
 	}
 
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
-		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`, email, username, firstname, lastname, mobilenumber, telephonenumber, remarks, created, createdby, modified, modifiedby, false, authUserType); eCreateUserStore != nil {
+		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
 
 		// Get user id
 		var userId int64
-		if len(username) > 0 {
-			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(username))
+		if len(user.Username) > 0 {
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(user.Username))
 			if scanErr := row.Scan(&userId); scanErr != nil {
 				tx.Rollback()
 				return NullUserId, scanErr
 
 			}
 		} else {
-			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(email))
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(user.Email))
 			if scanErr := row.Scan(&userId); scanErr != nil {
 				tx.Rollback()
 				return NullUserId, scanErr
 			}
 		}
 
-		if authUserType == UserTypeDefault {
+		if user.Type == UserTypeDefault {
 			if _, eCreateAuthUser := tx.Exec(`INSERT INTO authuserpwd (userid, password) VALUES ($1, $2)`, userId, hash); eCreateAuthUser != nil {
 				//fmt.Printf("Insert into authuserpwd failed because: %v\n", eCreateAuthUser)
 				if strings.Index(eCreateAuthUser.Error(), "duplicate key") != -1 {
@@ -274,15 +273,15 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 	}
 }
 
-func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber, telephonenumber, remarks string, modified int64, modifiedby string, authUserType AuthUserType) error {
+func (x *sqlUserStoreDB) UpdateIdentity(user AuthUser) error {
 
-	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{userId})
+	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{user.UserId})
 	if err != nil {
 		return ErrIdentityExists
 	}
 
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, remarks = $7, modified= $8, modifiedby = $9, authusertype = $10 WHERE userid = $11 AND (archived = false OR archived IS NULL)`, email, username, firstname, lastname, mobilenumber, telephonenumber, remarks, modified, modifiedby, authUserType, userId); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, remarks = $7, modified= $8, modifiedby = $9, authusertype = $10 WHERE userid = $11 AND (archived = false OR archived IS NULL)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Modified, user.ModifiedBy, user.Type, user.UserId); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
@@ -355,10 +354,10 @@ func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
 		mobileNumber    sql.NullString
 		telephoneNumber sql.NullString
 		remarks         sql.NullString
-		created         sql.NullInt64
-		createdBy       sql.NullString
-		modified        sql.NullInt64
-		modifiedBy      sql.NullString
+		created         pq.NullTime
+		createdBy       sql.NullInt64
+		modified        pq.NullTime
+		modifiedBy      sql.NullInt64
 		authUserType    sql.NullInt64
 	}
 	for rows.Next() {
@@ -366,7 +365,7 @@ func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
 		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType); err != nil {
 			return []AuthUser{}, err
 		}
-		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Int64, user.createdBy.String, user.modified.Int64, user.modifiedBy.String, AuthUserType(user.authUserType.Int64)})
+		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64)})
 	}
 	if rows.Err() != nil {
 		return []AuthUser{}, rows.Err()
@@ -400,10 +399,10 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		mobileNumber    sql.NullString
 		telephoneNumber sql.NullString
 		remarks         sql.NullString
-		created         sql.NullInt64
-		createdBy       sql.NullString
-		modified        sql.NullInt64
-		modifiedBy      sql.NullString
+		created         pq.NullTime
+		createdBy       sql.NullInt64
+		modified        pq.NullTime
+		modifiedBy      sql.NullInt64
 		authUserType    sql.NullInt64
 	}
 	user := sqlUser{}
@@ -413,7 +412,7 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		}
 		return AuthUser{}, ErrIdentityAuthNotFound
 	}
-	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Int64, user.createdBy.String, user.modified.Int64, user.modifiedBy.String, AuthUserType(user.authUserType.Int64)}, nil
+	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64)}, nil
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -797,10 +796,10 @@ func createMigrations() []migration.Migrator {
 		`ALTER TABLE authuserstore 
 			ADD COLUMN phone VARCHAR, 
 			ADD COLUMN remarks VARCHAR,
-			ADD COLUMN created BIGINT,
-			ADD COLUMN createdby VARCHAR,
-			ADD COLUMN modified BIGINT,
-			ADD COLUMN modifiedby VARCHAR;`,
+			ADD COLUMN created TIMESTAMP,
+			ADD COLUMN createdby BIGINT,
+			ADD COLUMN modified TIMESTAMP,
+			ADD COLUMN modifiedby BIGINT;`,
 	}
 
 	for _, src := range text {
