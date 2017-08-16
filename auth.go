@@ -7,12 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/IMQS/log"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/IMQS/log"
 )
 
 const (
@@ -548,14 +549,14 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 		user.Mobilenumber = ldapUser.Mobilenumber
 		user.Type = UserTypeLDAP
 		if !foundWithUsername && !foundWithEmail {
-			if _, err := x.userStore.CreateIdentity(user, ""); err != nil {
+			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
 		} else if foundWithEmail || !ldapUser.equals(imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
-			if err := x.userStore.UpdateIdentity(user); err != nil {
+			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
 			}
 		}
@@ -649,7 +650,7 @@ func (x *Central) ResetPasswordFinish(userId UserId, token string, password stri
 }
 
 // Create an identity in the AuthUserStore.
-func (x *Central) CreateUserStoreIdentity(user AuthUser, password string) (UserId, error) {	
+func (x *Central) CreateUserStoreIdentity(user *AuthUser, password string) (UserId, error) {
 	userId, e := x.userStore.CreateIdentity(user, password)
 	if e == nil {
 		x.Log.Infof("CreateAuthenticatorIdentity successful: (%v)", userId)
@@ -660,7 +661,7 @@ func (x *Central) CreateUserStoreIdentity(user AuthUser, password string) (UserI
 }
 
 // Update a user in the AuthUserStore.
-func (x *Central) UpdateIdentity(user AuthUser) error {
+func (x *Central) UpdateIdentity(user *AuthUser) error {
 	e := x.userStore.UpdateIdentity(user)
 	if e != nil {
 		x.Log.Warnf("Update Identity failed (%v) (%v)", user.UserId, e)

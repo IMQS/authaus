@@ -7,12 +7,13 @@ import (
 	"encoding/base64"
 	//"errors"
 	"fmt"
-	"github.com/BurntSushi/migration"
-	"github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
-	"golang.org/x/crypto/scrypt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/migration"
+	"github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
+	"golang.org/x/crypto/scrypt"
 )
 
 /*
@@ -218,7 +219,7 @@ func identityFromRow(row *sql.Row) error {
 	return ErrIdentityExists
 }
 
-func (x *sqlUserStoreDB) CreateIdentity(user AuthUser, password string) (UserId, error) {
+func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId, error) {
 	hash, ehash := computeAuthausHash(password)
 	if ehash != nil {
 		return NullUserId, ehash
@@ -273,7 +274,7 @@ func (x *sqlUserStoreDB) CreateIdentity(user AuthUser, password string) (UserId,
 	}
 }
 
-func (x *sqlUserStoreDB) UpdateIdentity(user AuthUser) error {
+func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 
 	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{user.UserId})
 	if err != nil {
