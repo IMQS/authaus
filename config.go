@@ -184,6 +184,7 @@ type Config struct {
 	RoleGroupDB ConfigRoleGroupDB
 	LDAP        ConfigLDAP
 	UserStore   ConfigUserStoreDB
+	AuditServiceUrl string
 }
 
 func (x *Config) Reset() {
