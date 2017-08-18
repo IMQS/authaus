@@ -204,6 +204,10 @@ func (x *CentralStats) IncrementLogout(logger *log.Logger) {
 	x.IncrementAndLog("logout", &x.Logout, logger)
 }
 
+type Auditor interface {
+	AuditUserAction(identity, action string)
+}
+
 /*
 For lack of a better name, this is the single hub of authentication that you interact with.
 All public methods of Central are callable from multiple threads.
@@ -218,7 +222,7 @@ type Central struct {
 	permitDB               PermitDB
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
-	AuditServiceUrl        string
+	Auditor                Auditor
 	renameLock             sync.Mutex //
 	Log                    *log.Logger
 	MaxActiveSessions      int32
@@ -328,7 +332,6 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
-	c.AuditServiceUrl = config.AuditServiceUrl
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
@@ -408,21 +411,25 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // Create a new session. Returns a session key, which can be used in future to retrieve the token.
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
-func (x *Central) Login(identity, password string) (sessionkey string, token *Token, err error) {
+func (x *Central) Login(identity, password, clientIp string) (sessionkey string, token *Token, err error) {
 	userId, identity, authErr := x.authenticate(identity, password)
 	if authErr != nil {
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
-		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, err)
 
-		// Send failed login to audit service
-		x.AuditUserAction(identity, password, "Failed to log in")
+		// Log failed login
+		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, err)
+		if x.Auditor != nil {
+			x.auditUserAction(identity, "Login failed: Invalid password.")
+		}
 		return sessionkey, token, err
 	}
-	x.Log.Infof("Login authentication success (%v)", userId)
 
-	// Send success login to audit service
-	x.AuditUserAction(identity, password, "Logged in successfully")
+	// Log successful login
+	x.Log.Infof("Login authentication success (%v)", userId)
+	if x.Auditor != nil {
+		x.auditUserAction(identity, "Login successful.")
+	}
 
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(userId); err != nil {
@@ -451,6 +458,10 @@ func (x *Central) Login(identity, password string) (sessionkey string, token *To
 	x.Stats.IncrementGoodLogin(x.Log)
 	x.Log.Infof("Login successful (%v)", userId)
 	return sessionkey, token, nil
+}
+
+func (x *Central) auditUserAction(username, message string) {
+	x.Auditor.AuditUserAction(username, message)
 }
 
 // Authenticate the identity and password.

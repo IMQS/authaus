@@ -84,7 +84,8 @@ func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWrite
 		return
 	}
 
-	if sessionkey, token, err := central.Login(identity, password); err != nil {
+	clientIp := r.Header.Get("X-Forwarded-For")
+	if sessionkey, token, err := central.Login(identity, password, clientIp); err != nil {
 		HttpSendTxt(w, http.StatusForbidden, err.Error())
 	} else {
 		cookie := &http.Cookie{
