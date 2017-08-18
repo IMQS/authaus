@@ -4,9 +4,10 @@ import (
 	//"github.com/mmitton/ldap"
 	"errors"
 	"fmt"
-	"github.com/mavricknz/ldap"
 	"strings"
 	"time"
+
+	"github.com/mavricknz/ldap"
 )
 
 type LdapConnectionMode int
@@ -57,7 +58,7 @@ func (x *LdapImpl) Close() {
 func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	var attributes []string = []string{
 		"sAMAccountName",
-		"cn",
+		"givenName",
 		"name",
 		"sn",
 		"mail",
@@ -90,7 +91,7 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	ldapUsers := make([]AuthUser, len(sr.Entries))
 	for i, value := range sr.Entries {
 		username := getAttributeValue(*value, "sAMAccountName")
-		name := getAttributeValue(*value, "cn")
+		name := getAttributeValue(*value, "givenName")
 		surname := getAttributeValue(*value, "sn")
 		email := getAttributeValue(*value, "mail")
 		mobile := getAttributeValue(*value, "mobile")

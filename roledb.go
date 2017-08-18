@@ -5,9 +5,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	_ "github.com/lib/pq"
 	"strings"
 	"sync"
+
+	_ "github.com/lib/pq"
 )
 
 // We try to keep most of the Role stuff inside this file, as a reminder that the

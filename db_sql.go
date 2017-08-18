@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/migration"
-	_ "github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
+	"github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -219,42 +219,42 @@ func identityFromRow(row *sql.Row) error {
 	return ErrIdentityExists
 }
 
-func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mobilenumber, password string, authUserType AuthUserType) (UserId, error) {
+func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId, error) {
 	hash, ehash := computeAuthausHash(password)
 	if ehash != nil {
 		return NullUserId, ehash
 	}
 
-	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{})
+	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{})
 	if err != nil {
 		return NullUserId, ErrIdentityExists
 	}
 
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
-		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, archived, authusertype) VALUES ($1, $2, $3, $4, $5, $6, $7)`, email, username, firstname, lastname, mobilenumber, false, authUserType); eCreateUserStore != nil {
+		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
 
 		// Get user id
 		var userId int64
-		if len(username) > 0 {
-			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(username))
+		if len(user.Username) > 0 {
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(username) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(user.Username))
 			if scanErr := row.Scan(&userId); scanErr != nil {
 				tx.Rollback()
 				return NullUserId, scanErr
 
 			}
 		} else {
-			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(email))
+			row := tx.QueryRow(`SELECT userid FROM authuserstore WHERE LOWER(email) = $1 AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(user.Email))
 			if scanErr := row.Scan(&userId); scanErr != nil {
 				tx.Rollback()
 				return NullUserId, scanErr
 			}
 		}
 
-		if authUserType == UserTypeDefault {
+		if user.Type == UserTypeDefault {
 			if _, eCreateAuthUser := tx.Exec(`INSERT INTO authuserpwd (userid, password) VALUES ($1, $2)`, userId, hash); eCreateAuthUser != nil {
 				//fmt.Printf("Insert into authuserpwd failed because: %v\n", eCreateAuthUser)
 				if strings.Index(eCreateAuthUser.Error(), "duplicate key") != -1 {
@@ -274,15 +274,15 @@ func (x *sqlUserStoreDB) CreateIdentity(email, username, firstname, lastname, mo
 	}
 }
 
-func (x *sqlUserStoreDB) UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string, authUserType AuthUserType) error {
+func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 
-	err := x.checkIdentityExistsExcludingUserId(email, username, []UserId{userId})
+	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{user.UserId})
 	if err != nil {
 		return ErrIdentityExists
 	}
 
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, authusertype = $6 WHERE userid = $7 AND (archived = false OR archived IS NULL)`, email, username, firstname, lastname, mobilenumber, authUserType, userId); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, remarks = $7, modified= $8, modifiedby = $9, authusertype = $10 WHERE userid = $11 AND (archived = false OR archived IS NULL)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Modified, user.ModifiedBy, user.Type, user.UserId); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
@@ -340,27 +340,33 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *sqlUserStoreDB) GetIdentities() ([]AuthUser, error) {
-	rows, err := x.db.Query("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE (archived = false OR archived IS NULL)")
+	rows, err := x.db.Query("SELECT userid, email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, authusertype FROM authuserstore WHERE (archived = false OR archived IS NULL)")
 	if err != nil {
 		return []AuthUser{}, err
 	}
 	defer rows.Close()
 	result := make([]AuthUser, 0)
 	type sqlUser struct {
-		userId       sql.NullInt64
-		email        sql.NullString
-		username     sql.NullString
-		firstName    sql.NullString
-		lastName     sql.NullString
-		mobileNumber sql.NullString
-		authUserType sql.NullInt64
+		userId          sql.NullInt64
+		email           sql.NullString
+		username        sql.NullString
+		firstName       sql.NullString
+		lastName        sql.NullString
+		mobileNumber    sql.NullString
+		telephoneNumber sql.NullString
+		remarks         sql.NullString
+		created         pq.NullTime
+		createdBy       sql.NullInt64
+		modified        pq.NullTime
+		modifiedBy      sql.NullInt64
+		authUserType    sql.NullInt64
 	}
 	for rows.Next() {
 		user := sqlUser{}
-		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.authUserType); err != nil {
+		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType); err != nil {
 			return []AuthUser{}, err
 		}
-		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, AuthUserType(user.authUserType.Int64)})
+		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64)})
 	}
 	if rows.Err() != nil {
 		return []AuthUser{}, rows.Err()
@@ -377,31 +383,37 @@ func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
 }
 
 func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)", CanonicalizeIdentity(identity)))
+	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, authusertype FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)", CanonicalizeIdentity(identity)))
 }
 
 func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, authusertype FROM authuserstore WHERE userid = $1 AND (archived = false OR archived IS NULL)", userId))
+	return getUser(db.QueryRow("SELECT userid, email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, authusertype FROM authuserstore WHERE userid = $1 AND (archived = false OR archived IS NULL)", userId))
 }
 
 func getUser(row *sql.Row) (AuthUser, error) {
 	type sqlUser struct {
-		userId       sql.NullInt64
-		email        sql.NullString
-		username     sql.NullString
-		firstName    sql.NullString
-		lastName     sql.NullString
-		mobileNumber sql.NullString
-		authUserType sql.NullInt64
+		userId          sql.NullInt64
+		email           sql.NullString
+		username        sql.NullString
+		firstName       sql.NullString
+		lastName        sql.NullString
+		mobileNumber    sql.NullString
+		telephoneNumber sql.NullString
+		remarks         sql.NullString
+		created         pq.NullTime
+		createdBy       sql.NullInt64
+		modified        pq.NullTime
+		modifiedBy      sql.NullInt64
+		authUserType    sql.NullInt64
 	}
 	user := sqlUser{}
-	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.authUserType); err != nil {
+	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType); err != nil {
 		if strings.Index(err.Error(), "no rows in result set") == -1 {
 			return AuthUser{}, err
 		}
 		return AuthUser{}, ErrIdentityAuthNotFound
 	}
-	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, AuthUserType(user.authUserType.Int64)}, nil
+	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64)}, nil
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -780,6 +792,15 @@ func createMigrations() []migration.Migrator {
 
 		// 8. We add AuthUserType field to the userstore, to determine what type of user account this is.
 		`ALTER TABLE authuserstore ADD COLUMN authusertype SMALLINT default 0;`,
+
+		// 9. Additional data fields as well as fields to keep track of changes to users
+		`ALTER TABLE authuserstore 
+			ADD COLUMN phone VARCHAR, 
+			ADD COLUMN remarks VARCHAR,
+			ADD COLUMN created TIMESTAMP,
+			ADD COLUMN createdby BIGINT,
+			ADD COLUMN modified TIMESTAMP,
+			ADD COLUMN modifiedby BIGINT;`,
 	}
 
 	for _, src := range text {
