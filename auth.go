@@ -205,7 +205,7 @@ func (x *CentralStats) IncrementLogout(logger *log.Logger) {
 }
 
 type Auditor interface {
-	AuditUserAction(identity, action string)
+	AuditUserAction(identity, clientIp, action string)
 }
 
 /*
@@ -417,18 +417,16 @@ func (x *Central) Login(identity, password, clientIp string) (sessionkey string,
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
 
-		// Log failed login
 		x.Log.Infof("Login Authentication failed (%v) (%v)", identity, err)
 		if x.Auditor != nil {
-			x.auditUserAction(identity, "Login failed: Invalid password.")
+			x.auditUserAction(identity, clientIp, "Login failed: Invalid password")
 		}
 		return sessionkey, token, err
 	}
 
-	// Log successful login
 	x.Log.Infof("Login authentication success (%v)", userId)
 	if x.Auditor != nil {
-		x.auditUserAction(identity, "Login successful.")
+		x.auditUserAction(identity, clientIp, "Login successful")
 	}
 
 	var permit *Permit
@@ -460,8 +458,8 @@ func (x *Central) Login(identity, password, clientIp string) (sessionkey string,
 	return sessionkey, token, nil
 }
 
-func (x *Central) auditUserAction(username, message string) {
-	x.Auditor.AuditUserAction(username, message)
+func (x *Central) auditUserAction(username, clientIp, message string) {
+	x.Auditor.AuditUserAction(username, clientIp, message)
 }
 
 // Authenticate the identity and password.

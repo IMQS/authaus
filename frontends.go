@@ -84,7 +84,10 @@ func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWrite
 		return
 	}
 
-	clientIp := r.Header.Get("X-Forwarded-For")
+	var clientIp string
+	if clientIp = r.Header.Get("X-Forwarded-For"); clientIp == "" {
+		clientIp = r.RemoteAddr
+	}
 	if sessionkey, token, err := central.Login(identity, password, clientIp); err != nil {
 		HttpSendTxt(w, http.StatusForbidden, err.Error())
 	} else {
