@@ -134,7 +134,7 @@ func (x *DBConnection) signature() string {
 type ConfigHTTP struct {
 	CookieName   string
 	CookieSecure bool
-	Port         int
+	Port         string
 	Bind         string
 }
 
@@ -191,7 +191,7 @@ func (x *Config) Reset() {
 	*x = Config{}
 	x.HTTP.CookieName = "session"
 	x.HTTP.Bind = "127.0.0.1"
-	x.HTTP.Port = 8080
+	x.HTTP.Port = "8080"
 }
 
 func (x *Config) LoadFile(filename string) error {
