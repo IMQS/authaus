@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 )
 
@@ -129,7 +128,7 @@ func RunHttp(config *ConfigHTTP, central *Central) error {
 	http.HandleFunc("/logout", makehandler(HttpHandlerLogout))
 
 	fmt.Printf("Trying to listen on %v:%v\n", config.Bind, config.Port)
-	if err := http.ListenAndServe(config.Bind+":"+strconv.Itoa(config.Port), nil); err != nil {
+	if err := http.ListenAndServe(config.Bind+":"+ config.Port, nil); err != nil {
 		return err
 	}
 
