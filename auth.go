@@ -418,16 +418,13 @@ func (x *Central) Login(username, password, clientIp string) (sessionkey string,
 		x.Stats.IncrementInvalidPasswords(x.Log)
 
 		x.Log.Infof("Login Authentication failed (%v) (%v)", username, err)
-		if x.Auditor != nil {
-			x.auditUserAction(username, clientIp, "Login failed: Invalid password")
-		}
+		x.auditUserAction(username, clientIp, "Login failed: Invalid password")
+
 		return sessionkey, token, err
 	}
 
 	x.Log.Infof("Login authentication success (%v)", userId)
-	if x.Auditor != nil {
-		x.auditUserAction(identity, clientIp, "Login successful")
-	}
+	x.auditUserAction(username, clientIp, "Login successful")
 
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(userId); err != nil {
@@ -459,7 +456,9 @@ func (x *Central) Login(username, password, clientIp string) (sessionkey string,
 }
 
 func (x *Central) auditUserAction(username, clientIp, message string) {
-	x.Auditor.AuditUserAction(username, clientIp, message)
+	if x.Auditor != nil {
+		x.Auditor.AuditUserAction(username, clientIp, message)
+	}
 }
 
 // Authenticate the identity and password.
