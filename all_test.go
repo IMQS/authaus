@@ -408,7 +408,7 @@ func TestIntegratedLdapMergeLoad(t *testing.T) {
 				if err != nil {
 					t.Errorf("Login failed %v", err)
 				}
-				_, err = c.GetAuthenticatorIdentities()
+				_, err = c.GetAuthenticatorIdentities(GetIdentitiesFlagNone)
 				if err != nil {
 					t.Errorf("Error getting auth identities %v", err)
 				}
@@ -1234,7 +1234,7 @@ func TestAuthUpdateIdentity(t *testing.T) {
 		t.Fatalf("Update should not have failed: %v", err)
 	}
 
-	users, err := c.GetAuthenticatorIdentities()
+	users, err := c.GetAuthenticatorIdentities(GetIdentitiesFlagNone)
 	if err != nil {
 		t.Fatalf("TestUpdateIdentity failed: %v", err)
 	}
@@ -1308,7 +1308,7 @@ func TestAuthArchiveIdentity(t *testing.T) {
 		t.Fatalf("Archive should not have failed: %v", err)
 	}
 
-	users, e := c.GetAuthenticatorIdentities()
+	users, e := c.GetAuthenticatorIdentities(GetIdentitiesFlagNone)
 	if e != nil {
 		t.Fatalf("TestArchiveIdentity failed: %v", e)
 	}
@@ -1321,7 +1321,23 @@ func TestAuthArchiveIdentity(t *testing.T) {
 		}
 	}
 	if !archiveSuccess {
-		t.Fatalf("TestArchiveIdentity failed, archived user should not be found")
+		t.Fatalf("TestArchiveIdentity failed, archived user should not be found with a get none deleted flag")
+	}
+
+	archivedUsers, e := c.GetAuthenticatorIdentities(GetIdentitiesFlagDeleted)
+	if e != nil {
+		t.Fatalf("TestArchiveIdentity failed: %v", e)
+	}
+
+	getArchiveSuccess := false
+	for _, archivedUser := range archivedUsers {
+		if archivedUser.UserId == joeUserId {
+			getArchiveSuccess = true
+			break
+		}
+	}
+	if !getArchiveSuccess {
+		t.Fatalf("TestArchiveIdentity failed, archived user should be found with a get deleted flag")
 	}
 
 	// Using an ldap backend, authentication will succeed, as we cannot archive users on the ldap system.

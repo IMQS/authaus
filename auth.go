@@ -516,7 +516,7 @@ func (x *Central) MergeTick() {
 		x.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
 		return
 	}
-	imqsUsers, err := x.userStore.GetIdentities()
+	imqsUsers, err := x.userStore.GetIdentities(GetIdentitiesFlagNone)
 	if err != nil {
 		x.Log.Warnf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
 		return
@@ -781,8 +781,8 @@ type data struct {
 }
 
 // Retrieve all identities known to the Authenticator.
-func (x *Central) GetAuthenticatorIdentities() ([]AuthUser, error) {
-	return x.userStore.GetIdentities()
+func (x *Central) GetAuthenticatorIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
+	return x.userStore.GetIdentities(getIdentitiesFlag)
 }
 
 // Retrieve the Role Group Database (which may be nil)
