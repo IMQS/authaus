@@ -24,6 +24,13 @@ var (
 	nextUserId    UserId
 )
 
+type GetIdentitiesFlag int
+
+const (
+	GetIdentitiesFlagNone    GetIdentitiesFlag = 0
+	GetIdentitiesFlagDeleted GetIdentitiesFlag = 1 << (iota - 1)
+)
+
 type UserId int64
 
 type AuthUserType int
@@ -58,11 +65,11 @@ type UserStore interface {
 	UpdateIdentity(user *AuthUser) error                                    // Update an identity. Change email address or name etc.
 	ArchiveIdentity(userId UserId) error                                    // Archive an identity
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
-	RenameIdentity(oldIdent, newIdent string) error        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
-	GetUserFromIdentity(identity string) (AuthUser, error) // Gets the user object from the identity supplied
-	GetUserFromUserId(userId UserId) (AuthUser, error)     // Gets the user object from the userId supplied
-	GetIdentities() ([]AuthUser, error)                    // Retrieve a list of all identities
-	Close()                                                // Typically used to close a database handle
+	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
+	GetUserFromIdentity(identity string) (AuthUser, error)                 // Gets the user object from the identity supplied
+	GetUserFromUserId(userId UserId) (AuthUser, error)                     // Gets the user object from the userId supplied
+	GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) // Retrieve a list of all identities
+	Close()                                                                // Typically used to close a database handle
 }
 
 // The LDAP interface allows authentication and the ability to retrieve the LDAP's users and merge them into our system
@@ -109,6 +116,7 @@ type AuthUser struct {
 	Modified        time.Time
 	ModifiedBy      UserId
 	Type            AuthUserType
+	Archived        bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -287,15 +295,16 @@ func (x *dummyUserStore) RenameIdentity(oldEmail, newEmail string) error {
 	}
 }
 
-func (x *dummyUserStore) GetIdentities() ([]AuthUser, error) {
+func (x *dummyUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
 	x.usersLock.RLock()
 	defer x.usersLock.RUnlock()
 
 	list := []AuthUser{}
 	for _, v := range x.users {
-		if v.archived == false {
-			list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType})
+		if (getIdentitiesFlag&GetIdentitiesFlagDeleted != 0) && v.archived {
+			continue
 		}
+		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived})
 	}
 	return list, nil
 }
@@ -517,8 +526,8 @@ func (x *sanitizingUserStore) RenameIdentity(oldIdent, newIdent string) error {
 	return x.backend.RenameIdentity(oldIdent, newIdent)
 }
 
-func (x *sanitizingUserStore) GetIdentities() ([]AuthUser, error) {
-	return x.backend.GetIdentities()
+func (x *sanitizingUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
+	return x.backend.GetIdentities(getIdentitiesFlag)
 }
 
 func (x *sanitizingUserStore) GetUserFromIdentity(identity string) (AuthUser, error) {
