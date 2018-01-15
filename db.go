@@ -301,7 +301,7 @@ func (x *dummyUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 
 	list := []AuthUser{}
 	for _, v := range x.users {
-		if (getIdentitiesFlag&GetIdentitiesFlagDeleted != 0) && v.archived {
+		if (getIdentitiesFlag&GetIdentitiesFlagDeleted == 0) && v.archived {
 			continue
 		}
 		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived})
