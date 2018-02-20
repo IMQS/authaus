@@ -204,8 +204,17 @@ func (x *CentralStats) IncrementLogout(logger *log.Logger) {
 	x.IncrementAndLog("logout", &x.Logout, logger)
 }
 
+type AuditActionType string
+
+const (
+	AuditActionUserAuthentication AuditActionType = "User authentication"
+	AuditActionUserCreated                        = "User created"
+	AuditActionUserUpdated                        = "User updated"
+	AuditActionUserDeleted                        = "User deleted"
+)
+
 type Auditor interface {
-	AuditUserAction(identity, clientIp, action string)
+	AuditUserAction(identity, clientIp, serviceName, action string, auditActionType AuditActionType)
 }
 
 /*
@@ -418,13 +427,13 @@ func (x *Central) Login(username, password, clientIp string) (sessionkey string,
 		x.Stats.IncrementInvalidPasswords(x.Log)
 
 		x.Log.Infof("Login Authentication failed (%v) (%v)", username, err)
-		x.auditUserAction(username, clientIp, "Login failed: Invalid password")
+		x.auditUserAction(username, clientIp, "Auth", "Login failed: Invalid password", AuditActionUserAuthentication)
 
 		return sessionkey, token, err
 	}
 
 	x.Log.Infof("Login authentication success (%v)", userId)
-	x.auditUserAction(username, clientIp, "Login successful")
+	x.auditUserAction(username, clientIp, "Auth", "Login successful", AuditActionUserAuthentication)
 
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(userId); err != nil {
@@ -455,9 +464,9 @@ func (x *Central) Login(username, password, clientIp string) (sessionkey string,
 	return sessionkey, token, nil
 }
 
-func (x *Central) auditUserAction(username, clientIp, message string) {
+func (x *Central) auditUserAction(username, clientIp, serviceName, message string, auditActionType AuditActionType) {
 	if x.Auditor != nil {
-		x.Auditor.AuditUserAction(username, clientIp, message)
+		x.Auditor.AuditUserAction(username, clientIp, serviceName, message, auditActionType)
 	}
 }
 
