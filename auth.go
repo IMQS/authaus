@@ -420,20 +420,17 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // Create a new session. Returns a session key, which can be used in future to retrieve the token.
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
-func (x *Central) Login(username, password, clientIp string) (sessionkey string, token *Token, err error) {
+func (x *Central) Login(username, password string) (sessionkey string, token *Token, err error) {
 	userId, identity, authErr := x.authenticate(username, password)
 	if authErr != nil {
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
 
 		x.Log.Infof("Login Authentication failed (%v) (%v)", username, err)
-		x.auditUserAction(username, clientIp, "Auth", "Login failed: Invalid password", AuditActionUserAuthentication)
-
 		return sessionkey, token, err
 	}
 
 	x.Log.Infof("Login authentication success (%v)", userId)
-	x.auditUserAction(username, clientIp, "Auth", "Login successful", AuditActionUserAuthentication)
 
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(userId); err != nil {
@@ -462,12 +459,6 @@ func (x *Central) Login(username, password, clientIp string) (sessionkey string,
 	x.Stats.IncrementGoodLogin(x.Log)
 	x.Log.Infof("Login successful (%v)", userId)
 	return sessionkey, token, nil
-}
-
-func (x *Central) auditUserAction(username, clientIp, serviceName, message string, auditActionType AuditActionType) {
-	if x.Auditor != nil {
-		x.Auditor.AuditUserAction(username, clientIp, serviceName, message, auditActionType)
-	}
 }
 
 // Authenticate the identity and password.
