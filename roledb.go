@@ -559,8 +559,13 @@ func (x *RoleGroupCache) DeleteGroup(group *AuthGroup) (err error) {
 }
 
 func (x *RoleGroupCache) UpdateGroup(group *AuthGroup) (err error) {
+	oldGroup, _ := x.GetByID(group.ID)
 	// Same comment here about locking, as in InsertGroup
 	x.groupsLock.Lock()
+	// Remove the old group from the cache to prevent duplicates
+	if oldGroup.Name != group.Name {
+		x.removeFromCache(oldGroup)
+	}
 	if err = x.backend.UpdateGroup(group); err == nil {
 		x.insertInCache(group)
 	}
