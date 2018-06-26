@@ -65,14 +65,23 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string) error {
 	}
 }
 
-func (x *sqlUserStoreDB) SetPassword(userId UserId, password string) error {
+func (x *sqlUserStoreDB) SetPassword(userId UserId, password string, checkPasswordReuse bool) error {
 	if tx, etx := x.db.Begin(); etx == nil {
-		if eupdate := x.setPasswordInternal(tx, userId, password); eupdate == nil {
-			return tx.Commit()
-		} else {
+		if checkPasswordReuse && x.hasPasswordBeenUsedBefore(userId, password) {
+			tx.Rollback()
+			return ErrInvalidPastPassword
+		}
+
+		if earchive := x.archivePassword(tx, userId); earchive != nil {
+			tx.Rollback()
+			return earchive
+		}
+
+		if eupdate := x.setPasswordInternal(tx, userId, password); eupdate != nil {
 			tx.Rollback()
 			return eupdate
 		}
+		return tx.Commit()
 	} else {
 		return etx
 	}
@@ -84,12 +93,12 @@ func (x *sqlUserStoreDB) setPasswordInternal(tx *sql.Tx, userId UserId, password
 		return err
 	}
 
-	if update, eupdate := tx.Exec(`UPDATE authuserpwd SET password = $1, pwdtoken = NULL WHERE userid = $2`, hash, userId); eupdate == nil {
+	if update, eupdate := tx.Exec(`UPDATE authuserpwd SET password = $1, pwdtoken = NULL, updated = $2 WHERE userid = $3`, hash, time.Now().UTC(), userId); eupdate == nil {
 		if affected, _ := update.RowsAffected(); affected == 1 {
 			return nil
-		} else {
-			return ErrIdentityAuthNotFound
 		}
+		return ErrIdentityAuthNotFound
+
 	} else {
 		return eupdate
 	}
@@ -113,7 +122,7 @@ func (x *sqlUserStoreDB) ResetPasswordStart(userId UserId, expires time.Time) (s
 	}
 }
 
-func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, password string) error {
+func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, password string, checkPasswordReuse bool) error {
 	if tx, etx := x.db.Begin(); etx == nil {
 		var truthToken sql.NullString
 		if escan := tx.QueryRow("SELECT pwdtoken FROM authuserpwd WHERE userid = $1", userId).Scan(&truthToken); escan != nil {
@@ -123,20 +132,69 @@ func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, passwo
 			}
 			return escan
 		}
+
 		if everify := verifyPasswordResetToken(token, truthToken.String); everify != nil {
 			tx.Rollback()
 			return everify
 		}
+
+		if checkPasswordReuse && x.hasPasswordBeenUsedBefore(userId, password) {
+			tx.Rollback()
+			return ErrInvalidPastPassword
+		}
+
+		if earchive := x.archivePassword(tx, userId); earchive != nil {
+			tx.Rollback()
+			return earchive
+		}
+
 		if eupdate := x.setPasswordInternal(tx, userId, password); eupdate != nil {
 			tx.Rollback()
 			return eupdate
-		} else {
-			return tx.Commit()
 		}
-
+		return tx.Commit()
 	} else {
 		return etx
 	}
+}
+
+func (x *sqlUserStoreDB) archivePassword(tx *sql.Tx, userId UserId) error {
+	if _, err := tx.Exec(`INSERT INTO authpwdarchive (userid, password) SELECT userid, password FROM authuserpwd WHERE userId = $1`, userId); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (x *sqlUserStoreDB) hasPasswordBeenUsedBefore(userId UserId, password string) bool {
+	archivedPasswords, err := x.getArchivedPasswordsForUser(userId)
+	if err != nil {
+		return false
+	}
+	for _, hash := range archivedPasswords {
+		if verifyAuthausHash(password, hash) {
+			return true
+		}
+	}
+	return false
+}
+
+func (x *sqlUserStoreDB) getArchivedPasswordsForUser(userId UserId) ([]string, error) {
+	passwords := make([]string, 0)
+	rows, err := x.db.Query("SELECT password FROM authpwdarchive WHERE userid = $1 ORDER BY created DESC LIMIT 15", userId)
+	if err != nil {
+		return passwords, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var passwordDbHash string
+		errScan := rows.Scan(&passwordDbHash)
+		if errScan != nil {
+			return passwords, errScan
+		}
+		passwords = append(passwords, passwordDbHash)
+	}
+	return passwords, nil
 }
 
 func (x *sqlUserStoreDB) identityExists(identity string) error {
@@ -807,6 +865,16 @@ func createMigrations() []migration.Migrator {
 			ADD COLUMN createdby BIGINT,
 			ADD COLUMN modified TIMESTAMP,
 			ADD COLUMN modifiedby BIGINT;`,
+
+		// 10. Archive passwords
+		`
+		ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();	
+		ALTER TABLE authuserpwd  ADD COLUMN created TIMESTAMP DEFAULT NOW();
+		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP DEFAULT NOW();	
+
+		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
+		INSERT INTO authpwdarchive (userid, password) SELECT userid, password FROM authuserpwd;
+		`,
 	}
 
 	for _, src := range text {

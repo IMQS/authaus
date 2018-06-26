@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"flag"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,7 @@ var backend_ldap = flag.Bool("backend_ldap", false, "Run tests against LDAP back
 var joeEmail = "joe@email.test"
 var jackEmail = "jack@email.test"
 var samEmail = "Sam@email.test"
+var janeEmail = "Jane@email.test"
 var iHaveNoPermitIdentity = "iHaveNoPermit"
 var testLdapIdentity = "TestLdapUser"
 var imqsLdapIdentity = "LDAP"
@@ -63,6 +65,8 @@ var imqsLdapUserId UserId = 1
 var jackUserId UserId = 2
 var samUserId UserId = 3
 var iHaveNoPermit UserId = 4
+var janeUserId UserId = 5
+
 var notFoundUserId UserId = 999
 var ldapTest *dummyLdap
 
@@ -227,9 +231,32 @@ func setup(t *testing.T) *Central {
 	if _, e := central.userStore.CreateIdentity(&iHaveNoPermitUser, iHaveNoPermitPwd); e != nil {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
+
+	janeUser := AuthUser{
+		Email:           janeEmail,
+		Username:        "JaneUsername",
+		Firstname:       "JaneName",
+		Lastname:        "JaneSurname",
+		Mobilenumber:    "Jane074",
+		Telephonenumber: "Jane011",
+		Remarks:         "Jane Test",
+		Created:         now,
+		CreatedBy:       0,
+		Modified:        now,
+		ModifiedBy:      0,
+		Type:            UserTypeDefault,
+	}
+	if _, e := central.userStore.CreateIdentity(&janeUser, "password0"); e != nil {
+		t.Errorf("CreateIdentity failed: %v", e)
+	}
+	for i := 0; i < 20; i++ {
+		central.userStore.SetPassword(janeUserId, "password"+strconv.FormatInt(int64(i+1), 10), false)
+	}
+
 	permit := setupPermit()
 	central.permitDB.SetPermit(joeUserId, &permit)
 	central.permitDB.SetPermit(samUserId, &permit)
+	central.permitDB.SetPermit(janeUserId, &permit)
 
 	return central
 }
@@ -287,6 +314,7 @@ func sqlDeleteAllTables(db *sql.DB) error {
 		"DROP TABLE IF EXISTS authgroup",
 		"DROP TABLE IF EXISTS authsession",
 		"DROP TABLE IF EXISTS authuserpwd",
+		"DROP TABLE IF EXISTS authpwdarchive",
 		"DROP TABLE IF EXISTS authuserstore",
 		"DROP TABLE IF EXISTS migration_version",
 	}
@@ -861,6 +889,31 @@ func TestAuthResetPassword(t *testing.T) {
 	token3, _ := c.ResetPasswordStart(joeUserId, time.Now().Add(-3*time.Second))
 	if err := c.ResetPasswordFinish(joeUserId, token3, "12345"); err != ErrPasswordTokenExpired {
 		t.Fatalf("ResetPasswordFinish should have failed with ErrPasswordTokenExpired instead of %v", err)
+	}
+
+	// Tests for disabling password reuse
+	c.DisablePasswordReuse = false
+	token6, err := c.ResetPasswordStart(janeUserId, time.Now().Add(30*time.Second))
+	if err != nil || token6 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err, token6)
+	}
+
+	if err := c.ResetPasswordFinish(janeUserId, token6, "password10"); err != nil {
+		t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
+	}
+
+	c.DisablePasswordReuse = true
+	token4, err := c.ResetPasswordStart(janeUserId, time.Now().Add(30*time.Second))
+	if err != nil || token4 == "" {
+		t.Fatalf("Expected password reset to succeed, but (%v) (%v)", err, token4)
+	}
+
+	if err := c.ResetPasswordFinish(janeUserId, token4, "password10"); err == nil {
+		t.Fatalf("ResetPasswordFinish should fail instead of %v", err)
+	}
+
+	if err := c.ResetPasswordFinish(janeUserId, token4, "password1"); err != nil {
+		t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
 	}
 }
 
