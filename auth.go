@@ -44,7 +44,6 @@ var (
 	ErrInvalidSessionToken  = errors.New("Invalid session token")
 	ErrInvalidPasswordToken = errors.New("Invalid password token")
 	ErrPasswordTokenExpired = errors.New("Password token has expired")
-	ErrPasswordExpired      = errors.New("Password has expired")
 	ErrInvalidCredentials   = errors.New("Invalid Credentials") // This error was created for LDAP authentication. LDAP does not return 'identity not found' or 'invalid password' but simply invalid credentials
 )
 
@@ -237,8 +236,6 @@ type Central struct {
 	Log                    *log.Logger
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
-	ExpireUserPasswordsIn  time.Duration
-	ExpireAdminPasswordsIn time.Duration
 	userStoreMergeTicker   *time.Ticker
 	mergeCount             int
 	ldapUsed               bool
@@ -348,15 +345,6 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
 	}
-
-	if config.UserStore.UserPasswordExpiry != 0 {
-		c.ExpireUserPasswordsIn = time.Duration(config.UserStore.UserPasswordExpiry) * time.Second
-	}
-
-	if config.UserStore.AdminPasswordExpiry != 0 {
-		c.ExpireAdminPasswordsIn = time.Duration(config.UserStore.AdminPasswordExpiry) * time.Second
-	}
-
 	if ldapUsed {
 		c.ldapMergeTickerSeconds = (defaultLdapMergeTickerSeconds * time.Second)
 		if config.LDAP.LdapTickerTime > 0 {

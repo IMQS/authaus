@@ -84,11 +84,6 @@ func (x *sqlUserStoreDB) setPasswordInternal(tx *sql.Tx, userId UserId, password
 		return err
 	}
 
-	_, err = tx.Exec(`INSERT INTO authpwdarchive (userid, password) SELECT apd.userid, apd.password FROM authuserpwd apd WHERE apd.userId = $1`, userId)
-	if err != nil {
-		return err
-	}
-
 	if update, eupdate := tx.Exec(`UPDATE authuserpwd SET password = $1, pwdtoken = NULL WHERE userid = $2`, hash, userId); eupdate == nil {
 		if affected, _ := update.RowsAffected(); affected == 1 {
 			return nil
@@ -812,15 +807,6 @@ func createMigrations() []migration.Migrator {
 			ADD COLUMN createdby BIGINT,
 			ADD COLUMN modified TIMESTAMP,
 			ADD COLUMN modifiedby BIGINT;`,
-
-		// 10. Archive passwords
-		`
-		ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();	
-		ALTER TABLE authuserpwd  ADD COLUMN created TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW();
-		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW();	
-
-		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NULL, created TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW());
-		`,
 	}
 
 	for _, src := range text {
