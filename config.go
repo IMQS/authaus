@@ -4,11 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/lib/pq"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"time"
+
+	_ "github.com/lib/pq"
 )
 
 /*
@@ -170,7 +171,8 @@ type ConfigLDAP struct {
 }
 
 type ConfigUserStoreDB struct {
-	DB DBConnection
+	DB                   DBConnection
+	DisablePasswordReuse bool
 }
 
 /*
