@@ -867,13 +867,11 @@ func createMigrations() []migration.Migrator {
 			ADD COLUMN modifiedby BIGINT;`,
 
 		// 10. Archive passwords
-		`
-		ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();	
+		`ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();	
 		ALTER TABLE authuserpwd  ADD COLUMN created TIMESTAMP DEFAULT NOW();
 		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP DEFAULT NOW();	
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
-		INSERT INTO authpwdarchive (userid, password) SELECT userid, password FROM authuserpwd;
 		`,
 	}
 
