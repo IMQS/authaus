@@ -44,6 +44,7 @@ var (
 	ErrInvalidSessionToken  = errors.New("Invalid session token")
 	ErrInvalidPasswordToken = errors.New("Invalid password token")
 	ErrPasswordTokenExpired = errors.New("Password token has expired")
+	ErrPasswordExpired      = errors.New("Password has expired")
 	ErrInvalidPastPassword  = errors.New("Invalid previously used password")
 	ErrInvalidCredentials   = errors.New("Invalid Credentials") // This error was created for LDAP authentication. LDAP does not return 'identity not found' or 'invalid password' but simply invalid credentials
 )
@@ -239,6 +240,7 @@ type Central struct {
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
 	DisablePasswordReuse   bool
+	PasswordExpiresAfter   time.Duration
 	userStoreMergeTicker   *time.Ticker
 	mergeCount             int
 	ldapUsed               bool
@@ -343,16 +345,21 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
+	if config.UserStore.PasswordExpirySeconds > 0 {
+		userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
+	}
+
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
 	}
-
 	if config.UserStore.DisablePasswordReuse {
 		c.DisablePasswordReuse = config.UserStore.DisablePasswordReuse
 	}
-
+	if config.UserStore.PasswordExpirySeconds > 0 {
+		c.PasswordExpiresAfter = time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second
+	}
 	if ldapUsed {
 		c.ldapMergeTickerSeconds = (defaultLdapMergeTickerSeconds * time.Second)
 		if config.LDAP.LdapTickerTime > 0 {
@@ -403,24 +410,25 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	userId, identity, eAuth := x.authenticate(identity, password)
+	user, eAuth := x.authenticate(identity, password, AuthCheckDefault)
 	if eAuth == nil {
-		if permit, ePermit := x.permitDB.GetPermit(userId); ePermit == nil {
-			t := &Token{}
-			t.Expires = veryFarFuture
-			t.Identity = identity
-			t.UserId = userId
-			t.Permit = *permit
+		if permit, ePermit := x.permitDB.GetPermit(user.UserId); ePermit == nil {
+			t := &Token{
+				Expires:  veryFarFuture,
+				Identity: user.getIdentity(),
+				UserId:   user.UserId,
+				Permit:   *permit,
+			}
 			x.Stats.IncrementGoodOnceOffAuth(x.Log)
-			x.Log.Infof("Once-off auth successful (%v)", userId)
+			x.Log.Infof("Once-off auth successful (%v)", user.UserId)
 			return t, nil
 		} else {
-			x.Log.Infof("Once-off auth GetPermit failed (%v) (%v)", userId, ePermit)
+			x.Log.Infof("Once-off auth GetPermit failed (%v) (%v)", user.UserId, ePermit)
 			return nil, ePermit
 		}
 	} else {
 		x.Stats.IncrementInvalidPasswords(x.Log)
-		x.Log.Infof("Once-off auth Authentication failed (%v) (%v)", userId, eAuth)
+		x.Log.Infof("Once-off auth Authentication failed (%v) (%v)", user.UserId, eAuth)
 		return nil, eAuth
 	}
 }
@@ -429,7 +437,13 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
 func (x *Central) Login(username, password string) (sessionkey string, token *Token, err error) {
-	userId, identity, authErr := x.authenticate(username, password)
+	var authTypeCheck AuthCheck
+	if x.PasswordExpiresAfter != 0 {
+		authTypeCheck = AuthCheckPasswordExpired
+	} else {
+		authTypeCheck = AuthCheckDefault
+	}
+	user, authErr := x.authenticate(username, password, authTypeCheck)
 	if authErr != nil {
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
@@ -438,43 +452,51 @@ func (x *Central) Login(username, password string) (sessionkey string, token *To
 		return sessionkey, token, err
 	}
 
-	x.Log.Infof("Login authentication success (%v)", userId)
+	x.Log.Infof("Login authentication success (%v)", user.UserId)
 
 	var permit *Permit
-	if permit, err = x.permitDB.GetPermit(userId); err != nil {
-		x.Log.Infof("Login GetPermit failed (%v) (%v)", userId, err)
+	if permit, err = x.permitDB.GetPermit(user.UserId); err != nil {
+		x.Log.Infof("Login GetPermit failed (%v) (%v)", user.UserId, err)
 		return sessionkey, token, err
 	}
 
 	if x.MaxActiveSessions != 0 {
-		if err = x.sessionDB.InvalidateSessionsForIdentity(userId); err != nil {
-			x.Log.Warnf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", userId, err)
+		if err = x.sessionDB.InvalidateSessionsForIdentity(user.UserId); err != nil {
+			x.Log.Warnf("Invalidate sessions for identity (%v) failed when enforcing MaxActiveSessions (%v)", user.UserId, err)
 			return sessionkey, token, err
 		}
 	}
 
-	token = &Token{}
-	token.Expires = time.Now().Add(x.NewSessionExpiresAfter)
-	token.Permit = *permit
-	token.Identity = identity
-	token.UserId = userId
+	token = &Token{
+		Permit:   *permit,
+		Identity: user.getIdentity(),
+		UserId:   user.UserId,
+	}
+
+	userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
+	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
+	if userPasswordExpiry.Before(sessionExpiry) {
+		token.Expires = userPasswordExpiry
+	} else {
+		token.Expires = sessionExpiry
+	}
+
 	sessionkey = generateSessionKey()
 	if err = x.sessionDB.Write(sessionkey, token); err != nil {
 		x.Log.Warnf("Writing session key failed (%v)", err)
 		return sessionkey, token, err
 	}
-
 	x.Stats.IncrementGoodLogin(x.Log)
-	x.Log.Infof("Login successful (%v)", userId)
+	x.Log.Infof("Login successful (%v)", user.UserId)
 	return sessionkey, token, nil
 }
 
 // Authenticate the identity and password.
 // Returns the userId of the user account, the identity of the user account, and an error if one occurred, else nil.
-func (x *Central) authenticate(identity, password string) (UserId, string, error) {
+func (x *Central) authenticate(identity, password string, authTypeCheck AuthCheck) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
-		return user.UserId, "", ErrIdentityAuthNotFound
+		return user, ErrIdentityAuthNotFound
 	}
 
 	// We are consistent here with the behaviour of sqlSessionDB.Read, which prioritizes the LDAP identity
@@ -486,13 +508,19 @@ func (x *Central) authenticate(identity, password string) (UserId, string, error
 		if err == ErrInvalidCredentials {
 			// The user already exists on our system, which means it exists on LDAP due to our Merge, with
 			// that knowledge we can say the password is invalid
-			return user.UserId, "", ErrInvalidPassword
+			return user, ErrInvalidPassword
 		}
-		return user.UserId, user.Username, err
+		return user, err
 	} else {
-		err = x.userStore.Authenticate(identity, password)
-		return user.UserId, user.getIdentity(), err
+		return user, x.userStore.Authenticate(identity, password, authTypeCheck)
 	}
+}
+
+func (x *Central) AuthenticateUser(identity, password string, authTypeCheck AuthCheck) error {
+	if _, err := x.authenticate(identity, password, authTypeCheck); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Merges ldap with user store every merge tick
@@ -641,7 +669,13 @@ func (x *Central) SetPermit(userId UserId, permit *Permit) error {
 
 // Change a Password. This invalidates all sessions for this identity.
 func (x *Central) SetPassword(userId UserId, password string) error {
-	if err := x.userStore.SetPassword(userId, password, x.DisablePasswordReuse); err != nil {
+	var enforceTypeCheck PasswordEnforcement
+	if x.DisablePasswordReuse {
+		enforceTypeCheck = PasswordEnforcementReuse
+	} else {
+		enforceTypeCheck = PasswordEnforcementDefault
+	}
+	if err := x.userStore.SetPassword(userId, password, enforceTypeCheck); err != nil {
 		x.Log.Infof("SetPassword failed (%v) (%v)", userId, password)
 		return err
 	}
@@ -665,7 +699,13 @@ func (x *Central) ResetPasswordStart(userId UserId, expires time.Time) (string, 
 // Complete the password reset process, by providing a token that was generated by ResetPasswordStart.
 // If this succeeds, then the password is set to 'password', and the token becomes invalid.
 func (x *Central) ResetPasswordFinish(userId UserId, token string, password string) error {
-	if err := x.userStore.ResetPasswordFinish(userId, token, password, x.DisablePasswordReuse); err != nil {
+	var enforceTypeCheck PasswordEnforcement
+	if x.DisablePasswordReuse {
+		enforceTypeCheck = PasswordEnforcementReuse
+	} else {
+		enforceTypeCheck = PasswordEnforcementDefault
+	}
+	if err := x.userStore.ResetPasswordFinish(userId, token, password, enforceTypeCheck); err != nil {
 		x.Log.Infof("ResetPasswordFinish failed (%v) (%v)", userId, err)
 		return err
 	}
