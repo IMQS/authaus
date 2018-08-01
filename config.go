@@ -171,8 +171,9 @@ type ConfigLDAP struct {
 }
 
 type ConfigUserStoreDB struct {
-	DB                   DBConnection
-	DisablePasswordReuse bool
+	DB                    DBConnection
+	DisablePasswordReuse  bool
+	PasswordExpirySeconds int
 }
 
 /*
