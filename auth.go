@@ -472,11 +472,14 @@ func (x *Central) Login(username, password string) (sessionkey string, token *To
 		Identity: user.getIdentity(),
 		UserId:   user.UserId,
 	}
-
-	userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
-	if userPasswordExpiry.Before(sessionExpiry) {
-		token.Expires = userPasswordExpiry
+	if x.PasswordExpiresAfter != 0 {
+		userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
+		if userPasswordExpiry.Before(sessionExpiry) {
+			token.Expires = userPasswordExpiry
+		} else {
+			token.Expires = sessionExpiry
+		}
 	} else {
 		token.Expires = sessionExpiry
 	}

@@ -250,7 +250,7 @@ func setup(t *testing.T) *Central {
 		t.Errorf("CreateIdentity failed: %v", e)
 	}
 	for i := 0; i < 20; i++ {
-		central.userStore.SetPassword(janeUserId, "password"+strconv.FormatInt(int64(i+1), 10), AuthCheckDefault)
+		central.userStore.SetPassword(janeUserId, "password"+strconv.FormatInt(int64(i+1), 10), PasswordEnforcementDefault)
 	}
 
 	permit := setupPermit()
