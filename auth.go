@@ -410,7 +410,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	user, eAuth := x.authenticate(identity, password, AuthCheckDefault)
+	user, eAuth := x.authenticate(identity, password)
 	if eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(user.UserId); ePermit == nil {
 			t := &Token{
@@ -437,13 +437,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
 func (x *Central) Login(username, password string) (sessionkey string, token *Token, err error) {
-	var authTypeCheck AuthCheck
-	if x.PasswordExpiresAfter != 0 {
-		authTypeCheck = AuthCheckPasswordExpired
-	} else {
-		authTypeCheck = AuthCheckDefault
-	}
-	user, authErr := x.authenticate(username, password, authTypeCheck)
+	user, authErr := x.authenticate(username, password)
 	if authErr != nil {
 		err = authErr
 		x.Stats.IncrementInvalidPasswords(x.Log)
@@ -472,8 +466,9 @@ func (x *Central) Login(username, password string) (sessionkey string, token *To
 		Identity: user.getIdentity(),
 		UserId:   user.UserId,
 	}
+
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
-	if x.PasswordExpiresAfter != 0 {
+	if x.PasswordExpiresAfter != 0 && user.Type != UserTypeLDAP {
 		userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
 		if userPasswordExpiry.Before(sessionExpiry) {
 			token.Expires = userPasswordExpiry
@@ -496,10 +491,16 @@ func (x *Central) Login(username, password string) (sessionkey string, token *To
 
 // Authenticate the identity and password.
 // Returns the userId of the user account, the identity of the user account, and an error if one occurred, else nil.
-func (x *Central) authenticate(identity, password string, authTypeCheck AuthCheck) (AuthUser, error) {
+func (x *Central) authenticate(identity, password string) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
 		return user, ErrIdentityAuthNotFound
+	}
+	var authTypeCheck AuthCheck
+	if x.PasswordExpiresAfter != 0 {
+		authTypeCheck = AuthCheckPasswordExpired
+	} else {
+		authTypeCheck = AuthCheckDefault
 	}
 
 	// We are consistent here with the behaviour of sqlSessionDB.Read, which prioritizes the LDAP identity
@@ -520,10 +521,7 @@ func (x *Central) authenticate(identity, password string, authTypeCheck AuthChec
 }
 
 func (x *Central) AuthenticateUser(identity, password string, authTypeCheck AuthCheck) error {
-	if _, err := x.authenticate(identity, password, authTypeCheck); err != nil {
-		return err
-	}
-	return nil
+	return x.userStore.Authenticate(identity, password, authTypeCheck)
 }
 
 // Merges ldap with user store every merge tick
