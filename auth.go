@@ -209,11 +209,11 @@ func (x *CentralStats) IncrementLogout(logger *log.Logger) {
 type AuditActionType string
 
 const (
-	AuditActionUserAuthentication AuditActionType = "Login"
-	AuditActionUserCreated                        = "Created"
-	AuditActionUserUpdated                        = "Updated"
-	AuditActionUserDeleted                        = "Deleted"
-	AuditActionResetPassword                      = "Reset Password"
+	AuditActionAuthentication AuditActionType = "Login"
+	AuditActionCreated                        = "Created"
+	AuditActionUpdated                        = "Updated"
+	AuditActionDeleted                        = "Deleted"
+	AuditActionResetPassword                  = "Reset Password"
 )
 
 type Auditor interface {
