@@ -172,7 +172,7 @@ func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, passwo
 }
 
 func (x *sqlUserStoreDB) archivePassword(tx *sql.Tx, userId UserId) error {
-	if _, err := tx.Exec(`INSERT INTO authpwdarchive (userid, password) SELECT userid, password FROM authuserpwd WHERE userId = $1`, userId); err != nil {
+	if _, err := tx.Exec(`INSERT INTO authpwdarchive (userid, password) SELECT userid, password FROM authuserpwd WHERE password IS NOT NULL AND  userId = $1`, userId); err != nil {
 		return err
 	}
 	return nil
