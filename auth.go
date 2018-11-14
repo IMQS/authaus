@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -322,9 +323,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 
 	if ldapUsed {
-		if ldap, err = NewAuthenticator_LDAP(&config.LDAP); err != nil {
-			panic(fmt.Errorf("Error creating LDAP Authenticator: %v", err))
-		}
+		ldap = NewAuthenticator_LDAP(&config.LDAP)
 	}
 
 	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB); err != nil {
@@ -566,6 +565,21 @@ func (x *Central) MergeTick() {
 	}
 }
 
+func userInfoToAuditTrailJSON(user AuthUser) string {
+	type AuditDetail struct {
+		Service  string `json:"service"`
+		Username string `json:"username"`
+		UserId   int64  `json:"userid"`
+	}
+	auditDetail := AuditDetail{
+		Service:  "auth",
+		Username: user.Username,
+		UserId:   int64(user.UserId),
+	}
+	contextData, _ := json.Marshal(auditDetail)
+	return string(contextData)
+}
+
 // We are reading users from LDAP/AD and merging them into the IMQS userstore
 func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
@@ -603,15 +617,30 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 		user.Mobilenumber = ldapUser.Mobilenumber
 		user.Type = UserTypeLDAP
 		if !foundWithUsername && !foundWithEmail {
+			user.Created = time.Now().UTC()
+			user.Modified = time.Now().UTC()
+
 			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
+			}
+
+			// Log to audit trail user created
+			if x.Auditor != nil {
+				contextData := userInfoToAuditTrailJSON(user)
+				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
 			}
 		} else if foundWithEmail || !ldapUser.equals(imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
+			user.Modified = time.Now().UTC()
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
+			}
+			// Log to audit trail user updated
+			if x.Auditor != nil {
+				contextData := userInfoToAuditTrailJSON(user)
+				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionUpdated)
 			}
 		}
 	}
@@ -624,6 +653,12 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			if imqsUser.Type == UserTypeLDAP {
 				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
 					x.Log.Warnf("LDAP merge: Archive identity failed with (%v)", err)
+				}
+
+				// Log to audit trail user deleted
+				if x.Auditor != nil {
+					contextData := userInfoToAuditTrailJSON(imqsUser)
+					x.Auditor.AuditUserAction(imqsUser.Username, "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
 				}
 			}
 		}

@@ -264,15 +264,10 @@ func setup(t *testing.T) *Central {
 func setupLdap(t *testing.T) *Central {
 	central := getCentral(t)
 
-	if isBackendLdapTest() {
-		var err error
-		central.ldap, err = NewAuthenticator_LDAP(&conx_ldap)
-		if err != nil {
-			t.Fatalf("Unable to connect to LDAP %v", err)
-		}
-
+	if isBackendLdapTest() {	
+		central.ldap = NewAuthenticator_LDAP(&conx_ldap)
 		central.MergeTick()
-
+		
 		// Setup permissions
 		user, err := central.userStore.GetUserFromIdentity(imqsLdapIdentity)
 		if err != nil {
