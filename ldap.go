@@ -22,12 +22,11 @@ type LdapImpl struct {
 	config *ConfigLDAP
 }
 
-func (x *LdapImpl) Authenticate(identity, password string) (er error) {
+func (x *LdapImpl) Authenticate(identity, password string) error {
 	if len(password) == 0 {
 		// Many LDAP servers (or AD) will allow an anonymous BIND.
 		// I've never seen the need for a password-less user authenticated against LDAP.
-		er = ErrInvalidPassword
-		return
+		return ErrInvalidPassword
 	}
 
 	con, err := NewLDAPConnect(x.config)
@@ -42,13 +41,12 @@ func (x *LdapImpl) Authenticate(identity, password string) (er error) {
 	err = con.Bind(identity, password)
 	if err != nil {
 		if strings.Index(err.Error(), "Invalid Credentials") != 0 {
-			er = ErrInvalidCredentials
+			return ErrInvalidCredentials
 		} else {
-			err = er
+			return err
 		}
 	}
-
-	return
+	return nil
 }
 
 func (x *LdapImpl) Close() {
@@ -133,8 +131,8 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 	return con, nil
 }
 
-func NewAuthenticator_LDAP(config *ConfigLDAP) (*LdapImpl, error) {
-	ldap := &LdapImpl{}
-	ldap.config = config
-	return ldap, nil
+func NewAuthenticator_LDAP(config *ConfigLDAP) *LdapImpl {
+	return &LdapImpl{
+		config: config,
+	}
 }
