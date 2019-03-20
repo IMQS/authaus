@@ -110,7 +110,7 @@ func CanonicalizeIdentity(identity string) string {
 	return strings.TrimSpace(strings.ToLower(identity))
 }
 
-// Returns a random string of 'nchars' bytes, sampled uniformly from the given corpus of byte characters.
+// RandomString returns a random string of 'nchars' bytes, sampled uniformly from the given corpus of byte characters.
 func RandomString(nchars int, corpus string) string {
 	rbytes := make([]byte, nchars)
 	rstring := make([]byte, nchars)
@@ -683,12 +683,12 @@ func (x *Central) InvalidateSessionsForIdentity(userId UserId) error {
 	return x.sessionDB.InvalidateSessionsForIdentity(userId)
 }
 
-// Retrieve a Permit.
+// GetPermit retrieves a Permit.
 func (x *Central) GetPermit(userId UserId) (*Permit, error) {
 	return x.permitDB.GetPermit(userId)
 }
 
-// Retrieve all Permits.
+// GetPermits retrieves all Permits.
 func (x *Central) GetPermits() (map[UserId]*Permit, error) {
 	return x.permitDB.GetPermits()
 }
@@ -788,7 +788,7 @@ func (x *Central) ArchiveIdentity(userId UserId) error {
 	return nil
 }
 
-// Get AuthUser object from identity.
+// GetUserFromIdentity gets AuthUser object from identity.
 func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromIdentity(identity)
 	if e == nil {
@@ -799,7 +799,7 @@ func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	return AuthUser{}, e
 }
 
-// Get AuthUser object from userid.
+// GetUserFromUserId gets AuthUser object from userid.
 func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromUserId(userId)
 	if e == nil {
@@ -810,7 +810,7 @@ func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
 	return AuthUser{}, e
 }
 
-// Get AuthUser full name from userid.
+// GetUserNameFromUserId gets AuthUser full name from userid.
 func (x *Central) GetUserNameFromUserId(userId UserId) string {
 	if userId == 0 {
 		return "Administrator"
@@ -864,12 +864,12 @@ type data struct {
 	size  int64
 }
 
-// Retrieve all identities known to the Authenticator.
+// GetAuthenticatorIdentities retrieves all identities known to the Authenticator.
 func (x *Central) GetAuthenticatorIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
 	return x.userStore.GetIdentities(getIdentitiesFlag)
 }
 
-// Retrieve the Role Group Database (which may be nil)
+// GetRoleGroupDB retrieves the Role Group Database (which may be nil)
 func (x *Central) GetRoleGroupDB() RoleGroupDB {
 	return x.roleGroupDB
 }
