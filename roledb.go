@@ -28,7 +28,7 @@ type PermissionU16 uint16
 // A list of permissions
 type PermissionList []PermissionU16
 
-// Returns true if the list contains this permission
+// Has returns true if the list contains this permission
 func (x PermissionList) Has(perm PermissionU16) bool {
 	for _, bit := range x {
 		if bit == perm {
@@ -38,7 +38,7 @@ func (x PermissionList) Has(perm PermissionU16) bool {
 	return false
 }
 
-// Adds this permission to the list.
+// Add adds this permission to the list.
 // Takes no action if the permission is already present.
 func (x *PermissionList) Add(perm PermissionU16) {
 	for _, bit := range *x {
@@ -49,7 +49,7 @@ func (x *PermissionList) Add(perm PermissionU16) {
 	*x = append(*x, perm)
 }
 
-// Removes this permission from the lst
+// Remove removes this permission from the lst
 // Takes no action if the permission is not present.
 func (x *PermissionList) Remove(perm PermissionU16) {
 	for index, bit := range *x {
@@ -170,7 +170,7 @@ func EncodePermit(groupIds []GroupIDU32) []byte {
 	return res
 }
 
-// Decodes a Permit into a list of Group IDs
+// DecodePermit decodes a Permit into a list of Group IDs
 func DecodePermit(permit []byte) ([]GroupIDU32, error) {
 	if len(permit)%4 != 0 {
 		return nil, ErrPermitInvalid
@@ -430,7 +430,7 @@ func (x *sqlGroupDB) GetByID(id GroupIDU32) (*AuthGroup, error) {
 	return readSingleGroup(x.db.QueryRow("SELECT id,name,permlist FROM authgroup WHERE id = $1", id), fmt.Sprintf("%v", id))
 }
 
-// Add a new group. If the function is successful, then 'group.ID' will be set to the inserted record's ID
+// InsertGroup adds a new group. If the function is successful, then 'group.ID' will be set to the inserted record's ID
 func (x *sqlGroupDB) InsertGroup(group *AuthGroup) error {
 	if !GroupNameIsLegal(group.Name) {
 		return ErrGroupNameIllegal

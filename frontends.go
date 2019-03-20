@@ -13,7 +13,7 @@ var (
 	ErrHttpNotAuthorized = errors.New("No authorization information")
 )
 
-// Reads the session cookie or the HTTP "Basic" Authorization header to determine whether this request is authorized.
+// HttpHandlerPrelude reads the session cookie or the HTTP "Basic" Authorization header to determine whether this request is authorized.
 func HttpHandlerPrelude(config *ConfigHTTP, central *Central, r *http.Request) (*Token, error) {
 	sessioncookie, _ := r.Cookie(config.CookieName)
 	if sessioncookie != nil {
@@ -55,7 +55,7 @@ func HttpHandlerPreludeWithError(config *ConfigHTTP, central *Central, w http.Re
 	return token, err
 }
 
-// Handle the 'whoami' request, which is really just for debugging
+// HttpHandlerWhoAmI handles the 'whoami' request, which is really just for debugging
 func HttpHandlerWhoAmI(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
 	token, err := HttpHandlerPrelude(config, central, r)
 	if err != nil {
@@ -74,7 +74,7 @@ func HttpSendTxt(w http.ResponseWriter, responseCode int, responseBody string) {
 	fmt.Fprintf(w, "%v", responseBody)
 }
 
-// Handle the 'login' request, sending back a session token (via Set-Cookie),
+// HttpHandlerLogin handles the 'login' request, sending back a session token (via Set-Cookie),
 // if authentication succeeds. You may want to use this as a template to write your own.
 func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWriter, r *http.Request) {
 	identity, password, basicOK := r.BasicAuth()
