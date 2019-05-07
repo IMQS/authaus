@@ -72,6 +72,19 @@ Full populated config:
 			"Password":		"123",
 			"SSL":			true
 		}
+	},
+	"UserStore": {
+		"Type": "db",
+		"DB": {
+			"Driver": "postgres",
+			"Host": "127.0.0.1",
+			"Database": "auth",
+			"User": "auth",
+			"Password": "auth"
+		},
+		"DisablePasswordReuse": true,
+		"PasswordExpirySeconds": 2592000,
+		"MaxFailedLoginCount" : 3
 	}
 }
 
@@ -173,21 +186,21 @@ type ConfigLDAP struct {
 type ConfigUserStoreDB struct {
 	DB                    DBConnection
 	DisablePasswordReuse  bool
-	PasswordExpirySeconds int
+	PasswordExpirySeconds int64
+	MaxFailedLoginCount   int64
 }
 
 /*
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
-	Log             ConfigLog
-	HTTP            ConfigHTTP
-	PermitDB        ConfigPermitDB
-	SessionDB       ConfigSessionDB
-	RoleGroupDB     ConfigRoleGroupDB
-	LDAP            ConfigLDAP
-	UserStore       ConfigUserStoreDB
-	AuditServiceUrl string
+	Log         ConfigLog
+	HTTP        ConfigHTTP
+	PermitDB    ConfigPermitDB
+	SessionDB   ConfigSessionDB
+	RoleGroupDB ConfigRoleGroupDB
+	LDAP        ConfigLDAP
+	UserStore   ConfigUserStoreDB
 }
 
 func (x *Config) Reset() {

@@ -40,7 +40,8 @@ var (
 	ErrIdentityPermitNotFound = errors.New("Identity permit not found")
 	ErrIdentityEmpty          = errors.New("Identity may not be empty")
 	ErrIdentityExists         = errors.New("Identity already exists")
-	// We should perhaps keep a consistent error, like ErrInvalidCredentials throught the app, as it can be a security risk returning InvalidPassword to a user that may be malicious
+	ErrAccountLocked          = errors.New("Account is locked")
+	// We should perhaps keep a consistent error, like ErrInvalidCredentials throughout the app, as it can be a security risk returning InvalidPassword to a user that may be malicious
 	ErrInvalidPassword      = errors.New("Invalid password")
 	ErrInvalidSessionToken  = errors.New("Invalid session token")
 	ErrInvalidPasswordToken = errors.New("Invalid password token")
@@ -345,9 +346,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
-	if config.UserStore.PasswordExpirySeconds > 0 {
-		userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
-	}
+	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, config.UserStore.MaxFailedLoginCount)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions

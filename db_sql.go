@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+
 	//"errors"
 	"fmt"
 	"strconv"
@@ -43,20 +44,28 @@ const (
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type sqlUserStoreDB struct {
-	db             *sql.DB
-	passwordExpiry time.Duration
+	db                  *sql.DB
+	passwordExpiry      time.Duration
+	maxFailedLoginCount int64
 }
 
-func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration) error {
+func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration, maxFailedLoginCount int64) error {
 	x.passwordExpiry = passwordExpiry
+	x.maxFailedLoginCount = maxFailedLoginCount
 	return nil
 }
 
 func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck AuthCheck) error {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
-	if err := row.Scan(&userId); err != nil {
+	var failedCount sql.NullInt64
+
+	row := x.db.QueryRow(`SELECT userid, failedlogincount FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	if err := row.Scan(&userId, &failedCount); err != nil {
 		return ErrIdentityAuthNotFound
+	}
+
+	if x.maxFailedLoginCount > 0 && failedCount.Int64 > x.maxFailedLoginCount {
+		return ErrAccountLocked
 	}
 
 	row = x.db.QueryRow(`SELECT password, updated FROM authuserpwd WHERE userid = $1`, userId)
@@ -67,6 +76,7 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 	}
 
 	if !verifyAuthausHash(password, dbHash) {
+		x.incrementFailedLogin(UserId(userId))
 		return ErrInvalidPassword
 	}
 
@@ -74,6 +84,20 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 		if lastUpdated.Add(x.passwordExpiry).Before(time.Now()) {
 			return ErrPasswordExpired
 		}
+	}
+	return x.resetFailedLoginCount(UserId(userId))
+}
+
+func (x *sqlUserStoreDB) incrementFailedLogin(userId UserId) error {
+	if _, err := x.db.Exec(`UPDATE authuserstore SET failedlogincount = COALESCE(failedlogincount, 0) + 1 WHERE userId = $1;`, userId); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (x *sqlUserStoreDB) resetFailedLoginCount(userId UserId) error {
+	if _, err := x.db.Exec(`UPDATE authuserstore SET failedlogincount =  0 WHERE userId = $1;`, userId); err != nil {
+		return err
 	}
 	return nil
 }
@@ -105,16 +129,14 @@ func (x *sqlUserStoreDB) setPasswordInternal(tx *sql.Tx, userId UserId, password
 	if err != nil {
 		return err
 	}
-
-	if update, eupdate := tx.Exec(`UPDATE authuserpwd SET password = $1, pwdtoken = NULL, updated = $2 WHERE userid = $3`, hash, time.Now().UTC(), userId); eupdate == nil {
-		if affected, _ := update.RowsAffected(); affected == 1 {
-			return nil
-		}
-		return ErrIdentityAuthNotFound
-
-	} else {
+	update, eupdate := tx.Exec(`UPDATE authuserpwd SET password = $1, pwdtoken = NULL, updated = $2 WHERE userid = $3`, hash, time.Now().UTC(), userId)
+	if eupdate != nil {
 		return eupdate
 	}
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		return ErrIdentityAuthNotFound
+	}
+	return x.resetFailedLoginCount(UserId(userId))
 }
 
 func (x *sqlUserStoreDB) ResetPasswordStart(userId UserId, expires time.Time) (string, error) {
@@ -418,7 +440,7 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
-	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
+	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, aus.failedlogincount FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
 	if getIdentitiesFlag&GetIdentitiesFlagDeleted == 0 {
 		sqlStatement += " WHERE aus.archived = false OR aus.archived IS NULL"
 	}
@@ -444,13 +466,14 @@ func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
 		passwordModifiedDate pq.NullTime
+		failedLoginCount     sql.NullInt64
 	}
 	for rows.Next() {
 		user := sqlUser{}
-		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate); err != nil {
+		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.failedLoginCount); err != nil {
 			return []AuthUser{}, err
 		}
-		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time})
+		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.failedLoginCount.Int64})
 	}
 	if rows.Err() != nil {
 		return []AuthUser{}, rows.Err()
@@ -467,11 +490,11 @@ func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
 }
 
 func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, aus.failedlogincount FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
 }
 
 func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, aus.failedlogincount FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
 }
 
 func getUser(row *sql.Row) (AuthUser, error) {
@@ -491,15 +514,16 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
 		passwordModifiedDate pq.NullTime
+		failedLoginCount     sql.NullInt64
 	}
 	user := sqlUser{}
-	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate); err != nil {
+	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.failedLoginCount); err != nil {
 		if strings.Index(err.Error(), "no rows in result set") == -1 {
 			return AuthUser{}, err
 		}
 		return AuthUser{}, ErrIdentityAuthNotFound
 	}
-	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time}, nil
+	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.failedLoginCount.Int64}, nil
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -895,6 +919,8 @@ func createMigrations() []migration.Migrator {
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
 		`,
+		// 11. Failed login Count
+		`ALTER TABLE authuserstore ADD COLUMN failedlogincount INT;`,
 	}
 
 	for _, src := range text {

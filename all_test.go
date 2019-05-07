@@ -1192,7 +1192,7 @@ func TestAuthSessionCacheEviction(t *testing.T) {
 	c.SetSessionCacheSize(cacheSize)
 	sessionSet := make(map[string]bool)
 	sessionList := make([]string, 0)
-	for i := 0; i < cacheSize*4; i += 1 {
+	for i := 0; i < cacheSize*4; i++ {
 		// We must have time between sessions, so that the internal date ordering of the
 		// session cache pruning function is the same as the order in which the sessions were added.
 		time.Sleep(50 * time.Microsecond)
