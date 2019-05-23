@@ -215,6 +215,7 @@ const (
 	AuditActionUpdated                        = "Updated"
 	AuditActionDeleted                        = "Deleted"
 	AuditActionResetPassword                  = "Reset Password"
+	AuditActionFailedLogin                    = "Failed Login"
 )
 
 type Auditor interface {
