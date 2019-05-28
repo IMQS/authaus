@@ -616,11 +616,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
 		}
 		user := imqsUser
-		// We trim the spaces around the Email, as we have found that a certain
-		// ldap user (WilburGS) has an email that ends with a space. This space
-		// mysteriously dissapears when the address of `user` is taken which
-		// causes the user to be updated everytime as the email will never match
-		user.Email = strings.TrimSpace(ldapUser.Email)
+		user.Email = ldapUser.Email
 		user.Username = ldapUser.Username
 		user.Firstname = ldapUser.Firstname
 		user.Lastname = ldapUser.Lastname
@@ -630,6 +626,10 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			user.Created = time.Now().UTC()
 			user.Modified = time.Now().UTC()
 
+			// WARNING: Weird compiler bug.
+			// We have found that a certain ldap user (WilburGS) has an email
+			// that ends with a space. This space mysteriously dissapears when
+			// the address of `user` is taken.
 			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
@@ -644,6 +644,11 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
 			user.Modified = time.Now().UTC()
+
+			// WARNING: Weird compiler bug.
+			// We have found that a certain ldap user (WilburGS) has an email
+			// that ends with a space. This space mysteriously dissapears when
+			// the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
 			} else {

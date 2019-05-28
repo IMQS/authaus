@@ -88,11 +88,13 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	}
 	ldapUsers := make([]AuthUser, len(sr.Entries))
 	for i, value := range sr.Entries {
-		username := getAttributeValue(*value, "sAMAccountName")
-		name := getAttributeValue(*value, "givenName")
-		surname := getAttributeValue(*value, "sn")
-		email := getAttributeValue(*value, "mail")
-		mobile := getAttributeValue(*value, "mobile")
+		// We trim the spaces as we have found that a certain ldap user
+		// (WilburGS) has an email that ends with a space.
+		username := strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
+		name := strings.TrimSpace(getAttributeValue(*value, "givenName"))
+		surname := strings.TrimSpace(getAttributeValue(*value, "sn"))
+		email := strings.TrimSpace(getAttributeValue(*value, "mail"))
+		mobile := strings.TrimSpace(getAttributeValue(*value, "mobile"))
 		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: name, Lastname: surname, Mobilenumber: mobile}
 	}
 	return ldapUsers, nil
