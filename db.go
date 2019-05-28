@@ -118,21 +118,21 @@ type SessionDB interface {
 }
 
 type AuthUser struct {
-	UserId               UserId       `json:"userid"`
+	UserId               UserId       `json:"userID"`
 	Email                string       `json:"email"`
-	Username             string       `json:"username"`
-	Firstname            string       `json:"firstname"`
-	Lastname             string       `json:"lastname"`
-	Mobilenumber         string       `json:"mobilenumber"`
-	Telephonenumber      string       `json:"telephonenumber`
+	Username             string       `json:"userName"`
+	Firstname            string       `json:"firstName"`
+	Lastname             string       `json:"lastName"`
+	Mobilenumber         string       `json:"mobileNumber"`
+	Telephonenumber      string       `json:"telephoneNumber`
 	Remarks              string       `json:"remarks"`
 	Created              time.Time    `json:"created"`
-	CreatedBy            UserId       `json:"createdby"`
+	CreatedBy            UserId       `json:"createdBy"`
 	Modified             time.Time    `json:"modified"`
-	ModifiedBy           UserId       `json:"modifiedby"`
+	ModifiedBy           UserId       `json:"modifiedBy"`
 	Type                 AuthUserType `json:"type"`
 	Archived             bool         `json:"archived"`
-	PasswordModifiedDate time.Time    `json:"passwordmodifieddate"`
+	PasswordModifiedDate time.Time    `json:"passwordModifiedDate"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
