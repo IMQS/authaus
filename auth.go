@@ -628,7 +628,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 			// WARNING: Weird compiler bug.
 			// We have found that a certain ldap user (WilburGS) has an email
-			// that ends with a space. This space mysteriously dissapears when
+			// that ends with a space. This space mysteriously disappears when
 			// the address of `user` is taken.
 			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
@@ -647,7 +647,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 			// WARNING: Weird compiler bug.
 			// We have found that a certain ldap user (WilburGS) has an email
-			// that ends with a space. This space mysteriously dissapears when
+			// that ends with a space. This space mysteriously disappears when
 			// the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
