@@ -581,6 +581,11 @@ func userInfoToAuditTrailJSON(user AuthUser) string {
 	return string(contextData)
 }
 
+func userInfoToJSON(user AuthUser) string {
+	userJSON, _ := json.Marshal(user)
+	return string(userJSON)
+}
+
 // We are reading users from LDAP/AD and merging them into the IMQS userstore
 func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
@@ -621,6 +626,10 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 			user.Created = time.Now().UTC()
 			user.Modified = time.Now().UTC()
 
+			// WARNING: Weird compiler bug.
+			// We have found that a certain ldap user (WilburGS) has an email
+			// that ends with a space. This space mysteriously disappears when
+			// the address of `user` is taken.
 			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
 				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
 			}
@@ -630,14 +639,24 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 				contextData := userInfoToAuditTrailJSON(user)
 				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
 			}
-		} else if foundWithEmail || !ldapUser.equals(imqsUser) {
+		} else if foundWithEmail || !user.equals(imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
 			user.Modified = time.Now().UTC()
+
+			// WARNING: Weird compiler bug.
+			// We have found that a certain ldap user (WilburGS) has an email
+			// that ends with a space. This space mysteriously disappears when
+			// the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
+			} else {
+				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
+				x.Log.Infof("old: %v", userInfoToJSON(imqsUser))
+				x.Log.Infof("new: %v", userInfoToJSON(user))
 			}
+
 			// Log to audit trail user updated
 			if x.Auditor != nil {
 				contextData := userInfoToAuditTrailJSON(user)
@@ -667,10 +686,11 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 }
 
 func (u AuthUser) equals(user AuthUser) bool {
-	if u.Email == user.Email && u.Firstname == user.Firstname && u.Lastname == user.Lastname && u.Mobilenumber == user.Mobilenumber && u.Username == user.Username {
-		return true
-	}
-	return false
+	return u.Email == user.Email &&
+		u.Firstname == user.Firstname &&
+		u.Lastname == user.Lastname &&
+		u.Mobilenumber == user.Mobilenumber &&
+		u.Username == user.Username
 }
 
 // Logout, which erases the session key
