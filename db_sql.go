@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
-	//"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -353,7 +352,6 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 }
 
 func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
-
 	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{user.UserId})
 	if err != nil {
 		return ErrIdentityExists
@@ -880,8 +878,8 @@ func createMigrations() []migration.Migrator {
 		`ALTER TABLE authuserstore ADD COLUMN authusertype SMALLINT default 0;`,
 
 		// 9. Additional data fields as well as fields to keep track of changes to users
-		`ALTER TABLE authuserstore 
-			ADD COLUMN phone VARCHAR, 
+		`ALTER TABLE authuserstore
+			ADD COLUMN phone VARCHAR,
 			ADD COLUMN remarks VARCHAR,
 			ADD COLUMN created TIMESTAMP,
 			ADD COLUMN createdby BIGINT,
@@ -889,9 +887,9 @@ func createMigrations() []migration.Migrator {
 			ADD COLUMN modifiedby BIGINT;`,
 
 		// 10. Archive passwords
-		`ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();	
+		`ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();
 		ALTER TABLE authuserpwd  ADD COLUMN created TIMESTAMP DEFAULT NOW();
-		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP DEFAULT NOW();	
+		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP DEFAULT NOW();
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
 		`,
