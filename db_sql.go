@@ -59,13 +59,18 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 	}
 
 	row = x.db.QueryRow(`SELECT password, updated FROM authuserpwd WHERE userid = $1`, userId)
-	dbHash := ""
+	var dbHash sql.NullString
 	var lastUpdated time.Time
 	if err := row.Scan(&dbHash, &lastUpdated); err != nil {
 		return ErrIdentityAuthNotFound
 	}
 
-	if !verifyAuthausHash(password, dbHash) {
+	pHash := ""
+	if dbHash.Valid {
+		pHash = dbHash.String
+	}
+
+	if !verifyAuthausHash(password, pHash) {
 		return ErrInvalidPassword
 	}
 
