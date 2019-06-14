@@ -65,6 +65,9 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 		return ErrIdentityAuthNotFound
 	}
 
+	// The following step was added when we found some passwords being null.
+	// This happens when an ldap user is "migrated" to an IMQS user as we store
+	// the password for an ldap user as nil.
 	pHash := ""
 	if dbHash.Valid {
 		pHash = dbHash.String
