@@ -59,13 +59,21 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 	}
 
 	row = x.db.QueryRow(`SELECT password, updated FROM authuserpwd WHERE userid = $1`, userId)
-	dbHash := ""
+	var dbHash sql.NullString
 	var lastUpdated time.Time
 	if err := row.Scan(&dbHash, &lastUpdated); err != nil {
 		return ErrIdentityAuthNotFound
 	}
 
-	if !verifyAuthausHash(password, dbHash) {
+	// The following step was added when we found some passwords being null.
+	// This happens when an ldap user is "migrated" to an IMQS user as we store
+	// the password for an ldap user as nil.
+	pHash := ""
+	if dbHash.Valid {
+		pHash = dbHash.String
+	}
+
+	if !verifyAuthausHash(password, pHash) {
 		return ErrInvalidPassword
 	}
 
