@@ -892,7 +892,7 @@ func (x *Central) UnlockAccount(userId UserId) error {
 		return eUser
 	}
 	x.Stats.ResetInvalidPasswordHistory(x.Log, user.Username, "")
-	x.Log.Infof("Unlocked user (%v) %v", userId)
+	x.Log.Infof("Unlocked user (%v)", userId)
 	return nil
 }
 
