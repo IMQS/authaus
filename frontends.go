@@ -82,7 +82,7 @@ func HttpHandlerLogin(config *ConfigHTTP, central *Central, w http.ResponseWrite
 		HttpSendTxt(w, http.StatusBadRequest, ErrHttpBasicAuth.Error())
 		return
 	}
-	if sessionkey, token, err := central.Login(identity, password); err != nil {
+	if sessionkey, token, err := central.Login(identity, password, ""); err != nil {
 		HttpSendTxt(w, http.StatusForbidden, err.Error())
 	} else {
 		cookie := &http.Cookie{
@@ -123,7 +123,7 @@ func RunHttp(config *ConfigHTTP, central *Central) error {
 	http.HandleFunc("/logout", makehandler(HttpHandlerLogout))
 
 	fmt.Printf("Trying to listen on %v:%v\n", config.Bind, config.Port)
-	if err := http.ListenAndServe(config.Bind+":"+ config.Port, nil); err != nil {
+	if err := http.ListenAndServe(config.Bind+":"+config.Port, nil); err != nil {
 		return err
 	}
 

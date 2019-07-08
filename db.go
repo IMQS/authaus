@@ -82,6 +82,8 @@ type UserStore interface {
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
 	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetUserFromIdentity(identity string) (AuthUser, error)                 // Gets the user object from the identity supplied
+	LockAccount(userId UserId) error                                       // Locks an account
+	UnlockAccount(userId UserId) error                                     // Unlocks an account
 	GetUserFromUserId(userId UserId) (AuthUser, error)                     // Gets the user object from the userId supplied
 	GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) // Retrieve a list of all identities
 	Close()                                                                // Typically used to close a database handle
@@ -133,6 +135,7 @@ type AuthUser struct {
 	Type                 AuthUserType `json:"type"`
 	Archived             bool         `json:"archived"`
 	PasswordModifiedDate time.Time    `json:"passwordModifiedDate"`
+	AccountLocked        bool         `json:"accountLocked"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -176,6 +179,7 @@ type dummyUser struct {
 	archived             bool
 	authUserType         AuthUserType
 	passwordModifiedDate time.Time
+	accountLocked        bool
 }
 
 func newDummyUserStore() *dummyUserStore {
@@ -196,6 +200,9 @@ func (x *dummyUserStore) Authenticate(identity, password string, authTypeCheck A
 	user := x.getDummyUser(identity)
 	if user == nil {
 		return ErrIdentityAuthNotFound
+	}
+	if user.accountLocked {
+		return ErrAccountLocked
 	}
 	if user.password != password {
 		return ErrInvalidPassword
@@ -262,7 +269,7 @@ func (x *dummyUserStore) CreateIdentity(user *AuthUser, password string) (UserId
 	userD = x.getDummyUser(user.Email)
 	if userD == nil {
 		userId := x.generateUserId()
-		x.users[userId] = &dummyUser{userId, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, password, "", false, user.Type, user.PasswordModifiedDate}
+		x.users[userId] = &dummyUser{userId, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, password, "", false, user.Type, user.PasswordModifiedDate, user.AccountLocked}
 		return userId, nil
 	} else {
 		return NullUserId, ErrIdentityExists
@@ -330,9 +337,27 @@ func (x *dummyUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		if (getIdentitiesFlag&GetIdentitiesFlagDeleted == 0) && v.archived {
 			continue
 		}
-		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, v.passwordModifiedDate})
+		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, v.passwordModifiedDate, v.accountLocked})
 	}
 	return list, nil
+}
+
+func (x *dummyUserStore) LockAccount(userId UserId) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.users[userId]; exists && !user.archived {
+		user.accountLocked = true
+	}
+	return nil
+}
+
+func (x *dummyUserStore) UnlockAccount(userId UserId) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.users[userId]; exists && !user.archived {
+		user.accountLocked = false
+	}
+	return nil
 }
 
 func (x *dummyUserStore) GetUserFromIdentity(identity string) (AuthUser, error) {
@@ -341,9 +366,9 @@ func (x *dummyUserStore) GetUserFromIdentity(identity string) (AuthUser, error) 
 
 	for _, v := range x.users {
 		if CanonicalizeIdentity(v.email) == CanonicalizeIdentity(identity) && v.archived == false {
-			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate}, nil
+			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked}, nil
 		} else if CanonicalizeIdentity(v.username) == CanonicalizeIdentity(identity) && v.archived == false {
-			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate}, nil
+			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked}, nil
 		}
 	}
 
@@ -566,6 +591,14 @@ func (x *sanitizingUserStore) GetUserFromIdentity(identity string) (AuthUser, er
 
 func (x *sanitizingUserStore) GetUserFromUserId(userId UserId) (AuthUser, error) {
 	return x.backend.GetUserFromUserId(userId)
+}
+
+func (x *sanitizingUserStore) LockAccount(userId UserId) error {
+	return x.backend.LockAccount(userId)
+}
+
+func (x *sanitizingUserStore) UnlockAccount(userId UserId) error {
+	return x.backend.UnlockAccount(userId)
 }
 
 func (x *sanitizingUserStore) Close() {

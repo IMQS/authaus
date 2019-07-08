@@ -180,14 +180,16 @@ type ConfigUserStoreDB struct {
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
-	Log             ConfigLog
-	HTTP            ConfigHTTP
-	PermitDB        ConfigPermitDB
-	SessionDB       ConfigSessionDB
-	RoleGroupDB     ConfigRoleGroupDB
-	LDAP            ConfigLDAP
-	UserStore       ConfigUserStoreDB
-	AuditServiceUrl string
+	Log                    ConfigLog
+	HTTP                   ConfigHTTP
+	PermitDB               ConfigPermitDB
+	SessionDB              ConfigSessionDB
+	RoleGroupDB            ConfigRoleGroupDB
+	LDAP                   ConfigLDAP
+	UserStore              ConfigUserStoreDB
+	AuditServiceUrl        string
+	EnableAccountLocking   bool
+	MaxFailedLoginAttempts int
 }
 
 func (x *Config) Reset() {

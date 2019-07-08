@@ -58,11 +58,14 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 		return ErrIdentityAuthNotFound
 	}
 
-	row = x.db.QueryRow(`SELECT password, updated FROM authuserpwd WHERE userid = $1`, userId)
+	row = x.db.QueryRow(`SELECT password, updated, coalesce(accountlocked, false) FROM authuserpwd WHERE userid = $1`, userId)
 	var dbHash sql.NullString
 	var lastUpdated time.Time
-	if err := row.Scan(&dbHash, &lastUpdated); err != nil {
+	var accountLocked bool
+	if err := row.Scan(&dbHash, &lastUpdated, &accountLocked); err != nil {
 		return ErrIdentityAuthNotFound
+	} else if accountLocked {
+		return ErrAccountLocked
 	}
 
 	// The following step was added when we found some passwords being null.
@@ -304,6 +307,20 @@ func identityFromRow(row *sql.Row) error {
 	return ErrIdentityExists
 }
 
+func (x *sqlUserStoreDB) LockAccount(userId UserId) error {
+	if _, err := x.db.Exec(`UPDATE authuserpwd SET accountlocked = true WHERE userId = $1;`, userId); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (x *sqlUserStoreDB) UnlockAccount(userId UserId) error {
+	if _, err := x.db.Exec(`UPDATE authuserpwd SET accountlocked = false WHERE userId = $1;`, userId); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId, error) {
 	hash, ehash := computeAuthausHash(password)
 	if ehash != nil {
@@ -424,7 +441,7 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
-	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
+	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
 	if getIdentitiesFlag&GetIdentitiesFlagDeleted == 0 {
 		sqlStatement += " WHERE aus.archived = false OR aus.archived IS NULL"
 	}
@@ -450,13 +467,14 @@ func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
 		passwordModifiedDate pq.NullTime
+		accountLocked        sql.NullBool
 	}
 	for rows.Next() {
 		user := sqlUser{}
-		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate); err != nil {
+		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.accountLocked); err != nil {
 			return []AuthUser{}, err
 		}
-		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time})
+		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.accountLocked.Bool})
 	}
 	if rows.Err() != nil {
 		return []AuthUser{}, rows.Err()
@@ -473,11 +491,11 @@ func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
 }
 
 func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
 }
 
 func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
 }
 
 func getUser(row *sql.Row) (AuthUser, error) {
@@ -497,15 +515,16 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
 		passwordModifiedDate pq.NullTime
+		accountLocked        sql.NullBool
 	}
 	user := sqlUser{}
-	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate); err != nil {
+	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.accountLocked); err != nil {
 		if strings.Index(err.Error(), "no rows in result set") == -1 {
 			return AuthUser{}, err
 		}
 		return AuthUser{}, ErrIdentityAuthNotFound
 	}
-	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time}, nil
+	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.accountLocked.Bool}, nil
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -901,6 +920,8 @@ func createMigrations() []migration.Migrator {
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
 		`,
+		// 11. Account lock
+		`ALTER TABLE authuserpwd ADD COLUMN accountlocked BOOLEAN DEFAULT FALSE;`,
 	}
 
 	for _, src := range text {

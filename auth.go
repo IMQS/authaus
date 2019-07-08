@@ -42,6 +42,7 @@ var (
 	ErrIdentityExists         = errors.New("Identity already exists")
 	// We should perhaps keep a consistent error, like ErrInvalidCredentials throught the app, as it can be a security risk returning InvalidPassword to a user that may be malicious
 	ErrInvalidPassword      = errors.New("Invalid password")
+	ErrAccountLocked        = errors.New("Account locked")
 	ErrInvalidSessionToken  = errors.New("Invalid session token")
 	ErrInvalidPasswordToken = errors.New("Invalid password token")
 	ErrPasswordTokenExpired = errors.New("Password token has expired")
@@ -159,13 +160,15 @@ func verifyPasswordResetToken(candidateToken, truthToken string) error {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type CentralStats struct {
-	InvalidSessionKeys uint64
-	ExpiredSessionKeys uint64
-	InvalidPasswords   uint64
-	EmptyIdentities    uint64
-	GoodOnceOffAuth    uint64
-	GoodLogin          uint64
-	Logout             uint64
+	InvalidSessionKeys    uint64
+	ExpiredSessionKeys    uint64
+	InvalidPasswords      uint64
+	EmptyIdentities       uint64
+	GoodOnceOffAuth       uint64
+	GoodLogin             uint64
+	Logout                uint64
+	UserLoginAttempts     map[string]uint64
+	userLoginAttemptsLock sync.Mutex
 }
 
 func isPowerOf2(x uint64) bool {
@@ -176,6 +179,26 @@ func (x *CentralStats) IncrementAndLog(name string, val *uint64, logger *log.Log
 	n := atomic.AddUint64(val, 1)
 	if isPowerOf2(n) || (n&255) == 0 {
 		logger.Infof("%v %v", n, name)
+	}
+}
+
+func (x *CentralStats) IncrementInvalidPasswordHistory(logger *log.Logger, username string, clientIPAddress string) {
+	x.userLoginAttemptsLock.Lock()
+	defer x.userLoginAttemptsLock.Unlock()
+	x.UserLoginAttempts[username]++
+	count := x.UserLoginAttempts[username]
+	if count < 5 || isPowerOf2(count) {
+		logger.Infof("%v has %v invalid password attempts from %v", username, count, clientIPAddress)
+	}
+}
+
+func (x *CentralStats) ResetInvalidPasswordHistory(logger *log.Logger, username string, clientIPAddress string) {
+	x.userLoginAttemptsLock.Lock()
+	defer x.userLoginAttemptsLock.Unlock()
+	oldCount := x.UserLoginAttempts[username]
+	if oldCount != 0 {
+		x.UserLoginAttempts[username] = 0
+		logger.Infof("Number of failed log in attempts for %v have been reset, (%v)", username, clientIPAddress)
 	}
 }
 
@@ -216,10 +239,20 @@ const (
 	AuditActionDeleted                        = "Deleted"
 	AuditActionResetPassword                  = "Reset Password"
 	AuditActionFailedLogin                    = "Failed Login"
+	AuditActionUnlocked                       = "Unlocked"
+	AuditActionLocked                         = "Locked"
 )
 
 type Auditor interface {
 	AuditUserAction(identity, item, context string, auditActionType AuditActionType)
+}
+
+// LockingPolicy controls on a per-user basis, whether that user's account is automatically
+// locked, after a set number of failed login attempts. It was created to disable the locking
+// of special accounts, such as administrators or internal infrastructure accounts.
+// This only applies if EnableAccountLocking is true
+type LockingPolicy interface {
+	IsLockable(identity string) (bool, error)
 }
 
 /*
@@ -237,12 +270,16 @@ type Central struct {
 	sessionDB              SessionDB
 	roleGroupDB            RoleGroupDB
 	Auditor                Auditor
+	LockingPolicy          LockingPolicy
 	renameLock             sync.Mutex //
 	Log                    *log.Logger
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
 	DisablePasswordReuse   bool
 	PasswordExpiresAfter   time.Duration
+	MaxFailedLoginAttempts int // only applies if EnableAccountLocking is true
+	EnableAccountLocking   bool
+	loginDelayFactor       uint64
 	userStoreMergeTicker   *time.Ticker
 	mergeCount             int
 	ldapUsed               bool
@@ -271,6 +308,7 @@ func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitD
 	}
 	c.MaxActiveSessions = 0
 	c.NewSessionExpiresAfter = time.Duration(defaultSessionExpirySeconds) * time.Second
+	c.Stats.UserLoginAttempts = make(map[string]uint64)
 	c.Log = log.New(resolveLogfile(logfile))
 	c.Log.Infof("Authaus successfully started up\n")
 
@@ -345,9 +383,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 	}
 
-	if config.UserStore.PasswordExpirySeconds > 0 {
-		userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
-	}
+	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
@@ -356,6 +392,12 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 	if config.UserStore.DisablePasswordReuse {
 		c.DisablePasswordReuse = config.UserStore.DisablePasswordReuse
+	}
+	if config.EnableAccountLocking {
+		c.EnableAccountLocking = config.EnableAccountLocking
+	}
+	if config.MaxFailedLoginAttempts > 0 {
+		c.MaxFailedLoginAttempts = config.MaxFailedLoginAttempts
 	}
 	if config.UserStore.PasswordExpirySeconds > 0 {
 		c.PasswordExpiresAfter = time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second
@@ -367,6 +409,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 		c.StartMergeTicker()
 	}
+
+	c.loginDelayFactor = 500 // add 500 ms per invalid login attempt
+
 	return c, nil
 }
 
@@ -410,7 +455,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 		x.Stats.IncrementEmptyIdentities(x.Log)
 		return nil, ErrIdentityEmpty
 	}
-	user, eAuth := x.authenticate(identity, password)
+	user, eAuth := x.authenticate(identity, password, "")
 	if eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(user.UserId); ePermit == nil {
 			t := &Token{
@@ -436,12 +481,10 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 // Create a new session. Returns a session key, which can be used in future to retrieve the token.
 // The internal session expiry is controlled with the member NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
-func (x *Central) Login(username, password string) (sessionkey string, token *Token, err error) {
-	user, authErr := x.authenticate(username, password)
+func (x *Central) Login(username, password string, clientIPAddress string) (sessionkey string, token *Token, err error) {
+	user, authErr := x.authenticate(username, password, clientIPAddress)
 	if authErr != nil {
 		err = authErr
-		x.Stats.IncrementInvalidPasswords(x.Log)
-
 		x.Log.Infof("Login Authentication failed (%v) (%v)", username, err)
 		return sessionkey, token, err
 	}
@@ -485,13 +528,14 @@ func (x *Central) Login(username, password string) (sessionkey string, token *To
 		return sessionkey, token, err
 	}
 	x.Stats.IncrementGoodLogin(x.Log)
+	x.Stats.ResetInvalidPasswordHistory(x.Log, username, clientIPAddress)
 	x.Log.Infof("Login successful (%v)", user.UserId)
 	return sessionkey, token, nil
 }
 
 // Authenticate the identity and password.
 // Returns the userId of the user account, the identity of the user account, and an error if one occurred, else nil.
-func (x *Central) authenticate(identity, password string) (AuthUser, error) {
+func (x *Central) authenticate(identity, password string, clientIPAddress string) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
 		return user, ErrIdentityAuthNotFound
@@ -503,21 +547,62 @@ func (x *Central) authenticate(identity, password string) (AuthUser, error) {
 		authTypeCheck = AuthCheckDefault
 	}
 
+	x.Stats.userLoginAttemptsLock.Lock()
+	invalidPasswords := x.Stats.UserLoginAttempts[identity]
+	x.Stats.userLoginAttemptsLock.Unlock()
+
+	// Delay login with every failed log in attempt, cap the delay at 60 seconds
+	if invalidPasswords > 0 {
+		var loginDelay = x.loginDelayFactor * invalidPasswords
+		if loginDelay > 60000 {
+			loginDelay = 60000
+		}
+		time.Sleep(time.Duration(loginDelay) * time.Millisecond)
+	}
+
+	var authErr error
+
 	// We are consistent here with the behaviour of sqlSessionDB.Read, which prioritizes the LDAP identity
 	// over the email address, as the return value of "identity".
 	if user.Type == UserTypeLDAP && x.ldap != nil {
 		err = x.ldap.Authenticate(user.Username, password)
 		// We want to return Invalid Password or IdentityAuthNotFound, not Invalid Credentials
 		// as LDAP doesnt differentiate between the 2
+		authErr = err
 		if err == ErrInvalidCredentials {
 			// The user already exists on our system, which means it exists on LDAP due to our Merge, with
 			// that knowledge we can say the password is invalid
-			return user, ErrInvalidPassword
+			authErr = ErrInvalidPassword
 		}
-		return user, err
 	} else {
-		return user, x.userStore.Authenticate(identity, password, authTypeCheck)
+		authErr = x.userStore.Authenticate(identity, password, authTypeCheck)
 	}
+
+	if authErr == ErrInvalidPassword {
+		username := user.Username
+		x.Stats.IncrementInvalidPasswords(x.Log)
+		x.Stats.IncrementInvalidPasswordHistory(x.Log, username, clientIPAddress)
+		if x.EnableAccountLocking {
+			if isLockable, lockabilityErr := x.LockingPolicy.IsLockable(identity); lockabilityErr == nil {
+				x.Stats.userLoginAttemptsLock.Lock()
+				invalidPasswords = x.Stats.UserLoginAttempts[username]
+				x.Stats.userLoginAttemptsLock.Unlock()
+				if int(invalidPasswords) >= x.MaxFailedLoginAttempts && isLockable {
+					if lockErr := x.userStore.LockAccount(user.UserId); lockErr == nil {
+						contextData := userInfoToAuditTrailJSON(user)
+						x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionLocked)
+						authErr = ErrAccountLocked
+					} else {
+						authErr = lockErr
+					}
+				}
+
+			} else {
+				authErr = lockabilityErr
+			}
+		}
+	}
+	return user, authErr
 }
 
 func (x *Central) AuthenticateUser(identity, password string, authTypeCheck AuthCheck) error {
@@ -791,6 +876,23 @@ func (x *Central) UpdateIdentity(user *AuthUser) error {
 	}
 
 	x.Log.Infof("Update Identity successful (%v)", user.UserId)
+	return nil
+}
+
+// Unlock user in the AuthUserStore.
+func (x *Central) UnlockAccount(userId UserId) error {
+	e := x.userStore.UnlockAccount(userId)
+	if e != nil {
+		x.Log.Warnf("Failed to unlock user (%v) (%v)", userId, e)
+		return e
+	}
+
+	user, eUser := x.GetUserFromUserId(userId)
+	if eUser != nil {
+		return eUser
+	}
+	x.Stats.ResetInvalidPasswordHistory(x.Log, user.Username, "")
+	x.Log.Infof("Unlocked user (%v) %v", userId)
 	return nil
 }
 
