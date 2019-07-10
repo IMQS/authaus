@@ -589,7 +589,7 @@ func (x *Central) authenticate(identity, password string, clientIPAddress string
 				x.Stats.userLoginAttemptsLock.Unlock()
 				if int(invalidPasswords) >= x.MaxFailedLoginAttempts && isLockable {
 					if lockErr := x.userStore.LockAccount(user.UserId); lockErr == nil {
-						contextData := userInfoToAuditTrailJSON(user)
+						contextData := userInfoToAuditTrailJSON(user, clientIPAddress)
 						x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionLocked)
 						authErr = ErrAccountLocked
 					} else {
@@ -651,16 +651,20 @@ func (x *Central) MergeTick() {
 	}
 }
 
-func userInfoToAuditTrailJSON(user AuthUser) string {
+func userInfoToAuditTrailJSON(user AuthUser, clientIPAddress string) string {
 	type AuditDetail struct {
 		Service  string `json:"service"`
 		Username string `json:"username"`
 		UserId   int64  `json:"userid"`
+		Email    string `json:"email"`
+		Origin   string `json:"origin"`
 	}
 	auditDetail := AuditDetail{
 		Service:  "auth",
 		Username: user.Username,
 		UserId:   int64(user.UserId),
+		Email:    user.Email,
+		Origin:   clientIPAddress,
 	}
 	contextData, _ := json.Marshal(auditDetail)
 	return string(contextData)
@@ -721,7 +725,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 			// Log to audit trail user created
 			if x.Auditor != nil {
-				contextData := userInfoToAuditTrailJSON(user)
+				contextData := userInfoToAuditTrailJSON(user, "")
 				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
 			}
 		} else if foundWithEmail || !user.equals(imqsUser) {
@@ -744,7 +748,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 			// Log to audit trail user updated
 			if x.Auditor != nil {
-				contextData := userInfoToAuditTrailJSON(user)
+				contextData := userInfoToAuditTrailJSON(user, "")
 				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionUpdated)
 			}
 		}
@@ -762,7 +766,7 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 				// Log to audit trail user deleted
 				if x.Auditor != nil {
-					contextData := userInfoToAuditTrailJSON(imqsUser)
+					contextData := userInfoToAuditTrailJSON(imqsUser, "")
 					x.Auditor.AuditUserAction(imqsUser.Username, "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
 				}
 			}
