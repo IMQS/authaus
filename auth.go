@@ -42,7 +42,7 @@ var (
 	ErrIdentityExists         = errors.New("Identity already exists")
 	// We should perhaps keep a consistent error, like ErrInvalidCredentials throught the app, as it can be a security risk returning InvalidPassword to a user that may be malicious
 	ErrInvalidPassword      = errors.New("Invalid password")
-	ErrAccountLocked        = errors.New("Account locked")
+	ErrAccountLocked        = errors.New("Account locked. Please contact your administrator")
 	ErrInvalidSessionToken  = errors.New("Invalid session token")
 	ErrInvalidPasswordToken = errors.New("Invalid password token")
 	ErrPasswordTokenExpired = errors.New("Password token has expired")
@@ -239,8 +239,8 @@ const (
 	AuditActionDeleted                        = "Deleted"
 	AuditActionResetPassword                  = "Reset Password"
 	AuditActionFailedLogin                    = "Failed Login"
-	AuditActionUnlocked                       = "Unlocked"
-	AuditActionLocked                         = "Locked"
+	AuditActionUnlocked                       = "User Account Unlocked"
+	AuditActionLocked                         = "User Account Locked"
 )
 
 type Auditor interface {
