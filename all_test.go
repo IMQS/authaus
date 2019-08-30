@@ -3,7 +3,9 @@ package authaus
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"flag"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,6 +41,12 @@ I'm not sure that testing without the race detector adds any value.
 
 var backend_postgres = flag.Bool("backend_postgres", false, "Run tests against Postgres backend")
 var backend_ldap = flag.Bool("backend_ldap", false, "Run tests against LDAP backend")
+var ldap_system_user = flag.String("ldap_system_user", "testSysUser", "The user that we use to authenticate against the LDAP system, to pull all the available identities in the LDAP store")
+var ldap_system_pwd = flag.String("ldap_system_pwd", "testSysUserPwd", "Password of ldap_system_user")
+var ldap_dummy_user = flag.String("ldap_dummy_user", "testDummyUser", "Dummy user inside the LDAP system that we will attempt to login as")
+var ldap_dummy_pwd = flag.String("ldap_dummy_pwd", "testDummyUserPwd", "Password of ldap_dummy_user")
+var ldap_domain = flag.String("ldap_domain", "", "Domain (eg imqs.local)")
+var ldap_controller_host = flag.String("ldap_controller_host", "", "Domain controller hostname (defaults to ldap_domain)")
 
 // These are hard-coded identities for unit test predictability
 var joeEmail = "joe@email.test"
@@ -46,16 +54,11 @@ var jackEmail = "jack@email.test"
 var samEmail = "Sam@email.test"
 var janeEmail = "Jane@email.test"
 var iHaveNoPermitIdentity = "iHaveNoPermit"
-var testLdapIdentity = "TestLdapUser"
-var imqsLdapIdentity = "LDAP"
 
-// These are hard-coded passwords for unit test predictability
 var joePwd = "1234abcd"
 var jackPwd = "abcd1234"
 var SamPwd = "12341234"
 var iHaveNoPermitPwd = "1234wxyz"
-var testLdapPwd = "TestLdapUser"
-var imqsLdapPwd = "TestLDAP4IMQS"
 
 // These hard-coded UserId values are predictable because we always drop & recreate the postgres backend when running
 // tests, so we know that our IDs always start at 1
@@ -67,7 +70,7 @@ var iHaveNoPermit UserId = 4
 var janeUserId UserId = 5
 
 var notFoundUserId UserId = 999
-var ldapTest *dummyLdap
+var dummyLdapDB *dummyLdap
 
 var conx_postgres = DBConnection{
 	Driver:   "postgres",
@@ -79,17 +82,37 @@ var conx_postgres = DBConnection{
 	SSL:      false,
 }
 
-var conx_ldap = ConfigLDAP{
-	Encryption:       "",
-	LdapDomain:       "imqs.local",
-	LdapHost:         "imqs.local",
-	LdapPassword:     imqsLdapPwd,
-	LdapUsername:     (imqsLdapIdentity + "@imqs.local"),
-	LdapPort:         389,
-	LdapTickerTime:   5,
-	BaseDN:           "dc=imqs,dc=local",
-	SysAdminEmail:    "joeAdmin@example.com",
-	LdapSearchFilter: "(&(objectCategory=person)(objectClass=user))",
+func makeLDAPConfig() (*ConfigLDAP, error) {
+	if *ldap_system_user == "" ||
+		*ldap_system_pwd == "" ||
+		*ldap_dummy_user == "" ||
+		*ldap_dummy_pwd == "" ||
+		*ldap_domain == "" {
+		return nil, errors.New("You must define ldap_system_user, ldap_system_pwd, ldap_dummy_user, ldap_dummy_pwd, ldap_domain")
+	}
+
+	controllerHost := *ldap_controller_host
+	if controllerHost == "" {
+		controllerHost = *ldap_domain
+	}
+
+	domainParts := strings.Split(*ldap_domain, ".")
+	for i := range domainParts {
+		domainParts[i] = fmt.Sprintf("dc=%v", domainParts[i])
+	}
+
+	return &ConfigLDAP{
+		Encryption:       "",
+		LdapDomain:       *ldap_domain,
+		LdapHost:         controllerHost,
+		LdapUsername:     (*ldap_system_user + "@" + *ldap_domain),
+		LdapPassword:     *ldap_system_pwd,
+		LdapPort:         389,
+		LdapTickerTime:   5,
+		BaseDN:           strings.Join(domainParts, ","), // eg "dc=imqs,dc=local", when domain = "imqs.local"
+		SysAdminEmail:    "joeAdmin@example.com",
+		LdapSearchFilter: "(&(objectCategory=person)(objectClass=user))",
+	}, nil
 }
 
 func isBackendLdapTest() bool {
@@ -260,25 +283,31 @@ func setup(t *testing.T) *Central {
 	return central
 }
 
-func setupLdap(t *testing.T) *Central {
+func setupLdap(t *testing.T) (*Central, *ConfigLDAP) {
 	central := getCentral(t)
+	var cfg *ConfigLDAP
+	var err error
 
 	if isBackendLdapTest() {
-		central.ldap = NewAuthenticator_LDAP(&conx_ldap)
+		cfg, err = makeLDAPConfig()
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		central.ldap = NewAuthenticator_LDAP(cfg)
 		central.MergeTick()
 
 		// Setup permissions
-		user, err := central.userStore.GetUserFromIdentity(imqsLdapIdentity)
+		user, err := central.userStore.GetUserFromIdentity(*ldap_system_user)
 		if err != nil {
 			t.Errorf("Get userid for set permit failed: %v", err)
 		}
 		permit := setupPermit()
 		central.permitDB.SetPermit(user.UserId, &permit)
 	} else {
-		ldapTest = newDummyLdap()
-		central.ldap = ldapTest
+		dummyLdapDB = newDummyLdap()
+		central.ldap = dummyLdapDB
 
-		ldapTest.AddLdapUser(imqsLdapIdentity, imqsLdapPwd, "joe@gmail.com", "Firstname", "Lastname", "Mobilenumber")
+		dummyLdapDB.AddLdapUser(*ldap_system_user, *ldap_system_pwd, "joe@gmail.com", "Firstname", "Lastname", "Mobilenumber")
 		central.MergeTick()
 
 		// Setup permissions
@@ -286,7 +315,7 @@ func setupLdap(t *testing.T) *Central {
 		central.permitDB.SetPermit(imqsLdapUserId, &permit)
 	}
 
-	return central
+	return central, cfg
 }
 
 func Teardown(central *Central) {
@@ -337,23 +366,22 @@ func (x Central) AuditUserAction(identity, item, context string, auditActionType
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Integrated LDAP Tests
+// LDAP Tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func TestIntegratedLdapAuthenticateFailure(t *testing.T) {
-	t.Log("Testing ldap logging in with anonymous bind")
-	c := setupLdap(t)
+func TestLdapAuthenticateFailure(t *testing.T) {
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
-	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
+	user, err := c.GetUserFromIdentity(*ldap_system_user)
 	if err != nil {
-		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", *ldap_system_user)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
-	if _, _, err := c.Login(imqsLdapIdentity, "invalidpassword", ""); err != nil {
+	if _, _, err := c.Login(*ldap_system_user, "invalidpassword", ""); err != nil {
 		if !strings.Contains(err.Error(), ErrInvalidPassword.Error()) {
 			t.Fatalf("Login should have failed with invalid password, but error was: %v", err)
 		}
@@ -367,21 +395,20 @@ func TestIntegratedLdapAuthenticateFailure(t *testing.T) {
 }
 
 // We do not allow anonymous binds through Login()
-func TestIntegratedLdapLoginWithAnonymousBind(t *testing.T) {
-	t.Log("Testing ldap logging in with anonymous bind")
-	c := setupLdap(t)
+func TestLdapLoginWithAnonymousBind(t *testing.T) {
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
-	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
+	user, err := c.GetUserFromIdentity(*ldap_system_user)
 	if err != nil {
-		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", *ldap_system_user)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
 	// Note, we are logging in with no password
-	if _, _, err := c.Login(imqsLdapIdentity, "", ""); err != nil {
+	if _, _, err := c.Login(*ldap_system_user, "", ""); err != nil {
 		if !strings.Contains(err.Error(), ErrInvalidPassword.Error()) {
 			t.Fatalf("Login should have failed with invalid password, but error was: %v", err)
 		}
@@ -389,44 +416,48 @@ func TestIntegratedLdapLoginWithAnonymousBind(t *testing.T) {
 }
 
 // This test makes sure that after a connection recovery, all users do not get deleted by merge.
+//
+// [I think the following comment describes the original bug that this test was built to prevent again]
+//
 // The last part of the merge deletes users that are in the Imqsauth DB, and not on LDAP. If the connection fails,
 // the LDAP array will contain nothing, and compare IMQS users with an empty array, deleting all LDAP users
 // from the Imqsauth DB.
-func TestIntegratedLdapConnectionRecovery(t *testing.T) {
-	t.Log("Testing ldap connection recovery")
-	c := setupLdap(t)
+func TestLdapConnectionRecovery(t *testing.T) {
+	if !*backend_ldap {
+		return
+	}
+	c, cfg := setupLdap(t)
 	defer Teardown(c)
 
-	user, err := c.GetUserFromIdentity(imqsLdapIdentity)
+	user, err := c.GetUserFromIdentity(*ldap_system_user)
 	if err != nil {
-		t.Errorf("An unexpected error occured getting userid for identity: %v", imqsLdapIdentity)
+		t.Errorf("An unexpected error occured getting userid for identity: %v", *ldap_system_user)
 	}
 
 	joePermit := setupPermit()
 	c.permitDB.SetPermit(user.UserId, &joePermit)
 
-	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd, ""); err != nil {
+	if _, _, err := c.Login(*ldap_system_user, *ldap_system_pwd, ""); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	// Force connection to LDAP to fail
-	host := conx_ldap.LdapHost
-	conx_ldap.LdapHost = "invalid.host"
+	host := cfg.LdapHost
+	cfg.LdapHost = "invalid.host"
 	c.MergeTick()
 
-	conx_ldap.LdapHost = host
+	cfg.LdapHost = host
 	c.MergeTick()
 
-	if _, _, err := c.Login(imqsLdapIdentity, imqsLdapPwd, ""); err != nil {
+	if _, _, err := c.Login(*ldap_system_user, *ldap_system_pwd, ""); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 }
 
-func TestIntegratedLdapMergeLoad(t *testing.T) {
-	t.Log("Testing ldap merge load")
-	c := setupLdap(t)
+func TestLdapMergeLoad(t *testing.T) {
+	c, _ := setupLdap(t)
 	defer Teardown(c)
-	c.ldapMergeTickerSeconds = (1 * time.Millisecond)
+	c.ldapMergeTicker = 1 * time.Millisecond
 	err := c.StartMergeTicker()
 	if err != nil {
 		t.Errorf("Merge Ticker failed to start %v", err)
@@ -438,7 +469,7 @@ func TestIntegratedLdapMergeLoad(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				_, _, err = c.Login(imqsLdapIdentity, imqsLdapPwd, "")
+				_, _, err = c.Login(*ldap_system_user, *ldap_system_pwd, "")
 				if err != nil {
 					t.Errorf("Login failed %v", err)
 				}
@@ -452,56 +483,58 @@ func TestIntegratedLdapMergeLoad(t *testing.T) {
 			}
 		}
 	}()
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 	quit <- true
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// LDAP Unit Tests
+// LDAP Unit Tests that use a dummy LDAP store (ie does not try to touch a real LDAP controller)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func TestAuthLdapMerge(t *testing.T) {
-	t.Log("Testing ldap merge")
-	c := setupLdap(t)
+func TestLdapMerge(t *testing.T) {
+	if isBackendLdapTest() {
+		return
+	}
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
 	// Test merge, when adding and removing from ldap
-	ldapTest.AddLdapUser(testLdapIdentity, testLdapPwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
+	dummyLdapDB.AddLdapUser(*ldap_dummy_user, *ldap_dummy_pwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
 	c.MergeTick()
 
-	testLdapUser, err := c.GetUserFromIdentity(testLdapIdentity)
+	testLdapUser, err := c.GetUserFromIdentity(*ldap_dummy_user)
 	if err != nil {
 		t.Fatalf("TestMergeLdap failed unexpectedly, error: %v", err)
 	}
 	tomhPermit := setupPermit()
 	c.permitDB.SetPermit(testLdapUser.UserId, &tomhPermit)
 
-	if _, _, err := c.Login(testLdapIdentity, testLdapPwd, ""); err != nil {
+	if _, _, err := c.Login(*ldap_dummy_user, *ldap_dummy_pwd, ""); err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
-	ldapTest.RemoveLdapUser(testLdapIdentity)
+	dummyLdapDB.RemoveLdapUser(*ldap_dummy_user)
 	c.MergeTick()
 
-	if _, _, err := c.Login(testLdapIdentity, testLdapPwd, ""); err == nil {
+	if _, _, err := c.Login(*ldap_dummy_user, *ldap_dummy_pwd, ""); err == nil {
 		t.Fatalf("Login should not have succeeded")
 	}
 
 	// Test merge when updating ldap user
-	ldapTest.AddLdapUser(testLdapIdentity, testLdapPwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
+	dummyLdapDB.AddLdapUser(*ldap_dummy_user, *ldap_dummy_pwd, "tomh@hotgmail.com", "tom", "hanks", "08467531243")
 	c.MergeTick()
 
 	newEmail := "newEmail"
 	newName := "newName"
 	newSurname := "newSurname"
 	newMobile := "newMobile"
-	ldapTest.UpdateLdapUser(testLdapIdentity, newEmail, newName, newSurname, newMobile)
+	dummyLdapDB.UpdateLdapUser(*ldap_dummy_user, newEmail, newName, newSurname, newMobile)
 
 	c.MergeTick()
 
-	testLdapUser, err = c.GetUserFromIdentity(testLdapIdentity)
+	testLdapUser, err = c.GetUserFromIdentity(*ldap_dummy_user)
 	if err != nil {
 		t.Fatalf("TestMergeLdap failed, error: %v", err)
 	}
@@ -509,10 +542,10 @@ func TestAuthLdapMerge(t *testing.T) {
 		t.Fatalf("Expected merge update to succeed, but failed, as not all attributes were updated")
 	}
 
-	// Test merge when ldap username exists on the imqs system (local pg DB).
+	// Test merge when LDAP username exists on the Authaus system (local pg DB).
 	// After merging, we should find the username already exist. We will update
-	// the IMQS user with that username to become of type LDAPuser, so we test against that
-	newUser := "IMQSUserWithUsername"
+	// the Authaus user with that username to become of type LDAPuser, so we test against that
+	newUser := "AuthausUserWithUsername"
 	now := time.Now().UTC()
 
 	user := AuthUser{
@@ -539,10 +572,10 @@ func TestAuthLdapMerge(t *testing.T) {
 		t.Fatalf("TestMergeLdap failed, error: %v", err)
 	}
 	if joeUser.Type != UserTypeDefault {
-		t.Fatalf("TestMergeLdap failed, expected newly created user to be IMQS user type (0), instead %v", joeUser.Type)
+		t.Fatalf("TestMergeLdap failed, expected newly created user to be Authaus user type (0), instead %v", joeUser.Type)
 	}
 
-	ldapTest.AddLdapUser(newUser, "pwd", newUser, "tom", "hanks", "08467531243")
+	dummyLdapDB.AddLdapUser(newUser, "pwd", newUser, "tom", "hanks", "08467531243")
 	c.MergeTick()
 
 	joeUser, err = c.GetUserFromIdentity(newUser)
@@ -557,12 +590,14 @@ func TestAuthLdapMerge(t *testing.T) {
 // Test Ldap merging when the new Ldap user have a space in the Username or Email.
 // This used to cause an "Identity already exists" error before the fix.
 // This scenario seems to be extremely unlikely to occur, but not impossible.
-func TestAuthLdapMergeSpace(t *testing.T) {
-	t.Log("Testing ldap merge including spaces")
-	c := setupLdap(t)
+func TestLdapMergeSpace(t *testing.T) {
+	if isBackendLdapTest() {
+		return
+	}
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
-	newUserEmail := "IMQSUserWithEmail@imqsemail.co.za"
+	newUserEmail := "AuthausUserWithEmail@authaus.co.za"
 	now := time.Now().UTC()
 
 	user := AuthUser{
@@ -590,10 +625,10 @@ func TestAuthLdapMergeSpace(t *testing.T) {
 		t.Fatalf("TestMergeLdap failed, error: %v", err)
 	}
 	if johnUser.Type != UserTypeDefault {
-		t.Fatalf("TestMergeLdap failed, expected newly created user to be IMQS user type (0), instead %v", johnUser.Type)
+		t.Fatalf("TestMergeLdap failed, expected newly created user to be Authaus user type (0), instead %v", johnUser.Type)
 	}
 
-	ldapTest.AddLdapUser("LdapUsername", "pwd", newUserEmail+" ", "Tom", "hanks", "08467531243")
+	dummyLdapDB.AddLdapUser("LdapUsername", "pwd", newUserEmail+" ", "Tom", "hanks", "08467531243")
 	c.MergeTick()
 
 	johnUser, err = c.GetUserFromIdentity(newUserEmail)
@@ -605,23 +640,25 @@ func TestAuthLdapMergeSpace(t *testing.T) {
 	}
 }
 
-// This tests that if an IMQS user exists that has the same email address as an LDAP user during
-// an LDAP merge, that it converts the IMQS User to be an LDAP user.
-func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
-	t.Log("Testing IMQS user conversion")
-	c := setupLdap(t)
+// This tests that if an Authaus user exists that has the same email address as an LDAP user during
+// an LDAP merge, that it converts the Authaus User to be an LDAP user.
+func TestLdapAuthausUserToLDAPUserConversion(t *testing.T) {
+	if isBackendLdapTest() {
+		return
+	}
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
-	// We need to add a new user to ldap and to imqs.
+	// We need to add a new user to ldap and to Authaus.
 	newEmail := "peter@example.com"
 	newLDAPUsername := "peter"
 	// We want the passwords to be different for testing purposes.
-	newIMQSPwd := "petersIMQSpassword"
+	newAuthausPwd := "petersAuthauspassword"
 	newLDAPPwd := "peterLDAPpassword"
 
 	now := time.Now().UTC()
 
-	// Create user in IMQS and LDAP
+	// Create user in Authaus and LDAP
 	user := AuthUser{
 		Email:           newEmail,
 		Username:        "",
@@ -635,25 +672,25 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 		Modified:        now,
 		ModifiedBy:      0,
 	}
-	peterUserId, err := c.CreateUserStoreIdentity(&user, newIMQSPwd)
+	peterUserId, err := c.CreateUserStoreIdentity(&user, newAuthausPwd)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
-	ldapTest.AddLdapUser(newLDAPUsername, newLDAPPwd, newEmail, "", "", "")
+	dummyLdapDB.AddLdapUser(newLDAPUsername, newLDAPPwd, newEmail, "", "", "")
 
-	// Test IMQS user login.
+	// Test Authaus user login.
 	permit := setupPermit()
 	c.permitDB.SetPermit(peterUserId, &permit)
-	_, _, err = c.Login(newEmail, newIMQSPwd, "")
+	_, _, err = c.Login(newEmail, newAuthausPwd, "")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
-	// The IMQS to LDAP user conversion will now take place, and login with the IMQS user's credentials
+	// The Authaus to LDAP user conversion will now take place, and login with the Authaus user's credentials
 	// should no longer work. However, login with the LDAP user should work.
 	c.MergeTick()
 
-	_, _, err = c.Login(newEmail, newIMQSPwd, "")
+	_, _, err = c.Login(newEmail, newAuthausPwd, "")
 	if err == nil {
 		t.Fatalf("Login should have failed")
 	}
@@ -675,18 +712,20 @@ func TestAuthLdapIMQSUserToLDAPUserConversion(t *testing.T) {
 	}
 }
 
-// This tests that if an IMQS user and an LDAP user both have email addresses or usernames containing empty strings, they will not
+// This tests that if an Authaus user and an LDAP user both have email addresses or usernames containing empty strings, they will not
 // override each other
-func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) {
-	t.Log("Testing IMQS username or email with empty strings cases")
-	c := setupLdap(t)
+func TestLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) {
+	if isBackendLdapTest() {
+		return
+	}
+	c, _ := setupLdap(t)
 	defer Teardown(c)
 
 	emptyStringEmail := ""
 	emptyStringUsername := ""
-	imqsUsername := "Peter"
-	imqsEmail := "Peter@test.co.za"
-	imqsPassword := "test123"
+	authausUsername := "Peter"
+	authausEmail := "Peter@test.co.za"
+	authausPassword := "test123"
 	ldapUsername := "John"
 	ldapEmail := "John@haha.co.za"
 	now := time.Now().UTC()
@@ -694,7 +733,7 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 	// Testing blank email case
 	blankEmailUser := AuthUser{
 		Email:           emptyStringEmail,
-		Username:        imqsUsername,
+		Username:        authausUsername,
 		Firstname:       "",
 		Lastname:        "",
 		Mobilenumber:    "",
@@ -705,29 +744,29 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 		Modified:        now,
 		ModifiedBy:      0,
 	}
-	imqsUserId, err := c.CreateUserStoreIdentity(&blankEmailUser, imqsPassword)
+	imqsUserId, err := c.CreateUserStoreIdentity(&blankEmailUser, authausPassword)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
-	ldapTest.AddLdapUser(ldapUsername, "", emptyStringEmail, "", "", "")
+	dummyLdapDB.AddLdapUser(ldapUsername, "", emptyStringEmail, "", "", "")
 
 	permit := setupPermit()
 	c.permitDB.SetPermit(imqsUserId, &permit)
-	_, _, err = c.Login(imqsUsername, imqsPassword, "")
+	_, _, err = c.Login(authausUsername, authausPassword, "")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	// This merge should have zero affect, no merge on this user should take place
 	c.MergeTick()
-	_, _, err = c.Login(imqsUsername, imqsPassword, "")
+	_, _, err = c.Login(authausUsername, authausPassword, "")
 	if err != nil {
 		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
 	}
 
 	// Testing blank username case
 	blankUsernameUser := AuthUser{
-		Email:           imqsEmail,
+		Email:           authausEmail,
 		Username:        emptyStringUsername,
 		Firstname:       "",
 		Lastname:        "",
@@ -739,21 +778,21 @@ func TestAuthLdapUsernamesAndEmailsWithEmptyStringsShouldNotMerge(t *testing.T) 
 		Modified:        now,
 		ModifiedBy:      0,
 	}
-	imqsUserId, err = c.CreateUserStoreIdentity(&blankUsernameUser, imqsPassword)
+	imqsUserId, err = c.CreateUserStoreIdentity(&blankUsernameUser, authausPassword)
 	if err != nil {
 		t.Fatalf("Create user should have succeeded, but error was : %v", err)
 	}
-	ldapTest.AddLdapUser(emptyStringUsername, "", ldapEmail, "", "", "")
+	dummyLdapDB.AddLdapUser(emptyStringUsername, "", ldapEmail, "", "", "")
 
 	c.permitDB.SetPermit(imqsUserId, &permit)
-	_, _, err = c.Login(imqsEmail, imqsPassword, "")
+	_, _, err = c.Login(authausEmail, authausPassword, "")
 	if err != nil {
 		t.Fatalf("Login should have succeeded, but error was : %v", err)
 	}
 
 	// This merge should have zero affect, no merge on this user should take place
 	c.MergeTick()
-	_, _, err = c.Login(imqsEmail, imqsPassword, "")
+	_, _, err = c.Login(authausEmail, authausPassword, "")
 	if err != nil {
 		t.Fatalf("Login should have succeeded. This probably means the merge took place, and should not have. Error was: %v", err)
 	}
@@ -958,13 +997,13 @@ func TestAuthBasicAuth(t *testing.T) {
 	Teardown(c)
 
 	// When we use LDAP backend, the users with authusertype LDAP will be authenticated by LDAP. Lets
-	// create a user with an IMQS type and authenticate with the LDAP backend
-	c = setupLdap(t)
+	// create a user with an Authaus type and authenticate with the LDAP backend
+	c, _ = setupLdap(t)
 	defer Teardown(c)
 	now := time.Now().UTC()
 
 	user := AuthUser{
-		Email:           testLdapIdentity,
+		Email:           *ldap_dummy_user,
 		Username:        "tomh",
 		Firstname:       "Tom",
 		Lastname:        "Hanks",
@@ -977,15 +1016,15 @@ func TestAuthBasicAuth(t *testing.T) {
 		ModifiedBy:      0,
 		Type:            UserTypeDefault,
 	}
-	userId, err := c.userStore.CreateIdentity(&user, testLdapPwd)
+	userId, err := c.userStore.CreateIdentity(&user, *ldap_dummy_pwd)
 	if err != nil {
-		t.Errorf("TestBasicAuth failed, expected create IMQS user success, but instead error (%v)", err)
+		t.Errorf("TestBasicAuth failed, expected create Authaus user success, but instead error (%v)", err)
 	}
 	permit := setupPermit()
 	c.permitDB.SetPermit(userId, &permit)
 
-	expect_username_password(testLdapIdentity, testLdapPwd, "", testLdapIdentity)
-	expect_username_password(testLdapIdentity, "invalidpassword", ErrInvalidPassword.Error(), testLdapIdentity)
+	expect_username_password(*ldap_dummy_user, *ldap_dummy_pwd, "", *ldap_dummy_user)
+	expect_username_password(*ldap_dummy_user, "invalidpassword", ErrInvalidPassword.Error(), *ldap_dummy_user)
 }
 
 func TestAuthPermit(t *testing.T) {
@@ -1036,6 +1075,8 @@ func TestAuthLoad(t *testing.T) {
 	nsimul := 20
 	conPerThread := int64(10000)
 	if isBackendPostgresTest() {
+		conPerThread = int64(100)
+	} else if isBackendLdapTest() {
 		conPerThread = int64(100)
 	}
 	waits := make([]chan bool, nsimul)

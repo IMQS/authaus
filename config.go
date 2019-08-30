@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
-	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -158,15 +157,15 @@ type ConfigRoleGroupDB struct {
 }
 
 type ConfigLDAP struct {
-	LdapHost         string        //
-	LdapPort         uint16        //
-	Encryption       string        // "", "TLS", "SSL"
-	LdapUsername     string        //
-	LdapPassword     string        //
-	LdapDomain       string        //
-	LdapTickerTime   time.Duration //
-	BaseDN           string        //
-	SysAdminEmail    string        //
+	LdapHost         string //
+	LdapPort         uint16 //
+	Encryption       string // "", "TLS", "SSL"
+	LdapUsername     string //
+	LdapPassword     string //
+	LdapDomain       string //
+	LdapTickerTime   int    // seconds
+	BaseDN           string //
+	SysAdminEmail    string //
 	LdapSearchFilter string
 }
 

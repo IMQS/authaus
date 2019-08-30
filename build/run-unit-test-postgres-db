@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+
+docker build -t authaus-test-postgres -f build/Dockerfile-postgres build
+docker run -p 5432:5432 authaus-test-postgres

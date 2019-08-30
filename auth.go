@@ -283,7 +283,7 @@ type Central struct {
 	userStoreMergeTicker   *time.Ticker
 	mergeCount             int
 	ldapUsed               bool
-	ldapMergeTickerSeconds time.Duration
+	ldapMergeTicker        time.Duration
 	tickerStopReq          chan bool
 	tickerStopResp         chan bool
 }
@@ -403,9 +403,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		c.PasswordExpiresAfter = time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second
 	}
 	if ldapUsed {
-		c.ldapMergeTickerSeconds = (defaultLdapMergeTickerSeconds * time.Second)
+		c.ldapMergeTicker = defaultLdapMergeTickerSeconds * time.Second
 		if config.LDAP.LdapTickerTime > 0 {
-			c.ldapMergeTickerSeconds = (config.LDAP.LdapTickerTime * time.Second)
+			c.ldapMergeTicker = time.Duration(config.LDAP.LdapTickerTime) * time.Second
 		}
 		c.StartMergeTicker()
 	}
@@ -612,7 +612,7 @@ func (x *Central) AuthenticateUser(identity, password string, authTypeCheck Auth
 // Merges ldap with user store every merge tick
 func (x *Central) StartMergeTicker() error {
 	x.Log.Info("Starting LDAP merge process")
-	x.userStoreMergeTicker = time.NewTicker(x.ldapMergeTickerSeconds)
+	x.userStoreMergeTicker = time.NewTicker(x.ldapMergeTicker)
 	x.tickerStopReq = make(chan bool)
 	x.tickerStopResp = make(chan bool)
 	go func() {
