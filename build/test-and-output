@@ -1,0 +1,24 @@
+#!/bin/bash
+
+go test -v -race -test.cpu 2 -run AccountLocking >> mocked.out
+
+go test -v -race -test.cpu 2 \
+ -backend_postgres \
+ -postgres_host=$POSTGRES_HOST \
+ -run AccountLocking >> postgres.out
+
+go test -v -race -test.cpu 2 \
+ -backend_postgres \
+ -postgres_host=$POSTGRES_HOST \
+ -backend_ldap \
+ -ldap_system_user=$LDAP_SYSTEM_USER \
+ -ldap_system_pwd=$LDAP_SYSTEM_PWD \
+ -ldap_dummy_user=$LDAP_DUMMY_USER \
+ -ldap_dummy_pwd=$LDAP_DUMMY_PWD \
+ -ldap_domain=$LDAP_DOMAIN \
+ -ldap_controller_host=$LDAP_CONTROLLER_HOST \
+ -run AccountLocking >> ldap.out
+
+cat mocked.out | go2xunit -suite-name-prefix mocked_ -output /test-out/mocked.xml
+cat postgres.out | go2xunit -suite-name-prefix postgres_ -output /test-out/postgres.xml
+cat ldap.out | go2xunit -suite-name-prefix ldap_ -output /test-out/ldap.xml

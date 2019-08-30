@@ -32,14 +32,16 @@ Suggested test runs that you should do:
 	go test -race github.com/IMQS/authaus -test.cpu 2 -backend_postgres -run TestAuth
 
 	-- Test using postgres as the backend and connecting to our LDAP system:
-	*NOTE This test may only be run when on the IMQS domain, else it will fail
-	go test -race github.com/IMQS/authaus -test.cpu 2 -backend_ldap -run TestIntegratedLdap
+	-- The LDAP tests only work with the Postgres backend
+	go test -race github.com/IMQS/authaus -test.cpu 2 -backend_postgres -backend_ldap -run TestIntegratedLdap
 
 
 I'm not sure that testing without the race detector adds any value.
 */
 
 var backend_postgres = flag.Bool("backend_postgres", false, "Run tests against Postgres backend")
+var postgres_host = flag.String("postgres_host", "", "Postgres hostname (default localhost)")
+
 var backend_ldap = flag.Bool("backend_ldap", false, "Run tests against LDAP backend")
 var ldap_system_user = flag.String("ldap_system_user", "testSysUser", "The user that we use to authenticate against the LDAP system, to pull all the available identities in the LDAP store")
 var ldap_system_pwd = flag.String("ldap_system_pwd", "testSysUserPwd", "Password of ldap_system_user")
@@ -72,14 +74,20 @@ var janeUserId UserId = 5
 var notFoundUserId UserId = 999
 var dummyLdapDB *dummyLdap
 
-var conx_postgres = DBConnection{
-	Driver:   "postgres",
-	Host:     "localhost",
-	Port:     5432,
-	Database: "unit_test_authaus",
-	User:     "unit_test_user",
-	Password: "unit_test_password",
-	SSL:      false,
+func makePostgresConx() DBConnection {
+	host := "localhost"
+	if *postgres_host != "" {
+		host = *postgres_host
+	}
+	return DBConnection{
+		Driver:   "postgres",
+		Host:     host,
+		Port:     5432,
+		Database: "unit_test_authaus",
+		User:     "unit_test_user",
+		Password: "unit_test_password",
+		SSL:      false,
+	}
 }
 
 func makeLDAPConfig() (*ConfigLDAP, error) {
@@ -165,14 +173,17 @@ func getCentral(t *testing.T) *Central {
 	var permitDB PermitDB
 	var roleDB RoleGroupDB
 
-	if isBackendPostgresTest() || isBackendLdapTest() {
-		connectToDB(conx_postgres, t, &userStore, &sessionDB, &permitDB, &roleDB)
+	if isBackendLdapTest() && !isBackendPostgresTest() {
+		panic("The LDAP tests assume that you're running the Postgres backend")
+	}
+
+	if isBackendPostgresTest() {
+		connectToDB(makePostgresConx(), t, &userStore, &sessionDB, &permitDB, &roleDB)
 	} else {
 		sessionDB = newDummySessionDB()
 		permitDB = newDummyPermitDB()
 		roleDB = newDummyRoleGroupDB()
 		userStore = newDummyUserStore()
-
 	}
 
 	return NewCentral(log.Stdout, nil, userStore, permitDB, sessionDB, roleDB)

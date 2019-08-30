@@ -1,0 +1,62 @@
+#!/bin/bash
+
+die() {
+    echo $1
+    exit 1
+}
+
+if [ -d test-out ]; then
+    rm -rf test-out
+fi
+
+# Create a docker network so that our unit tests can talk to Postgres
+SEED=$(date +%s.%N)
+AUTHNAME=test_auth_$SEED
+NETNAME=test_nw_$SEED
+PGNAME=test_pg_$SEED
+
+echo "Building test container"
+docker build -t $AUTHNAME -f build/Dockerfile-test .
+
+echo "Setting up network"
+docker rm -f $PGNAME
+docker network rm $NETNAME
+docker network create $NETNAME || die "Failed to create network $NETNAME"
+
+echo "Launch Postgres"
+PG_ID=$(docker run -d --network $NETNAME --name $PGNAME -v `pwd`/build/postgres-init:/docker-entrypoint-initdb.d -e POSTGRES_PASSWORD=unused postgres:10.5) || die "Failed to launch Postgres $PGNAME"
+# wait for Postgres to come alive
+PG_ALIVE=0
+for i in 1 2 3 4 5 6 7; do
+    echo "Waiting... $i"
+    SELECT="PGPASSWORD=unit_test_password psql -h $PGNAME -U unit_test_user postgres -c 'select 1'"
+	docker run --rm --network $NETNAME postgres:10.5 bash -c "$SELECT"
+    if [ $? == 0 ]; then
+        PG_ALIVE=1
+        break
+    fi
+    sleep 1
+done
+if [ $PG_ALIVE == 0 ]; then
+    echo "Timed out waiting for Postgres to come alive"
+    exit 1
+fi
+
+docker run --rm --network $NETNAME \
+    -v `pwd`/test-out:/test-out \
+    -e POSTGRES_HOST=$PGNAME \
+    -e LDAP_SYSTEM_USER=$LDAP_SYSTEM_USER \
+    -e LDAP_SYSTEM_PWD=$LDAP_SYSTEM_PWD \
+    -e LDAP_DUMMY_USER=$LDAP_DUMMY_USER \
+    -e LDAP_DUMMY_PWD=$LDAP_DUMMY_PWD \
+    -e LDAP_DOMAIN=$LDAP_DOMAIN \
+    -e LDAP_CONTROLLER_HOST=$LDAP_CONTROLLER_HOST \
+    $AUTHNAME \
+    /bin/bash /test/build/test-and-output
+
+STATUS=$?
+
+docker stop $PG_ID
+docker rm $PG_ID
+docker network rm $NETNAME
+exit $STATUS
