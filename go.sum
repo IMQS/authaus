@@ -2,6 +2,8 @@ github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335 h1:n8o916boOo
 github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335/go.mod h1:eVEKGm5N/F2XPdHocE3gP//Ab+rb/54WJ7XXtFGxwaQ=
 github.com/IMQS/log v0.0.0-20190610134251-f890260a8190 h1:KZtkVbCACYAw5fK4jX1EyqcIZsiECh5kwvEr9fOALzw=
 github.com/IMQS/log v0.0.0-20190610134251-f890260a8190/go.mod h1:Aq/GLUOZ8xRYkwS6yZEg5QwKi3etKMgdkI+UQQQS87U=
+github.com/IMQS/log v1.0.1 h1:jye0sZbPQj9psms0dAzZJK3yF3ldCNNVQEX8mEcWuS8=
+github.com/IMQS/log v1.0.1/go.mod h1:NTJ+eKRXwfBr8tRKA7/JsTKeTqHluJkuZsD7YotVj48=
 github.com/lib/pq v1.2.0 h1:LXpIM/LZ5xGFhOpXAQUIMM1HdyqzVYM13zNdjCEEcA0=
 github.com/lib/pq v1.2.0/go.mod h1:5WUZQaWbwv1U+lTReE5YruASi9Al49XbQIvNi/34Woo=
 github.com/mavricknz/asn1-ber v0.0.0-20151103223136-b9df1c2f4213 h1:3DongGRjJZvIFDq063tg76LKlGhA7O0TVqoPql0Zfbk=
@@ -10,6 +12,8 @@ github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43 h1:x4SDcUPDTMzuFEdW
 github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43/go.mod h1:z76yvVwVulPd8FyifHe8UEHeud6XXaSan0ibi2sDy6w=
 github.com/natefinch/lumberjack v0.0.0-20170911000000-aee462912944 h1:5mm6nUfBxgHGLAa08qAIWieosY5Oz9snyXK8Zia4+A4=
 github.com/natefinch/lumberjack v0.0.0-20170911000000-aee462912944/go.mod h1:Wi9p2TTF5DG5oU+6YfsmYQpsTIOm0B1VNzQg9Mw6nPk=
+github.com/natefinch/lumberjack v2.0.0+incompatible h1:4QJd3OLAMgj7ph+yZTuX13Ld4UpgHp07nNdFX7mqFfM=
+github.com/natefinch/lumberjack v2.0.0+incompatible/go.mod h1:Wi9p2TTF5DG5oU+6YfsmYQpsTIOm0B1VNzQg9Mw6nPk=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20190820162420-60c769a6c586 h1:7KByu05hhLed2MO29w7p1XfZvZ13m8mub3shuVftRs0=
 golang.org/x/crypto v0.0.0-20190820162420-60c769a6c586/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
