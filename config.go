@@ -157,16 +157,17 @@ type ConfigRoleGroupDB struct {
 }
 
 type ConfigLDAP struct {
-	LdapHost         string //
-	LdapPort         uint16 //
-	Encryption       string // "", "TLS", "SSL"
-	LdapUsername     string //
-	LdapPassword     string //
-	LdapDomain       string //
-	LdapTickerTime   int    // seconds
-	BaseDN           string //
-	SysAdminEmail    string //
-	LdapSearchFilter string
+	LdapHost           string //
+	LdapPort           uint16 //
+	Encryption         string // "", "TLS", "SSL"
+	LdapUsername       string //
+	LdapPassword       string //
+	LdapDomain         string //
+	LdapTickerTime     int    // seconds
+	BaseDN             string //
+	SysAdminEmail      string //
+	LdapSearchFilter   string
+	InsecureSkipVerify bool // If true, then skip SSL verification. Only applicable when Encryption = SSL
 }
 
 type ConfigUserStoreDB struct {

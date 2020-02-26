@@ -632,7 +632,7 @@ func (x *Central) StartMergeTicker() error {
 }
 
 func (x *Central) MergeTick() {
-	timeStart := time.Now().UnixNano() / int64(time.Millisecond)
+	timeStart := time.Now()
 	ldapUsers, err := x.ldap.GetLdapUsers()
 	if err != nil {
 		x.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
@@ -644,11 +644,11 @@ func (x *Central) MergeTick() {
 		return
 	}
 	x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers)
-	timeComplete := time.Now().UnixNano() / int64(time.Millisecond)
-	x.mergeCount++
+	timeComplete := time.Now()
 	if x.mergeCount%60 == 0 {
-		x.Log.Infof("Merge process duration: %v", (timeComplete - timeStart))
+		x.Log.Infof("Merge process duration: %.3f seconds", timeComplete.Sub(timeStart).Seconds())
 	}
+	x.mergeCount++
 }
 
 func userInfoToAuditTrailJSON(user AuthUser, clientIPAddress string) string {
@@ -699,6 +699,8 @@ func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUse
 
 	// Insert or update
 	for _, ldapUser := range ldapUsers {
+		// This log is useful when debugging, but in regular operation the relevant details go into the logs when something changes (see below)
+		// x.Log.Infof("Merging user %20s %20s %20s '%s'", ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Email)
 		imqsUser, foundWithUsername := imqsUserUsernameMap[CanonicalizeIdentity(ldapUser.Username)]
 		foundWithEmail := false
 		if !foundWithUsername {

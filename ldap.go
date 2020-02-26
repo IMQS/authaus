@@ -2,6 +2,7 @@ package authaus
 
 import (
 	//"github.com/mmitton/ldap"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"strings"
@@ -125,6 +126,10 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 		con.IsSSL = true
 	case LdapConnectionModeTLS:
 		con.IsTLS = true
+	}
+	if config.InsecureSkipVerify {
+		con.TlsConfig = &tls.Config{}
+		con.TlsConfig.InsecureSkipVerify = config.InsecureSkipVerify
 	}
 	if err := con.Connect(); err != nil {
 		con.Close()
