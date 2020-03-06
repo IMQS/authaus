@@ -168,6 +168,7 @@ type ConfigLDAP struct {
 	SysAdminEmail      string //
 	LdapSearchFilter   string
 	InsecureSkipVerify bool // If true, then skip SSL verification. Only applicable when Encryption = SSL
+	DebugUserPull      bool // If true, prints out the result of every LDAP user pull
 }
 
 type ConfigUserStoreDB struct {

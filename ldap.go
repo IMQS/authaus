@@ -61,7 +61,9 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		"name",
 		"sn",
 		"mail",
-		"mobile"}
+		"mobile",
+		"userPrincipalName",
+	}
 
 	searchRequest := ldap.NewSearchRequest(
 		x.config.BaseDN,
@@ -87,16 +89,37 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		}
 		return values[0]
 	}
+	if x.config.DebugUserPull {
+		fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", "username", "name", "surname", "email", "mobile")
+	}
 	ldapUsers := make([]AuthUser, len(sr.Entries))
 	for i, value := range sr.Entries {
 		// We trim the spaces as we have found that a certain ldap user
 		// (WilburGS) has an email that ends with a space.
 		username := strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
-		name := strings.TrimSpace(getAttributeValue(*value, "givenName"))
+		givenName := strings.TrimSpace(getAttributeValue(*value, "givenName"))
+		name := strings.TrimSpace(getAttributeValue(*value, "name"))
 		surname := strings.TrimSpace(getAttributeValue(*value, "sn"))
 		email := strings.TrimSpace(getAttributeValue(*value, "mail"))
 		mobile := strings.TrimSpace(getAttributeValue(*value, "mobile"))
-		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: name, Lastname: surname, Mobilenumber: mobile}
+		userPrincipalName := strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
+		if email == "" && strings.Count(userPrincipalName, "@") == 1 {
+			// This was first seen in Azure, when integrating with DTPW (Department of Transport and Public Works)
+			email = userPrincipalName
+		}
+		firstName := givenName
+		if firstName == "" && surname == "" && name != "" {
+			// We're in dubious best-guess-for-common-english territory here
+			firstSpace := strings.Index(name, " ")
+			if firstSpace != -1 {
+				firstName = name[:firstSpace]
+				surname = name[firstSpace+1:]
+			}
+		}
+		if x.config.DebugUserPull {
+			fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", username, firstName, surname, email, mobile)
+		}
+		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: firstName, Lastname: surname, Mobilenumber: mobile}
 	}
 	return ldapUsers, nil
 }
