@@ -319,11 +319,15 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
-		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore " +
-		" (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype, externalUUID) " +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		externalUUID := &user.ExternalUUID
+		if user.ExternalUUID == "" {
+			externalUUID = nil
+		}
+		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore `+
+			` (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype, externalUUID) `+
+			` VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks,
-			user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type, user.ExternalUUID); eCreateUserStore != nil {
+			user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type, externalUUID); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
