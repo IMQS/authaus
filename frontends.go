@@ -2,6 +2,7 @@ package authaus
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,13 +66,32 @@ func HttpHandlerWhoAmI(config *ConfigHTTP, central *Central, w http.ResponseWrit
 	}
 }
 
-func HttpSendTxt(w http.ResponseWriter, responseCode int, responseBody string) {
-	w.Header().Add("Content-Type", "text/plain")
+func HttpNoCache(w http.ResponseWriter) {
 	w.Header().Add("Cache-Control", "no-cache, no-store, must revalidate")
 	w.Header().Add("Pragma", "no-cache")
 	w.Header().Add("Expires", "0")
+}
+
+func HttpSendTxt(w http.ResponseWriter, responseCode int, responseBody string) {
+	HttpNoCache(w)
+	w.Header().Add("Content-Type", "text/plain")
 	w.WriteHeader(responseCode)
-	fmt.Fprintf(w, "%v", responseBody)
+	w.Write([]byte(responseBody))
+}
+
+func HttpSendHTML(w http.ResponseWriter, responseCode int, responseBody string) {
+	HttpNoCache(w)
+	w.Header().Add("Content-Type", "text/html")
+	w.WriteHeader(responseCode)
+	w.Write([]byte(responseBody))
+}
+
+func HttpSendJSON(w http.ResponseWriter, responseCode int, responseObject interface{}) {
+	HttpNoCache(w)
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(responseCode)
+	enc := json.NewEncoder(w)
+	enc.Encode(responseObject)
 }
 
 // HttpHandlerLogin handles the 'login' request, sending back a session token (via Set-Cookie),

@@ -25,6 +25,15 @@ Full populated config:
 		"Port":			8080,
 		"Bind":			"127.0.0.1"
 	},
+	"DB": {
+		"Driver":		"postgres",
+		"Host":			"auth.example.com",
+		"Port":			5432,
+		"Database": 	"auth",
+		"User":			"jim",
+		"Password":		"123",
+		"SSL":			true
+	},
 	"LDAP": {
 		"LdapHost":		"example.local",
 		"LdapPort":		389,
@@ -37,40 +46,9 @@ Full populated config:
 		"SysAdminEmail":  "joeAdmin@example.com",
 		"LdapSearchFilter": "(&(objectCategory=person)(objectClass=user))"
 	},
-	"PermitDB": {
-		"DB": {
-			"Driver":		"postgres",
-			"Host":			"auth.example.com",
-			"Port":			5432,
-			"Database": 	"auth",
-			"User":			"jim",
-			"Password":		"123",
-			"SSL":			true
-		}
-	},
 	"SessionDB": {
 		"MaxActiveSessions": 0,
 		"SessionExpirySeconds": 2592000,
-		"DB": {
-			"Driver":		"postgres",
-			"Host":			"auth.example.com",
-			"Port":			5432,
-			"Database": 	"auth",
-			"User":			"jim",
-			"Password":		"123",
-			"SSL":			true
-		}
-	},
-	"RoleGroupDB": {
-		"DB": {
-			"Driver":		"postgres",
-			"Host":			"auth.example.com",
-			"Port":			5432,
-			"Database": 	"auth",
-			"User":			"jim",
-			"Password":		"123",
-			"SSL":			true
-		}
 	}
 }
 
@@ -142,18 +120,9 @@ type ConfigLog struct {
 	Filename string
 }
 
-type ConfigPermitDB struct {
-	DB DBConnection
-}
-
 type ConfigSessionDB struct {
-	DB                   DBConnection
 	MaxActiveSessions    int32 // Maximum number of active sessions per user. legal values are 0 and 1. Zero means unlimited.
 	SessionExpirySeconds int64 // Lifetime of newly created sessions, in seconds. Zero means default, which is defaultSessionExpirySeconds (30 days)
-}
-
-type ConfigRoleGroupDB struct {
-	DB DBConnection
 }
 
 type ConfigLDAP struct {
@@ -172,7 +141,6 @@ type ConfigLDAP struct {
 }
 
 type ConfigUserStoreDB struct {
-	DB                    DBConnection
 	DisablePasswordReuse  bool
 	PasswordExpirySeconds int
 }
@@ -181,13 +149,13 @@ type ConfigUserStoreDB struct {
 Configuration information. This is typically loaded from a .json config file.
 */
 type Config struct {
+	DB                     DBConnection
 	Log                    ConfigLog
 	HTTP                   ConfigHTTP
-	PermitDB               ConfigPermitDB
 	SessionDB              ConfigSessionDB
-	RoleGroupDB            ConfigRoleGroupDB
 	LDAP                   ConfigLDAP
 	UserStore              ConfigUserStoreDB
+	OAuth                  ConfigOAuth
 	AuditServiceUrl        string
 	EnableAccountLocking   bool
 	MaxFailedLoginAttempts int

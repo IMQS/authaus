@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -123,9 +124,13 @@ func RandomString(nchars int, corpus string) string {
 }
 
 func generateSessionKey() string {
+	return generateRandomKey(sessionTokenLength)
+}
+
+func generateRandomKey(length int) string {
 	// It is important not to have any unusual characters in here, especially an equals sign. Old versions of Tomcat
 	// will parse such a cookie incorrectly (imagine Cookie: magic=abracadabra=)
-	return RandomString(sessionTokenLength, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	return RandomString(length, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 }
 
 func generatePasswordResetToken(expires time.Time) string {
@@ -264,14 +269,8 @@ type Central struct {
 	// increment counters inside CentralStats, and the atomic functions need 8-byte alignment
 	// on their operands.
 	Stats                  CentralStats
-	ldap                   LDAP
-	userStore              UserStore
-	permitDB               PermitDB
-	sessionDB              SessionDB
-	roleGroupDB            RoleGroupDB
 	Auditor                Auditor
 	LockingPolicy          LockingPolicy
-	renameLock             sync.Mutex //
 	Log                    *log.Logger
 	MaxActiveSessions      int32
 	NewSessionExpiresAfter time.Duration
@@ -279,19 +278,29 @@ type Central struct {
 	PasswordExpiresAfter   time.Duration
 	MaxFailedLoginAttempts int // only applies if EnableAccountLocking is true
 	EnableAccountLocking   bool
-	loginDelayFactor       uint64
-	userStoreMergeTicker   *time.Ticker
-	mergeCount             int
-	ldapUsed               bool
-	ldapMergeTicker        time.Duration
-	tickerStopReq          chan bool
-	tickerStopResp         chan bool
+	OAuth                  OAuth
+	DB                     *sql.DB
+
+	ldap                 LDAP
+	userStore            UserStore
+	permitDB             PermitDB
+	sessionDB            SessionDB
+	roleGroupDB          RoleGroupDB
+	renameLock           sync.Mutex
+	loginDelayMS         uint64 // Number of milliseconds by which we increase the delay login every time the user enters invalid credentials
+	userStoreMergeTicker *time.Ticker
+	mergeCount           int
+	ldapUsed             bool
+	ldapMergeTicker      time.Duration
+	tickerStopReq        chan bool
+	tickerStopResp       chan bool
 }
 
 // Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
 func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
+	c.OAuth.Initialize(c)
 	if ldap != nil {
 		c.ldapUsed = true
 		c.ldap = &sanitizingLDAP{
@@ -317,17 +326,15 @@ func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitD
 
 // Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (central *Central, err error) {
-	var ldap LDAP
-	var userStore UserStore
-	var permitDB PermitDB
-	var sessionDB SessionDB
-	var roleGroupDB RoleGroupDB
-	var ldapUsed bool
-	if len(config.LDAP.LdapHost) > 0 {
-		ldapUsed = true
-	} else {
-		ldapUsed = false
-	}
+	var (
+		db          *sql.DB
+		ldap        LDAP
+		userStore   UserStore
+		permitDB    PermitDB
+		sessionDB   SessionDB
+		roleGroupDB RoleGroupDB
+	)
+	ldapUsed := len(config.LDAP.LdapHost) > 0
 
 	startupLogger := log.New(resolveLogfile(config.Log.Filename))
 
@@ -348,6 +355,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 			if roleGroupDB != nil {
 				roleGroupDB.Close()
 			}
+			if db != nil {
+				db.Close()
+			}
 			startupLogger.Errorf("Error initializing: %v\n", ePanic)
 			err = ePanic.(error)
 		}
@@ -361,31 +371,41 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		panic(errors.New("SessionExpirySeconds must be 0 or more"))
 	}
 
+	// All of our interfaces which use a Postgres database share the same database, and thus the
+	// same schema. So here we connect to that common SQL database that is used by all of them.
+	// The original design of Authaus made all of these interfaces open to be implemented
+	// by different units, and that is still possible. But it's just silly to open the same
+	// database 4 times (which is what NewUserStoreDB_SQL et al used to do),
+	// when we're actually just using a single shared DB.
+	db, err = config.DB.Connect()
+	if err != nil {
+		panic(fmt.Errorf("Error connecting to DB: %v", err))
+	}
+
 	if ldapUsed {
 		ldap = NewAuthenticator_LDAP(&config.LDAP)
 	}
 
-	if userStore, err = NewUserStoreDB_SQL(&config.UserStore.DB); err != nil {
+	if userStore, err = NewUserStoreDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to UserStoreDB: %v", err))
 	}
 
-	if permitDB, err = NewPermitDB_SQL(&config.PermitDB.DB); err != nil {
+	if permitDB, err = NewPermitDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to PermitDB: %v", err))
 	}
 
-	if sessionDB, err = NewSessionDB_SQL(&config.SessionDB.DB); err != nil {
+	if sessionDB, err = NewSessionDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to SessionDB: %v", err))
 	}
 
-	if config.RoleGroupDB.DB.Driver != "" {
-		if roleGroupDB, err = NewRoleGroupDB_SQL(&config.RoleGroupDB.DB); err != nil {
-			panic(fmt.Errorf("Error connecting to RoleGroupDB: %v", err))
-		}
+	if roleGroupDB, err = NewRoleGroupDB_SQL(db); err != nil {
+		panic(fmt.Errorf("Error connecting to RoleGroupDB: %v", err))
 	}
 
 	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
+	c.DB = db
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
@@ -409,8 +429,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 		c.StartMergeTicker()
 	}
+	c.OAuth.Config = config.OAuth
 
-	c.loginDelayFactor = 500 // add 500 ms per invalid login attempt
+	c.loginDelayMS = 500 // add 500 ms per invalid login attempt
 
 	return c, nil
 }
@@ -478,9 +499,7 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 	}
 }
 
-// Create a new session. Returns a session key, which can be used in future to retrieve the token.
-// The internal session expiry is controlled with the member NewSessionExpiresAfter.
-// The session key is typically sent to the client as a cookie.
+// Authenticate the username + password, and if successful, call CreateSession()
 func (x *Central) Login(username, password string, clientIPAddress string) (sessionkey string, token *Token, err error) {
 	user, authErr := x.authenticate(username, password, clientIPAddress)
 	if authErr != nil {
@@ -489,8 +508,22 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 		return sessionkey, token, err
 	}
 
-	x.Log.Infof("Login authentication success (%v)", user.UserId)
+	x.Stats.ResetInvalidPasswordHistory(x.Log, username, clientIPAddress)
 
+	sessionkey, token, err = x.CreateSession(&user, clientIPAddress)
+	if err == nil {
+		x.Stats.IncrementGoodLogin(x.Log)
+		x.Log.Infof("Login successful (%v)", user.UserId)
+	}
+
+	return
+}
+
+// CreateSession creates a new login session, after you have authenticated the caller
+// Returns a session key, which can be used in future to retrieve the token.
+// The internal session expiry is controlled with NewSessionExpiresAfter.
+// The session key is typically sent to the client as a cookie.
+func (x *Central) CreateSession(user *AuthUser, clientIPAddress string) (sessionkey string, token *Token, err error) {
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(user.UserId); err != nil {
 		x.Log.Infof("Login GetPermit failed (%v) (%v)", user.UserId, err)
@@ -527,9 +560,6 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 		x.Log.Warnf("Writing session key failed (%v)", err)
 		return sessionkey, token, err
 	}
-	x.Stats.IncrementGoodLogin(x.Log)
-	x.Stats.ResetInvalidPasswordHistory(x.Log, username, clientIPAddress)
-	x.Log.Infof("Login successful (%v)", user.UserId)
 	return sessionkey, token, nil
 }
 
@@ -553,7 +583,7 @@ func (x *Central) authenticate(identity, password string, clientIPAddress string
 
 	// Delay login with every failed log in attempt, cap the delay at 60 seconds
 	if invalidPasswords > 0 {
-		var loginDelay = x.loginDelayFactor * invalidPasswords
+		var loginDelay = x.loginDelayMS * invalidPasswords
 		if loginDelay > 60000 {
 			loginDelay = 60000
 		}
@@ -1032,6 +1062,9 @@ func (x *Central) Close() {
 	if x.roleGroupDB != nil {
 		x.roleGroupDB.Close()
 		x.roleGroupDB = nil
+	}
+	if x.DB != nil {
+		x.DB.Close()
 	}
 	if x.Log != nil {
 		x.Log.Infof("Authaus has shut down")

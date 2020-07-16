@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -227,84 +228,66 @@ func (x *sqlUserStoreDB) getRecentPasswordsForUser(userId UserId) ([]string, err
 	return passwords, nil
 }
 
-func (x *sqlUserStoreDB) identityExists(identity string) error {
-	var sqlTemplate = "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)"
-	var row *sql.Row
-	row = x.db.QueryRow(sqlTemplate, CanonicalizeIdentity(identity))
-	return identityFromRow(row)
+func (x *sqlUserStoreDB) identityExists(tx *sql.Tx, identity string) (bool, error) {
+	id, err := x.findUser(tx, identity, identity, []UserId{})
+	return id != 0, err
 }
 
-func (x *sqlUserStoreDB) filterOutUserIds(sql string, userIds []UserId) string {
-	filterTemplate := "AND userid != %d"
-	for count := 0; count < len(userIds); count++ {
-		filter := fmt.Sprintf(filterTemplate, userIds[count])
-		joinArg := []string{sql, filter}
-		sql = strings.Join(joinArg, " ")
+func createSQLSet(userIDs []UserId) string {
+	if len(userIDs) == 0 {
+		// Postgres doesn't like an empty set "()", so we disallow it
+		panic("createSQLSet needs a non-empty list")
 	}
-	return sql
-}
-
-func (x *sqlUserStoreDB) emailOrUsernameExistExcludingUserids(email string, username string, userids []UserId) error {
-	var row *sql.Row
-	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)", userids)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
-	return identityFromRow(row)
-}
-
-func (x *sqlUserStoreDB) emailExistExcludingUserids(email string, userids []UserId) error {
-	var row *sql.Row
-	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1) AND (archived = false OR archived IS NULL)", userids)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(email))
-	return identityFromRow(row)
-}
-
-func (x *sqlUserStoreDB) usernameExistExcludingUserids(username string, userids []UserId) error {
-	var row *sql.Row
-	sql := x.filterOutUserIds("SELECT userid FROM authuserstore WHERE (LOWER(username) = $1) AND (archived = false OR archived IS NULL)", userids)
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(username))
-	return identityFromRow(row)
-}
-
-func (x *sqlUserStoreDB) emailOrUsernameExist(email string, username string) error {
-	var row *sql.Row
-	var sql = fmt.Sprintf("SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2) AND (archived = false OR archived IS NULL)")
-	row = x.db.QueryRow(sql, CanonicalizeIdentity(email), CanonicalizeIdentity(username))
-	return identityFromRow(row)
-}
-
-// Checks that either a valid email, or a valid username exists from the
-// given input, without checking any member of the intended target userIds
-func (x *sqlUserStoreDB) checkIdentityExistsExcludingUserId(email string, username string, userIds []UserId) error {
-
-	checkEmail := &email != nil && len(email) > 0
-	checkUsername := &username != nil && len(username) > 0
-
-	if !checkEmail && !checkUsername {
-		return ErrIdentityEmpty
-	}
-
-	var err error
-	// emails may be blank (a legacy requirement), in which case we don't check if they exist
-	if checkEmail && checkUsername {
-		err = x.emailOrUsernameExistExcludingUserids(email, username, userIds)
-	} else if !checkEmail && checkUsername {
-		err = x.usernameExistExcludingUserids(username, userIds)
-	} else {
-		err = x.emailExistExcludingUserids(email, userIds)
-	}
-	return err
-}
-
-func identityFromRow(row *sql.Row) error {
-	var userId int64
-	err := row.Scan(&userId)
-	if err != nil {
-		if strings.Index(err.Error(), "no rows in result set") == -1 {
-			return err
+	b := strings.Builder{}
+	b.WriteRune('(')
+	for i, id := range userIDs {
+		b.WriteString(strconv.FormatInt(int64(id), 10))
+		if i != len(userIDs)-1 {
+			b.WriteRune(',')
 		}
-		return nil
 	}
-	return ErrIdentityExists
+	b.WriteRune(')')
+	return b.String()
+}
+
+// findUser searches for given email address or username, but ignores any users specified in excludeUsers
+// tx is optional. If nil, then we query against the DB.
+// If email AND username are provided, then we find the first record that matches EITHER of them (we don't specify which!)
+// If the user does not exist, returns (0, nil)
+// If the user exists, returns (UserID, nil)
+// Anything else returns (0, Error)
+func (x *sqlUserStoreDB) findUser(tx *sql.Tx, email string, username string, excludeUsers []UserId) (UserId, error) {
+	s := ""
+	params := []interface{}{}
+	if email != "" && username != "" {
+		s = "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $2)"
+		params = append(params, CanonicalizeIdentity(email))
+		params = append(params, CanonicalizeIdentity(username))
+	} else if email != "" {
+		s = "SELECT userid FROM authuserstore WHERE (LOWER(email) = $1)"
+		params = append(params, CanonicalizeIdentity(email))
+	} else if username != "" {
+		s = "SELECT userid FROM authuserstore WHERE (LOWER(username) = $1)"
+		params = append(params, CanonicalizeIdentity(username))
+	} else {
+		return 0, errors.New("Neither email nor username provided to findUser")
+	}
+	s += " AND (archived = false OR archived IS NULL)"
+	if len(excludeUsers) != 0 {
+		s += " AND userid NOT IN " + createSQLSet(excludeUsers)
+	}
+
+	userID := int64(0)
+	var err error
+	if tx != nil {
+		err = tx.QueryRow(s, params...).Scan(&userID)
+	} else {
+		err = x.db.QueryRow(s, params...).Scan(&userID)
+	}
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return UserId(userID), err
 }
 
 func (x *sqlUserStoreDB) LockAccount(userId UserId) error {
@@ -327,14 +310,20 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 		return NullUserId, ehash
 	}
 
-	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{})
-	if err != nil {
-		return NullUserId, ErrIdentityExists
+	existingUserID, err := x.findUser(nil, user.Email, user.Username, []UserId{})
+	if existingUserID != 0 {
+		return existingUserID, ErrIdentityExists
+	} else if err != nil {
+		return NullUserId, err
 	}
 
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
-		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type); eCreateUserStore != nil {
+		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore " +
+		" (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype, externalUUID) " +
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks,
+			user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type, user.ExternalUUID); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
@@ -377,9 +366,11 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 }
 
 func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
-	err := x.checkIdentityExistsExcludingUserId(user.Email, user.Username, []UserId{user.UserId})
-	if err != nil {
+	existingUserID, err := x.findUser(nil, user.Email, user.Username, []UserId{user.UserId})
+	if existingUserID != 0 {
 		return ErrIdentityExists
+	} else if err != nil {
+		return err
 	}
 
 	if tx, etx := x.db.Begin(); etx == nil {
@@ -419,9 +410,11 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 
 func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	if tx, etx := x.db.Begin(); etx == nil {
-		// Check if the user exists (is not archived)
-		if err := x.identityExists(newIdent); err != nil {
+		// Check if the new name exists (and is not archived)
+		if exists, err := x.identityExists(tx, newIdent); err != nil {
 			return err
+		} else if exists {
+			return ErrIdentityExists
 		}
 
 		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2 AND (archived = false OR archived IS NULL)`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
@@ -441,7 +434,10 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
-	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
+	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, " +
+		" aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, " +
+		" aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked" +
+		" FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
 	if getIdentitiesFlag&GetIdentitiesFlagDeleted == 0 {
 		sqlStatement += " WHERE aus.archived = false OR aus.archived IS NULL"
 	}
@@ -466,15 +462,37 @@ func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		modifiedBy           sql.NullInt64
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
+		externalUUID         sql.NullString
 		passwordModifiedDate pq.NullTime
 		accountLocked        sql.NullBool
 	}
 	for rows.Next() {
 		user := sqlUser{}
-		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.accountLocked); err != nil {
+		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber,
+			&user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy,
+			&user.authUserType, &user.archived, &user.externalUUID, &user.passwordModifiedDate, &user.accountLocked); err != nil {
 			return []AuthUser{}, err
 		}
-		result = append(result, AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.accountLocked.Bool})
+		au := AuthUser{
+			UserId:               UserId(user.userId.Int64),
+			Email:                user.email.String,
+			Username:             user.username.String,
+			Firstname:            user.firstName.String,
+			Lastname:             user.lastName.String,
+			Mobilenumber:         user.mobileNumber.String,
+			Telephonenumber:      user.telephoneNumber.String,
+			Remarks:              user.remarks.String,
+			Created:              user.created.Time,
+			CreatedBy:            UserId(user.createdBy.Int64),
+			Modified:             user.modified.Time,
+			ModifiedBy:           UserId(user.modifiedBy.Int64),
+			Type:                 AuthUserType(user.authUserType.Int64),
+			Archived:             user.archived.Bool,
+			ExternalUUID:         user.externalUUID.String,
+			PasswordModifiedDate: user.passwordModifiedDate.Time,
+			AccountLocked:        user.accountLocked.Bool,
+		}
+		result = append(result, au)
 	}
 	if rows.Err() != nil {
 		return []AuthUser{}, rows.Err()
@@ -491,11 +509,11 @@ func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
 }
 
 func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
 }
 
 func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
+	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
 }
 
 func getUser(row *sql.Row) (AuthUser, error) {
@@ -514,24 +532,44 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		modifiedBy           sql.NullInt64
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
+		externalUUID         sql.NullString
 		passwordModifiedDate pq.NullTime
 		accountLocked        sql.NullBool
 	}
 	user := sqlUser{}
-	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.passwordModifiedDate, &user.accountLocked); err != nil {
+	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber,
+		&user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.externalUUID,
+		&user.passwordModifiedDate, &user.accountLocked); err != nil {
 		if strings.Index(err.Error(), "no rows in result set") == -1 {
 			return AuthUser{}, err
 		}
 		return AuthUser{}, ErrIdentityAuthNotFound
 	}
-	return AuthUser{UserId(user.userId.Int64), user.email.String, user.username.String, user.firstName.String, user.lastName.String, user.mobileNumber.String, user.telephoneNumber.String, user.remarks.String, user.created.Time, UserId(user.createdBy.Int64), user.modified.Time, UserId(user.modifiedBy.Int64), AuthUserType(user.authUserType.Int64), user.archived.Bool, user.passwordModifiedDate.Time, user.accountLocked.Bool}, nil
+
+	au := AuthUser{
+		UserId:               UserId(user.userId.Int64),
+		Email:                user.email.String,
+		Username:             user.username.String,
+		Firstname:            user.firstName.String,
+		Lastname:             user.lastName.String,
+		Mobilenumber:         user.mobileNumber.String,
+		Telephonenumber:      user.telephoneNumber.String,
+		Remarks:              user.remarks.String,
+		Created:              user.created.Time,
+		CreatedBy:            UserId(user.createdBy.Int64),
+		Modified:             user.modified.Time,
+		ModifiedBy:           UserId(user.modifiedBy.Int64),
+		Type:                 AuthUserType(user.authUserType.Int64),
+		Archived:             user.archived.Bool,
+		ExternalUUID:         user.externalUUID.String,
+		PasswordModifiedDate: user.passwordModifiedDate.Time,
+		AccountLocked:        user.accountLocked.Bool,
+	}
+
+	return au, nil
 }
 
 func (x *sqlUserStoreDB) Close() {
-	if x.db != nil {
-		x.db.Close()
-		x.db = nil
-	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -593,10 +631,6 @@ func (x *sqlSessionDB) InvalidateSessionsForIdentity(userId UserId) error {
 }
 
 func (x *sqlSessionDB) Close() {
-	if x.db != nil {
-		x.db.Close()
-		x.db = nil
-	}
 }
 
 func (x *sqlSessionDB) purgeExpiredSessions() {
@@ -647,10 +681,6 @@ func (x *sqlPermitDB) RenameIdentity(oldIdent, newIdent string) error {
 }
 
 func (x *sqlPermitDB) Close() {
-	if x.db != nil {
-		x.db.Close()
-		x.db = nil
-	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -746,31 +776,22 @@ func computeAuthausHash(password string) (string, error) {
 	return base64.StdEncoding.EncodeToString(cblock[:]), nil
 }
 
-func NewUserStoreDB_SQL(conx *DBConnection) (UserStore, error) {
-	db := new(sqlUserStoreDB)
-	var err error
-	if db.db, err = conx.Connect(); err != nil {
-		return nil, err
-	}
-	return db, nil
+func NewUserStoreDB_SQL(db *sql.DB) (UserStore, error) {
+	userStore := new(sqlUserStoreDB)
+	userStore.db = db
+	return userStore, nil
 }
 
-func NewSessionDB_SQL(conx *DBConnection) (SessionDB, error) {
-	db := new(sqlSessionDB)
-	var err error
-	if db.db, err = conx.Connect(); err != nil {
-		return nil, err
-	}
-	return db, nil
+func NewSessionDB_SQL(db *sql.DB) (SessionDB, error) {
+	sessions := new(sqlSessionDB)
+	sessions.db = db
+	return sessions, nil
 }
 
-func NewPermitDB_SQL(conx *DBConnection) (PermitDB, error) {
-	db := new(sqlPermitDB)
-	var err error
-	if db.db, err = conx.Connect(); err != nil {
-		return nil, err
-	}
-	return db, nil
+func NewPermitDB_SQL(db *sql.DB) (PermitDB, error) {
+	permits := new(sqlPermitDB)
+	permits.db = db
+	return permits, nil
 }
 
 // schema_name must be a lower case SQL table name that needs no escaping
@@ -920,8 +941,20 @@ func createMigrations() []migration.Migrator {
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
 		`,
+
 		// 11. Account lock
 		`ALTER TABLE authuserpwd ADD COLUMN accountlocked BOOLEAN DEFAULT FALSE;`,
+
+		// 12. OAuth (tables are prefixed with oauth, because authoauth is just too silly)
+		//     We have no use for externaluuid yet, but it seems like a good idea to try and pin as permanent
+		//     a handle onto an identity.
+		`CREATE TABLE oauthchallenge (id VARCHAR PRIMARY KEY, provider VARCHAR NOT NULL, created TIMESTAMP NOT NULL, nonce VARCHAR, pkce_verifier VARCHAR);
+		CREATE TABLE oauthsession (id VARCHAR PRIMARY KEY, provider VARCHAR NOT NULL, created TIMESTAMP NOT NULL, updated TIMESTAMP NOT NULL, token JSONB);
+		CREATE INDEX idx_oauthchallenge_created ON oauthchallenge (created);
+		CREATE INDEX idx_oauthsession_updated ON oauthsession (updated);
+		ALTER TABLE authuserstore ADD COLUMN externaluuid UUID;
+		ALTER TABLE authsession ADD COLUMN oauthid VARCHAR;
+		`,
 	}
 
 	for _, src := range text {

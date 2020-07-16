@@ -145,7 +145,9 @@ func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionD
 		t.Fatalf("Unable to create test database: %v: %v", dbName, ecreate)
 	}
 
-	if db, errdb := conn.Connect(); errdb != nil {
+	db, errdb := conn.Connect()
+
+	if errdb != nil {
 		t.Fatalf("Unable to connect to database %v: %v", dbName, errdb)
 	} else {
 		if err := sqlDeleteAllTables(db); err != nil {
@@ -158,10 +160,10 @@ func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionD
 	}
 
 	var err [4]error
-	*(userStore), err[0] = NewUserStoreDB_SQL(&conn)
-	*(sessionDB), err[1] = NewSessionDB_SQL(&conn)
-	*(permitDB), err[2] = NewPermitDB_SQL(&conn)
-	*(roleDB), err[3] = NewRoleGroupDB_SQL(&conn)
+	*(userStore), err[0] = NewUserStoreDB_SQL(db)
+	*(sessionDB), err[1] = NewSessionDB_SQL(db)
+	*(permitDB), err[2] = NewPermitDB_SQL(db)
+	*(roleDB), err[3] = NewRoleGroupDB_SQL(db)
 	if firstError(err[:]) != nil {
 		t.Fatalf("Unable to connect to database %v: %v", dbName, firstError(err[:]))
 	}
@@ -1494,7 +1496,7 @@ func TestAccountLocking(t *testing.T) {
 	defer Teardown(c)
 	c.MaxFailedLoginAttempts = 4
 	c.EnableAccountLocking = true
-	c.loginDelayFactor = 0 // add 0 ms per invalid login attempt
+	c.loginDelayMS = 0 // add 0 ms per invalid login attempt
 	c.Auditor = c
 
 	user, userErr := c.GetUserFromIdentity(joeEmail)

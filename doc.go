@@ -205,6 +205,58 @@ administrator will assign 375 security groups to any individual. We expect the n
 assigned to any individual to be in the range of 1 to 20. This makes 375 a gigantic
 buffer.
 
+OAuth
+
+OAuth support in Authaus is limited to a very simple scenario:
+
+* You wish to allow your users to login using an OAuth service - thereby outsourcing the
+Authentication to that external service, and using it to populate the email address of
+your users.
+
+OAuth was developed in order to work with Microsoft Azure Active Directory, however
+it should be fairly easy to extend the code to be able to handle other OAuth providers.
+
+Inside the database are two tables related to OAuth:
+
+oauthchallenge: The challenge table holds OAuth sessions which have been started, and which are expected to either
+succeed or fail within the next few minutes. The default timeout for a challenge is 5 minutes.
+A challenge record is usually created the moment the user clicks on the "Sign in with Microsoft" button
+on your site, and it tracks that authentication attempt.
+
+oauthsession: The session table holds OAuth sessions which have successfully authenticated, and also
+the token that was retrieved by a successful authorization. If a token has expired, then it is refreshed
+and updated in-place, inside the oauthsession table.
+
+An OAuth login follows this sequence of events:
+
+1. User clicks on a "Signin with X" button on your login page
+2. A record is created in the oauthchallenge table, with a unique ID. This ID is a secret known
+only to the authaus server and the OAuth server. It is used as the `state` parameter in the OAuth
+login mechanism.
+3. The HTTP call which prompts #2 return a redirect URL (eg via an HTTP 302 response), which redirects
+the user's browser to the OAuth website, so that the user can either grant or refuse access. If the
+user refuses, or fails to login, then the login sequence ends here.
+4. Upon successful authorization with the OAuth system, the OAuth website redirects the user back to
+your website, to a URL such as example.com/auth/oauth/finish, and you'll typically want Authaus to
+handle this request directly (via HttpHandlerOAuthFinish). Authaus will extract the secrets from
+the URL, perform any validations necessary, and then move the record from the oauthchallenge table,
+into the oauthsession table. While 'moving' the record over, it will also add any additional
+information that was provided by the successful authentication, such as the token provided by the
+OAuth provider.
+5. Authaus makes an API call to the OAuth system, to retrieve the email address and name of the
+person that just logged in, using the token just received.
+6. If that email address does not exist inside authuserstore, then create a new user record
+for this identity.
+7. Log the user into Authaus, by creating a record inside authsession, for the relevant identity.
+Inside the authsession table, store a link to the oauthsession record, so that there is a 1:1
+link from the authsession table, to the oauthsession table (ie Authaus Session to OAuth Token).
+8. Return an Authaus session cookie to the browser, thereby completing the login.
+
+Although we only use our OAuth token a single time, during login, to retrieve the user's
+email address and name, we retain the OAuth token, and so we maintain the ability to make
+other API calls on behalf of that user. This hasn't proven necessary yet, but it seems like
+a reasonable bit of future-proofing.
+
 Testing
 
 See the guidelines at the top of all_test.go for testing instructions.

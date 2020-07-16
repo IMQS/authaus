@@ -17,6 +17,7 @@ const (
 const (
 	UserTypeDefault AuthUserType = 0
 	UserTypeLDAP    AuthUserType = 1
+	UserTypeOAuth   AuthUserType = 2
 )
 
 var (
@@ -134,6 +135,7 @@ type AuthUser struct {
 	ModifiedBy           UserId       `json:"modifiedBy"`
 	Type                 AuthUserType `json:"type"`
 	Archived             bool         `json:"archived"`
+	ExternalUUID         string       `json:"externalUUID"`
 	PasswordModifiedDate time.Time    `json:"passwordModifiedDate"`
 	AccountLocked        bool         `json:"accountLocked"`
 }
