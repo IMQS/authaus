@@ -27,6 +27,7 @@ type ConfigOAuthProvider struct {
 	ClientID     string // For MSAAD
 	LoginURL     string // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/authorize
 	TokenURL     string // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/token
+	RedirectURL  string // eg https://stellenbosch.imqs.co.za/auth2/oauth/finish. URL must be listed in IMQS app in Azure. Can be http://localhost/auth2/oauth/finish for testing.
 	Scope        string
 	ClientSecret string
 }
@@ -369,6 +370,7 @@ func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier
 	params := map[string]string{
 		"client_id":     provider.ClientID,
 		"scope":         provider.Scope,
+		"redirect_uri":  provider.RedirectURL,
 		"client_secret": url.QueryEscape(provider.ClientSecret),
 		"grant_type":    "authorization_code",
 		"code":          code,
@@ -695,6 +697,7 @@ func createOAuthURL(provider *ConfigOAuthProvider, sessionID, nonce, pkceChallen
 	params := map[string]string{
 		"client_id":             provider.ClientID,
 		"scope":                 provider.Scope,
+		"redirect_uri":          provider.RedirectURL,
 		"code_challenge":        pkceChallenge,
 		"code_challenge_method": "S256",
 		"client_secret":         url.QueryEscape(provider.ClientSecret),
