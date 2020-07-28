@@ -86,37 +86,42 @@ func createVersionTable(db *sql.DB, version int) error {
 }
 
 func createMigrations() []migration.Migrator {
-	var migrations []migration.Migrator
+	simple := func(sqlText string) migration.Migrator {
+		return func(tx migration.LimitedTx) error {
+			_, err := tx.Exec(sqlText)
+			return err
+		}
+	}
 
-	text := []string{
+	return []migration.Migrator{
 		// 1. authgroup
-		`CREATE TABLE authgroup (id SERIAL PRIMARY KEY, name VARCHAR, permlist VARCHAR);
-		CREATE UNIQUE INDEX idx_authgroup_name ON authgroup (name);`,
+		simple(`CREATE TABLE authgroup (id SERIAL PRIMARY KEY, name VARCHAR, permlist VARCHAR);
+		CREATE UNIQUE INDEX idx_authgroup_name ON authgroup (name);`),
 
 		// 2. authsession
-		`CREATE TABLE authsession (id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
+		simple(`CREATE TABLE authsession (id BIGSERIAL PRIMARY KEY, sessionkey VARCHAR, identity VARCHAR, permit VARCHAR, expires TIMESTAMP);
 		CREATE UNIQUE INDEX idx_authsession_token ON authsession (sessionkey);
 		CREATE INDEX idx_authsession_identity ON authsession (identity);
-		CREATE INDEX idx_authsession_expires  ON authsession (expires);`,
+		CREATE INDEX idx_authsession_expires  ON authsession (expires);`),
 
 		// 3.
-		`DELETE FROM authsession;`,
+		simple(`DELETE FROM authsession;`),
 
 		// 4. authuser
-		`CREATE TABLE authuser (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
-		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);`,
+		simple(`CREATE TABLE authuser (id BIGSERIAL PRIMARY KEY, identity VARCHAR, password VARCHAR, permit VARCHAR);
+		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (identity);`),
 
 		// 5. authuser (case insensitive)
-		`DROP INDEX idx_authuser_identity;
-		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (LOWER(identity));`,
+		simple(`DROP INDEX idx_authuser_identity;
+		CREATE UNIQUE INDEX idx_authuser_identity ON authuser (LOWER(identity));`),
 
 		// 6. password reset
-		`ALTER TABLE authuser ADD COLUMN pwdtoken VARCHAR;`,
+		simple(`ALTER TABLE authuser ADD COLUMN pwdtoken VARCHAR;`),
 
 		// END OF OLD (pre BurntSushi) MIGRATIONS
 
 		// 7. Change from using email address as the primary identity of a user, to a 64-bit integer, which we call UserId.
-		`CREATE TABLE authuserstore (userid BIGSERIAL PRIMARY KEY, email VARCHAR, username VARCHAR, firstname VARCHAR, lastname VARCHAR, mobile VARCHAR, archived BOOLEAN);
+		simple(`CREATE TABLE authuserstore (userid BIGSERIAL PRIMARY KEY, email VARCHAR, username VARCHAR, firstname VARCHAR, lastname VARCHAR, mobile VARCHAR, archived BOOLEAN);
 		CREATE INDEX idx_authuserstore_email ON authuserstore (LOWER(email));
 		INSERT INTO authuserstore (email) SELECT identity from authuser;
 
@@ -135,51 +140,42 @@ func createMigrations() []migration.Migrator {
 			ON authuser.identity = store.email;
 
 		DROP TABLE authuser;
-		`,
+		`),
 
 		// 8. We add AuthUserType field to the userstore, to determine what type of user account this is.
-		`ALTER TABLE authuserstore ADD COLUMN authusertype SMALLINT default 0;`,
+		simple(`ALTER TABLE authuserstore ADD COLUMN authusertype SMALLINT default 0;`),
 
 		// 9. Additional data fields as well as fields to keep track of changes to users
-		`ALTER TABLE authuserstore
+		simple(`ALTER TABLE authuserstore
 			ADD COLUMN phone VARCHAR,
 			ADD COLUMN remarks VARCHAR,
 			ADD COLUMN created TIMESTAMP,
 			ADD COLUMN createdby BIGINT,
 			ADD COLUMN modified TIMESTAMP,
-			ADD COLUMN modifiedby BIGINT;`,
+			ADD COLUMN modifiedby BIGINT;`),
 
 		// 10. Archive passwords
-		`ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();
+		simple(`ALTER TABLE authuserstore  ALTER COLUMN modified SET DEFAULT NOW();
 		ALTER TABLE authuserpwd  ADD COLUMN created TIMESTAMP DEFAULT NOW();
 		ALTER TABLE authuserpwd  ADD COLUMN updated TIMESTAMP DEFAULT NOW();
 
 		CREATE TABLE authpwdarchive (id BIGSERIAL PRIMARY KEY, userid BIGINT NOT NULL, password VARCHAR NOT NULL, created TIMESTAMP DEFAULT NOW());
-		`,
+		`),
 
 		// 11. Account lock
-		`ALTER TABLE authuserpwd ADD COLUMN accountlocked BOOLEAN DEFAULT FALSE;`,
+		simple(`ALTER TABLE authuserpwd ADD COLUMN accountlocked BOOLEAN DEFAULT FALSE;`),
 
 		// 12. OAuth (tables are prefixed with oauth, because authoauth is just too silly)
 		//     We have no use for externaluuid yet, but it seems like a good idea to try and pin as permanent
 		//     a handle onto an identity.
-		`CREATE TABLE oauthchallenge (id VARCHAR PRIMARY KEY, provider VARCHAR NOT NULL, created TIMESTAMP NOT NULL, nonce VARCHAR, pkce_verifier VARCHAR);
+		simple(`CREATE TABLE oauthchallenge (id VARCHAR PRIMARY KEY, provider VARCHAR NOT NULL, created TIMESTAMP NOT NULL, nonce VARCHAR, pkce_verifier VARCHAR);
 		CREATE TABLE oauthsession (id VARCHAR PRIMARY KEY, provider VARCHAR NOT NULL, created TIMESTAMP NOT NULL, updated TIMESTAMP NOT NULL, token JSONB);
 		CREATE INDEX idx_oauthchallenge_created ON oauthchallenge (created);
 		CREATE INDEX idx_oauthsession_updated ON oauthsession (updated);
 		ALTER TABLE authuserstore ADD COLUMN externaluuid UUID;
 		ALTER TABLE authsession ADD COLUMN oauthid VARCHAR;
-		`,
+		`),
 	}
-
-	for _, src := range text {
-		srcCapture := src
-		migrations = append(migrations, func(tx migration.LimitedTx) error {
-			_, err := tx.Exec(srcCapture)
-			return err
-		})
-	}
-	return migrations
 }
 
 /* This moves from the old in-house migration system to BurntSushi
