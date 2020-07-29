@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/migration"
+	"github.com/google/uuid"
 	// Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
 )
 
@@ -92,6 +93,16 @@ func createMigrations() []migration.Migrator {
 			return err
 		}
 	}
+	compound := func(migrations []migration.Migrator) migration.Migrator {
+		return func(tx migration.LimitedTx) error {
+			for _, m := range migrations {
+				if err := m(tx); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
 
 	return []migration.Migrator{
 		// 1. authgroup
@@ -175,7 +186,50 @@ func createMigrations() []migration.Migrator {
 		ALTER TABLE authuserstore ADD COLUMN externaluuid UUID;
 		ALTER TABLE authsession ADD COLUMN oauthid VARCHAR;
 		`),
+
+		// 13. Add internaluuid. The internalUUID is intended to be used in cases where an external system
+		// wants a UUID instead of an integer ID.
+		// Unfortunately we can't rely on our user having the permission to install extensions... so we have to
+		// create the UUIDs in Go code. This is just a legacy issue at IMQS - if it was easy to retrofit, then
+		// I would prefer to grant the auth user superuser priviledges on the DB
+		compound([]migration.Migrator{
+			simple(
+				`ALTER TABLE authuserstore ADD COLUMN internaluuid UUID;
+		CREATE UNIQUE INDEX idx_authuserstore_internaluuid ON authuserstore(internaluuid);
+		`),
+			addInternalUUIDs, // This is Go code to do the equivalent of: "UPDATE authuserstore SET internaluuid = uuid_generate_v4();"
+			simple(`
+		ALTER TABLE authsession ADD COLUMN internaluuid UUID;
+		UPDATE authsession
+			SET internaluuid = authuserstore.internaluuid
+			FROM authuserstore
+			WHERE authuserstore.userid = authsession.userid;
+		`)}),
 	}
+}
+
+func addInternalUUIDs(tx migration.LimitedTx) error {
+	rows, err := tx.Query("SELECT userid FROM authuserstore")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	userids := []int64{}
+	for rows.Next() {
+		uid := int64(0)
+		if err := rows.Scan(&uid); err != nil {
+			return err
+		}
+		userids = append(userids, uid)
+	}
+	for _, uid := range userids {
+		uuid, err := uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+		tx.Exec("UPDATE authuserstore SET internaluuid = $1 WHERE userid = $2", uuid.String(), uid)
+	}
+	return nil
 }
 
 /* This moves from the old in-house migration system to BurntSushi

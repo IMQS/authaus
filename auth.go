@@ -96,12 +96,13 @@ the identity that performed the request, when this token expires, and
 the permit belonging to this identity.
 */
 type Token struct {
-	Identity string
-	UserId   UserId
-	Email    string
-	Username string
-	Expires  time.Time
-	Permit   Permit
+	Identity     string
+	UserId       UserId
+	Email        string
+	Username     string
+	InternalUUID string
+	Expires      time.Time
+	Permit       Permit
 }
 
 // Transform an identity into its canonical form. What this means is that any two identities
@@ -480,10 +481,11 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 	if eAuth == nil {
 		if permit, ePermit := x.permitDB.GetPermit(user.UserId); ePermit == nil {
 			t := &Token{
-				Expires:  veryFarFuture,
-				Identity: user.getIdentity(),
-				UserId:   user.UserId,
-				Permit:   *permit,
+				Expires:      veryFarFuture,
+				Identity:     user.getIdentity(),
+				UserId:       user.UserId,
+				Permit:       *permit,
+				InternalUUID: user.InternalUUID,
 			}
 			x.Stats.IncrementGoodOnceOffAuth(x.Log)
 			x.Log.Infof("Once-off auth successful (%v)", user.UserId)
@@ -538,9 +540,10 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress string) (session
 	}
 
 	token = &Token{
-		Permit:   *permit,
-		Identity: user.getIdentity(),
-		UserId:   user.UserId,
+		Permit:       *permit,
+		Identity:     user.getIdentity(),
+		UserId:       user.UserId,
+		InternalUUID: user.InternalUUID,
 	}
 
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
@@ -568,7 +571,7 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress string) (session
 func (x *Central) authenticate(identity, password string, clientIPAddress string) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
-		return user, ErrIdentityAuthNotFound
+		return AuthUser{}, ErrIdentityAuthNotFound
 	}
 	var authTypeCheck AuthCheck
 	if x.PasswordExpiresAfter != 0 {
@@ -619,7 +622,7 @@ func (x *Central) authenticate(identity, password string, clientIPAddress string
 				x.Stats.userLoginAttemptsLock.Unlock()
 				if int(invalidPasswords) >= x.MaxFailedLoginAttempts && isLockable {
 					if lockErr := x.userStore.LockAccount(user.UserId); lockErr == nil {
-						contextData := userInfoToAuditTrailJSON(user, clientIPAddress)
+						contextData := userInfoToAuditTrailJSON(*user, clientIPAddress)
 						x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionLocked)
 						authErr = ErrAccountLocked
 					} else {
@@ -632,7 +635,7 @@ func (x *Central) authenticate(identity, password string, clientIPAddress string
 			}
 		}
 	}
-	return user, authErr
+	return *user, authErr
 }
 
 func (x *Central) AuthenticateUser(identity, password string, authTypeCheck AuthCheck) error {
@@ -951,7 +954,7 @@ func (x *Central) ArchiveIdentity(userId UserId) error {
 func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromIdentity(identity)
 	if e == nil {
-		return user, nil
+		return *user, nil
 	} else {
 		x.Log.Infof("GetUserIdFromIdentity failed (%v) (%v)", identity, e)
 	}
@@ -962,7 +965,7 @@ func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromUserId(userId)
 	if e == nil {
-		return user, nil
+		return *user, nil
 	} else {
 		x.Log.Infof("GetIdentityFromUserId failed (%v) (%v)", userId, e)
 	}

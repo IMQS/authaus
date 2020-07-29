@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq" // Tested against 04c77ed03f9b391050bec3b5f2f708f204df48b2 (Sep 16, 2014)
 	"golang.org/x/crypto/scrypt"
 )
@@ -40,6 +41,10 @@ const (
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type scannable interface {
+	Scan(dest ...interface{}) error
+}
 
 type sqlUserStoreDB struct {
 	db             *sql.DB
@@ -316,6 +321,14 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 		return NullUserId, err
 	}
 
+	if user.InternalUUID == "" {
+		if uuid, err := uuid.NewRandom(); err != nil {
+			return NullUserId, err
+		} else {
+			user.InternalUUID = uuid.String()
+		}
+	}
+
 	// Insert into user store
 	if tx, etx := x.db.Begin(); etx == nil {
 		externalUUID := &user.ExternalUUID
@@ -323,10 +336,10 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 			externalUUID = nil
 		}
 		if _, eCreateUserStore := tx.Exec(`INSERT INTO authuserstore `+
-			` (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype, externalUUID) `+
-			` VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			` (email, username, firstname, lastname, mobile, phone, remarks, created, createdby, modified, modifiedby, archived, authusertype, internalUUID, externalUUID) `+
+			` VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks,
-			user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type, externalUUID); eCreateUserStore != nil {
+			user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, false, user.Type, user.InternalUUID, externalUUID); eCreateUserStore != nil {
 			tx.Rollback()
 			return NullUserId, eCreateUserStore
 		}
@@ -377,7 +390,12 @@ func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 	}
 
 	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, remarks = $7, modified= $8, modifiedby = $9, authusertype = $10 WHERE userid = $11 AND (archived = false OR archived IS NULL)`, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Modified, user.ModifiedBy, user.Type, user.UserId); eupdate == nil {
+		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, `+
+			`remarks = $7, modified= $8, modifiedby = $9, authusertype = $10`+
+			` WHERE userid = $11 AND (archived = false OR archived IS NULL)`,
+			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber,
+			user.Remarks, user.Modified, user.ModifiedBy, user.Type,
+			user.UserId); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
 			} else {
@@ -436,20 +454,30 @@ func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	}
 }
 
-func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
-	sqlStatement := "SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, " +
-		" aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, " +
-		" aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked" +
+func selectUsersSQL() string {
+	return "SELECT " +
+		"aus.userid, " +
+		"aus.email, " +
+		"aus.username, " +
+		"aus.firstname, " +
+		"aus.lastname, " +
+		"aus.mobile, " +
+		"aus.phone, " +
+		"aus.remarks, " +
+		"aus.created, " +
+		"aus.createdby, " +
+		"aus.modified, " +
+		"aus.modifiedby, " +
+		"aus.authusertype, " +
+		"aus.archived, " +
+		"aus.internaluuid, " +
+		"aus.externaluuid, " +
+		"pwd.updated, " +
+		"pwd.accountlocked " +
 		" FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid"
-	if getIdentitiesFlag&GetIdentitiesFlagDeleted == 0 {
-		sqlStatement += " WHERE aus.archived = false OR aus.archived IS NULL"
-	}
-	rows, err := x.db.Query(sqlStatement)
-	if err != nil {
-		return []AuthUser{}, err
-	}
-	defer rows.Close()
-	result := make([]AuthUser, 0)
+}
+
+func selectUsersScan(rows scannable) (*AuthUser, error) {
 	type sqlUser struct {
 		userId               sql.NullInt64
 		email                sql.NullString
@@ -465,91 +493,22 @@ func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		modifiedBy           sql.NullInt64
 		authUserType         sql.NullInt64
 		archived             sql.NullBool
-		externalUUID         sql.NullString
-		passwordModifiedDate pq.NullTime
-		accountLocked        sql.NullBool
-	}
-	for rows.Next() {
-		user := sqlUser{}
-		if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber,
-			&user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy,
-			&user.authUserType, &user.archived, &user.externalUUID, &user.passwordModifiedDate, &user.accountLocked); err != nil {
-			return []AuthUser{}, err
-		}
-		au := AuthUser{
-			UserId:               UserId(user.userId.Int64),
-			Email:                user.email.String,
-			Username:             user.username.String,
-			Firstname:            user.firstName.String,
-			Lastname:             user.lastName.String,
-			Mobilenumber:         user.mobileNumber.String,
-			Telephonenumber:      user.telephoneNumber.String,
-			Remarks:              user.remarks.String,
-			Created:              user.created.Time,
-			CreatedBy:            UserId(user.createdBy.Int64),
-			Modified:             user.modified.Time,
-			ModifiedBy:           UserId(user.modifiedBy.Int64),
-			Type:                 AuthUserType(user.authUserType.Int64),
-			Archived:             user.archived.Bool,
-			ExternalUUID:         user.externalUUID.String,
-			PasswordModifiedDate: user.passwordModifiedDate.Time,
-			AccountLocked:        user.accountLocked.Bool,
-		}
-		result = append(result, au)
-	}
-	if rows.Err() != nil {
-		return []AuthUser{}, rows.Err()
-	}
-	return result, nil
-}
-
-func (x *sqlUserStoreDB) GetUserFromIdentity(identity string) (AuthUser, error) {
-	return getUserFromIdentity(x.db, identity)
-}
-
-func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (AuthUser, error) {
-	return getUserFromUserId(x.db, userId)
-}
-
-func getUserFromIdentity(db *sql.DB, identity string) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)", CanonicalizeIdentity(identity)))
-}
-
-func getUserFromUserId(db *sql.DB, userId UserId) (AuthUser, error) {
-	return getUser(db.QueryRow("SELECT aus.userid, aus.email, aus.username, aus.firstname, aus.lastname, aus.mobile, aus.phone, aus.remarks, aus.created, aus.createdby, aus.modified, aus.modifiedby, aus.authusertype, aus.archived, aus.externaluuid, pwd.updated, pwd.accountlocked FROM authuserstore aus LEFT JOIN authuserpwd pwd ON aus.userid = pwd.userid WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)", userId))
-}
-
-func getUser(row *sql.Row) (AuthUser, error) {
-	type sqlUser struct {
-		userId               sql.NullInt64
-		email                sql.NullString
-		username             sql.NullString
-		firstName            sql.NullString
-		lastName             sql.NullString
-		mobileNumber         sql.NullString
-		telephoneNumber      sql.NullString
-		remarks              sql.NullString
-		created              pq.NullTime
-		createdBy            sql.NullInt64
-		modified             pq.NullTime
-		modifiedBy           sql.NullInt64
-		authUserType         sql.NullInt64
-		archived             sql.NullBool
+		internalUUID         sql.NullString
 		externalUUID         sql.NullString
 		passwordModifiedDate pq.NullTime
 		accountLocked        sql.NullBool
 	}
 	user := sqlUser{}
-	if err := row.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber, &user.telephoneNumber,
-		&user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy, &user.authUserType, &user.archived, &user.externalUUID,
+	if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber,
+		&user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy,
+		&user.authUserType, &user.archived, &user.internalUUID, &user.externalUUID,
 		&user.passwordModifiedDate, &user.accountLocked); err != nil {
-		if strings.Index(err.Error(), "no rows in result set") == -1 {
-			return AuthUser{}, err
+		if err == sql.ErrNoRows {
+			return nil, ErrIdentityAuthNotFound
 		}
-		return AuthUser{}, ErrIdentityAuthNotFound
+		return nil, err
 	}
-
-	au := AuthUser{
+	au := &AuthUser{
 		UserId:               UserId(user.userId.Int64),
 		Email:                user.email.String,
 		Username:             user.username.String,
@@ -564,12 +523,54 @@ func getUser(row *sql.Row) (AuthUser, error) {
 		ModifiedBy:           UserId(user.modifiedBy.Int64),
 		Type:                 AuthUserType(user.authUserType.Int64),
 		Archived:             user.archived.Bool,
+		InternalUUID:         user.internalUUID.String,
 		ExternalUUID:         user.externalUUID.String,
 		PasswordModifiedDate: user.passwordModifiedDate.Time,
 		AccountLocked:        user.accountLocked.Bool,
 	}
-
 	return au, nil
+}
+
+func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
+	sqlStatement := selectUsersSQL()
+	if getIdentitiesFlag&GetIdentitiesFlagDeleted == 0 {
+		sqlStatement += " WHERE aus.archived = false OR aus.archived IS NULL"
+	}
+	rows, err := x.db.Query(sqlStatement)
+	if err != nil {
+		return []AuthUser{}, err
+	}
+	defer rows.Close()
+	result := make([]AuthUser, 0)
+	for rows.Next() {
+		au, err := selectUsersScan(rows)
+		if err != nil {
+			return []AuthUser{}, err
+		}
+		result = append(result, *au)
+	}
+	if rows.Err() != nil {
+		return []AuthUser{}, rows.Err()
+	}
+	return result, nil
+}
+
+func (x *sqlUserStoreDB) GetUserFromIdentity(identity string) (*AuthUser, error) {
+	return getUserFromIdentity(x.db, identity)
+}
+
+func (x *sqlUserStoreDB) GetUserFromUserId(userId UserId) (*AuthUser, error) {
+	return getUserFromUserId(x.db, userId)
+}
+
+func getUserFromIdentity(db *sql.DB, identity string) (*AuthUser, error) {
+	sqlStr := selectUsersSQL() + " WHERE (LOWER(aus.email) = $1 OR LOWER(aus.username) = $1) AND (aus.archived = false OR aus.archived IS NULL)"
+	return selectUsersScan(db.QueryRow(sqlStr, CanonicalizeIdentity(identity)))
+}
+
+func getUserFromUserId(db *sql.DB, userId UserId) (*AuthUser, error) {
+	sqlStr := selectUsersSQL() + " aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)"
+	return selectUsersScan(db.QueryRow(sqlStr, userId))
 }
 
 func (x *sqlUserStoreDB) Close() {
@@ -590,11 +591,11 @@ func (x *sqlSessionDB) Write(sessionkey string, token *Token) error {
 
 func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 	x.purgeExpiredSessions()
-	row := x.db.QueryRow(`SELECT userid, permit, expires FROM authsession WHERE sessionkey = $1`, sessionkey)
+	row := x.db.QueryRow(`SELECT userid, permit, expires, internaluuid FROM authsession WHERE sessionkey = $1`, sessionkey)
 	token := &Token{}
 	epermit := ""
 	var userId int64
-	if err := row.Scan(&userId, &epermit, &token.Expires); err != nil {
+	if err := row.Scan(&userId, &epermit, &token.Expires, &token.InternalUUID); err != nil {
 		return nil, ErrInvalidSessionToken
 	} else {
 		if err := token.Permit.Deserialize(epermit); err != nil {

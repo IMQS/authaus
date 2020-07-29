@@ -3,6 +3,8 @@ package authaus
 import (
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Authenticator/Userstore that simply stores identity/passwords in memory
@@ -31,6 +33,7 @@ type dummyUser struct {
 	authUserType         AuthUserType
 	passwordModifiedDate time.Time
 	accountLocked        bool
+	internalUUID         string
 }
 
 func newDummyLdap() *dummyLdap {
@@ -121,8 +124,13 @@ func (x *dummyUserStore) CreateIdentity(user *AuthUser, password string) (UserId
 	var userD *dummyUser
 	userD = x.getDummyUser(user.Email)
 	if userD == nil {
+		if user.InternalUUID == "" {
+			uuid, _ := uuid.NewRandom()
+			user.InternalUUID = uuid.String()
+		}
 		userId := x.generateUserId()
-		x.users[userId] = &dummyUser{userId, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy, user.Modified, user.ModifiedBy, password, "", false, user.Type, user.PasswordModifiedDate, user.AccountLocked}
+		x.users[userId] = &dummyUser{userId, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy,
+			user.Modified, user.ModifiedBy, password, "", false, user.Type, user.PasswordModifiedDate, user.AccountLocked, user.InternalUUID}
 		return userId, nil
 	} else {
 		return NullUserId, ErrIdentityExists
@@ -190,7 +198,7 @@ func (x *dummyUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		if (getIdentitiesFlag&GetIdentitiesFlagDeleted == 0) && v.archived {
 			continue
 		}
-		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, "", v.passwordModifiedDate, v.accountLocked})
+		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, v.internalUUID, "", v.passwordModifiedDate, v.accountLocked})
 	}
 	return list, nil
 }
@@ -213,32 +221,32 @@ func (x *dummyUserStore) UnlockAccount(userId UserId) error {
 	return nil
 }
 
-func (x *dummyUserStore) GetUserFromIdentity(identity string) (AuthUser, error) {
+func (x *dummyUserStore) GetUserFromIdentity(identity string) (*AuthUser, error) {
 	x.usersLock.RLock()
 	defer x.usersLock.RUnlock()
 
 	for _, v := range x.users {
 		if CanonicalizeIdentity(v.email) == CanonicalizeIdentity(identity) && v.archived == false {
-			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked}, nil
+			return &AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked, InternalUUID: v.internalUUID}, nil
 		} else if CanonicalizeIdentity(v.username) == CanonicalizeIdentity(identity) && v.archived == false {
-			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked}, nil
+			return &AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, AccountLocked: v.accountLocked, InternalUUID: v.internalUUID}, nil
 		}
 	}
 
-	return AuthUser{}, ErrIdentityAuthNotFound
+	return nil, ErrIdentityAuthNotFound
 }
 
-func (x *dummyUserStore) GetUserFromUserId(userId UserId) (AuthUser, error) {
+func (x *dummyUserStore) GetUserFromUserId(userId UserId) (*AuthUser, error) {
 	x.usersLock.RLock()
 	defer x.usersLock.RUnlock()
 
 	for _, v := range x.users {
 		if v.userId == userId && v.archived == false {
-			return AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate}, nil
+			return &AuthUser{UserId: v.userId, Email: v.email, Username: v.username, Firstname: v.firstname, Lastname: v.lastname, Mobilenumber: v.mobilenumber, Type: v.authUserType, PasswordModifiedDate: v.passwordModifiedDate, InternalUUID: v.internalUUID}, nil
 		}
 	}
 
-	return AuthUser{}, ErrIdentityAuthNotFound
+	return nil, ErrIdentityAuthNotFound
 }
 
 func (x *dummyUserStore) getDummyUser(identity string) *dummyUser {

@@ -82,10 +82,10 @@ type UserStore interface {
 	ArchiveIdentity(userId UserId) error                                                                          // Archive an identity
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
 	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
-	GetUserFromIdentity(identity string) (AuthUser, error)                 // Gets the user object from the identity supplied
+	GetUserFromIdentity(identity string) (*AuthUser, error)                // Gets the user object from the identity supplied
 	LockAccount(userId UserId) error                                       // Locks an account
 	UnlockAccount(userId UserId) error                                     // Unlocks an account
-	GetUserFromUserId(userId UserId) (AuthUser, error)                     // Gets the user object from the userId supplied
+	GetUserFromUserId(userId UserId) (*AuthUser, error)                    // Gets the user object from the userId supplied
 	GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) // Retrieve a list of all identities
 	Close()                                                                // Typically used to close a database handle
 }
@@ -135,6 +135,7 @@ type AuthUser struct {
 	ModifiedBy           UserId       `json:"modifiedBy"`
 	Type                 AuthUserType `json:"type"`
 	Archived             bool         `json:"archived"`
+	InternalUUID         string       `json:"internalUUID"`
 	ExternalUUID         string       `json:"externalUUID"`
 	PasswordModifiedDate time.Time    `json:"passwordModifiedDate"`
 	AccountLocked        bool         `json:"accountLocked"`
@@ -239,11 +240,11 @@ func (x *sanitizingUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag)
 	return x.backend.GetIdentities(getIdentitiesFlag)
 }
 
-func (x *sanitizingUserStore) GetUserFromIdentity(identity string) (AuthUser, error) {
+func (x *sanitizingUserStore) GetUserFromIdentity(identity string) (*AuthUser, error) {
 	return x.backend.GetUserFromIdentity(identity)
 }
 
-func (x *sanitizingUserStore) GetUserFromUserId(userId UserId) (AuthUser, error) {
+func (x *sanitizingUserStore) GetUserFromUserId(userId UserId) (*AuthUser, error) {
 	return x.backend.GetUserFromUserId(userId)
 }
 
