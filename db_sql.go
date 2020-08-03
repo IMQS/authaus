@@ -569,7 +569,7 @@ func getUserFromIdentity(db *sql.DB, identity string) (*AuthUser, error) {
 }
 
 func getUserFromUserId(db *sql.DB, userId UserId) (*AuthUser, error) {
-	sqlStr := selectUsersSQL() + " aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)"
+	sqlStr := selectUsersSQL() + " WHERE aus.userid = $1 AND (aus.archived = false OR aus.archived IS NULL)"
 	return selectUsersScan(db.QueryRow(sqlStr, userId))
 }
 
