@@ -212,6 +212,9 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 
 	providerName, pkceVerifier, err := x.getChallenge(id)
 	if err != nil {
+		if x.Config.Verbose {
+			x.parent.Log.Infof("OAuth failed to retrieve session '%v': %w", id[:6], err)
+		}
 		return nil, fmt.Errorf("Failed to retrieve session: %w", err)
 	}
 	provider := x.Config.Providers[providerName]
@@ -416,6 +419,22 @@ func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier
 
 func (x *OAuth) purgeExpiredChallenges() {
 	expired := time.Now().Add(-x.Config.LoginExpiry())
+	if x.Config.Verbose {
+		// This is racy, because another thread could do the DELETE while we're reading,
+		// but for debugging with a small number of initial users, should be sufficient for our needs.
+		rows, err := x.parent.DB.Query("SELECT id FROM oauthchallenge WHERE created < $1", expired)
+		if err != nil {
+			defer rows.Close()
+			for rows.Next() {
+				id := ""
+				if err = rows.Scan(&id); err != nil {
+					x.parent.Log.Errorf("Error reading id from oauthchallenge during verbose readout")
+				} else {
+					x.parent.Log.Infof("Purging expired oauth challenge '%v'", id[:6])
+				}
+			}
+		}
+	}
 	x.parent.DB.Exec("DELETE FROM oauthchallenge WHERE created < $1", expired)
 }
 
@@ -428,10 +447,13 @@ func (x *OAuth) createChallenge(providerName string, provider *ConfigOAuthProvid
 
 	x.purgeExpiredChallenges()
 
-	// x.Log.Infof("INSERT challenge %v %v %v", id, nonce, pkceVerifier)
+	if x.Config.Verbose {
+		x.parent.Log.Infof("Insert OAuth challenge %v", id[:6])
+	}
 
 	if _, err = x.parent.DB.Exec("INSERT INTO oauthchallenge (id, provider, created, nonce, pkce_verifier) VALUES ($1, $2, $3, $4, $5)",
 		id, providerName, time.Now().UTC(), nonce, pkceVerifier); err != nil {
+		x.parent.Log.Errorf("Failed to insert OAuth challenge %v: %v", id[:6], err)
 		return
 	}
 	return
@@ -450,6 +472,10 @@ func (x *OAuth) upgradeChallengeToSession(id string, token *oauthToken) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
+	}
+
+	if x.Config.Verbose {
+		x.parent.Log.Infof("Upgrading oauth challenge '%v'", id[:6])
 	}
 
 	if x.Config.ForceFastTokenRefresh {
