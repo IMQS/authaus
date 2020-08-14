@@ -15,9 +15,10 @@ const (
 
 // These constants are embedded inside our database (in the table AuthUserStore). They may never change.
 const (
-	UserTypeDefault AuthUserType = 0
-	UserTypeLDAP    AuthUserType = 1
-	UserTypeOAuth   AuthUserType = 2
+	UserTypeDefault AuthUserType = 0 // An internal Authaus user, created by an explicit create user command
+	UserTypeLDAP    AuthUserType = 1 // Created via sync from an LDAP server
+	UserTypeOAuth   AuthUserType = 2 // Created automatically via an OAuth login
+	UserTypeMSAAD   AuthUserType = 3 // Created via sync from Microsoft Azure Active Directory
 )
 
 var (

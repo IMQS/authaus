@@ -389,12 +389,17 @@ func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 		return err
 	}
 
+	var externalUUID *string
+	if user.ExternalUUID != "" {
+		externalUUID = &user.ExternalUUID
+	}
+
 	if tx, etx := x.db.Begin(); etx == nil {
 		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, `+
-			`remarks = $7, modified= $8, modifiedby = $9, authusertype = $10`+
-			` WHERE userid = $11 AND (archived = false OR archived IS NULL)`,
+			`remarks = $7, modified = $8, modifiedby = $9, authusertype = $10, externaluuid = $11`+
+			` WHERE userid = $12 AND (archived = false OR archived IS NULL)`,
 			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber,
-			user.Remarks, user.Modified, user.ModifiedBy, user.Type,
+			user.Remarks, user.Modified, user.ModifiedBy, user.Type, externalUUID,
 			user.UserId); eupdate == nil {
 			if affected, _ := update.RowsAffected(); affected == 1 {
 				return tx.Commit()
@@ -583,28 +588,37 @@ type sqlSessionDB struct {
 }
 
 func (x *sqlSessionDB) Write(sessionkey string, token *Token) error {
-	// We convert 'token.expires' to UTC before putting it in the DB, as the column, Expires, is TIMESTAMP without timezone, and it returns a time equivalent to UTC.
-	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, userid, permit, expires) VALUES($1, $2, $3, $4)`, sessionkey, token.UserId, token.Permit.Serialize(), token.Expires.UTC())
+	var oauthID *string
+	if token.OAuthSessionID != "" {
+		oauthID = &token.OAuthSessionID
+	}
+	_, err := x.db.Exec(`INSERT INTO authsession (sessionkey, userid, permit, expires, internaluuid, oauthid) VALUES($1, $2, $3, $4, $5, $6)`,
+		sessionkey, token.UserId, token.Permit.Serialize(), token.Expires.UTC(), token.InternalUUID, oauthID)
 
 	return err
 }
 
 func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 	x.purgeExpiredSessions()
-	row := x.db.QueryRow(`SELECT userid, permit, expires, internaluuid FROM authsession WHERE sessionkey = $1`, sessionkey)
+	row := x.db.QueryRow(`SELECT userid, permit, expires, internaluuid, oauthid FROM authsession WHERE sessionkey = $1`, sessionkey)
 	token := &Token{}
 	epermit := ""
 	var userId int64
-	if err := row.Scan(&userId, &epermit, &token.Expires, &token.InternalUUID); err != nil {
-		return nil, ErrInvalidSessionToken
+	oauthID := sql.NullString{}
+	if err := row.Scan(&userId, &epermit, &token.Expires, &token.InternalUUID, &oauthID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrInvalidSessionToken
+		} else {
+			return nil, err
+		}
 	} else {
 		if err := token.Permit.Deserialize(epermit); err != nil {
-			return nil, ErrInvalidSessionToken
+			return nil, err
 		} else {
 			token.UserId = UserId(userId)
 			user, err := getUserFromUserId(x.db, token.UserId)
 			if err != nil {
-				return nil, ErrInvalidSessionToken
+				return nil, err
 			}
 			token.Username = user.Username
 			token.Email = user.Email
@@ -612,6 +626,9 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 				token.Identity = user.Username
 			} else {
 				token.Identity = user.Email
+			}
+			if oauthID.Valid {
+				token.OAuthSessionID = oauthID.String
 			}
 
 			return token, nil

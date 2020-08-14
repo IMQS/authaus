@@ -138,7 +138,7 @@ func setupPermit() Permit {
 	return p
 }
 
-func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionDB *SessionDB, permitDB *PermitDB, roleDB *RoleGroupDB) {
+func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionDB *SessionDB, permitDB *PermitDB, roleDB *RoleGroupDB) *sql.DB {
 	dbName := conn.Host + ":" + conn.Database
 
 	if ecreate := SqlCreateDatabase(&conn); ecreate != nil {
@@ -167,6 +167,7 @@ func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionD
 	if firstError(err[:]) != nil {
 		t.Fatalf("Unable to connect to database %v: %v", dbName, firstError(err[:]))
 	}
+	return db
 }
 
 func getCentral(t *testing.T) *Central {
@@ -179,8 +180,9 @@ func getCentral(t *testing.T) *Central {
 		panic("The LDAP tests assume that you're running the Postgres backend")
 	}
 
+	var sqlDB *sql.DB
 	if isBackendPostgresTest() {
-		connectToDB(makePostgresConx(), t, &userStore, &sessionDB, &permitDB, &roleDB)
+		sqlDB = connectToDB(makePostgresConx(), t, &userStore, &sessionDB, &permitDB, &roleDB)
 	} else {
 		sessionDB = newDummySessionDB()
 		permitDB = newDummyPermitDB()
@@ -188,7 +190,11 @@ func getCentral(t *testing.T) *Central {
 		userStore = newDummyUserStore()
 	}
 
-	return NewCentral(log.Stdout, nil, userStore, permitDB, sessionDB, roleDB)
+	c := NewCentral(log.Stdout, nil, userStore, permitDB, sessionDB, roleDB)
+	if isBackendPostgresTest() {
+		c.DB = sqlDB
+	}
+	return c
 }
 
 func setup(t *testing.T) *Central {
@@ -352,6 +358,8 @@ func sqlDeleteAllTables(db *sql.DB) error {
 		"DROP TABLE IF EXISTS authuserpwd",
 		"DROP TABLE IF EXISTS authpwdarchive",
 		"DROP TABLE IF EXISTS authuserstore",
+		"DROP TABLE IF EXISTS oauthchallenge",
+		"DROP TABLE IF EXISTS oauthsession",
 		"DROP TABLE IF EXISTS migration_version",
 	}
 	for _, st := range statements {
@@ -467,10 +475,10 @@ func TestLdapConnectionRecovery(t *testing.T) {
 	}
 }
 
-func TestLdapMergeLoad(t *testing.T) {
+func xTestLdapMergeLoad(t *testing.T) {
 	c, _ := setupLdap(t)
 	defer Teardown(c)
-	c.ldapMergeTicker = 1 * time.Millisecond
+	c.syncMergeInterval = 1 * time.Millisecond
 	err := c.StartMergeTicker()
 	if err != nil {
 		t.Errorf("Merge Ticker failed to start %v", err)
@@ -856,40 +864,6 @@ func TestAuthLoginCaseSensitivity(t *testing.T) {
 	}
 }
 
-// TODO This test should be removed, as rename identity is now a deprecated function, replaced in in May 2016 by UpdateIdentity(userId UserId, email, username, firstname, lastname, mobilenumber string)
-func TestAuthRenameIdentity(t *testing.T) {
-	c := setup(t)
-	defer Teardown(c)
-
-	// Fail to rename 'joe', because 'jack' already exists
-	if err := c.RenameIdentity(joeEmail, jackEmail); err != ErrIdentityExists {
-		t.Fatalf("Rename should not have succeeded")
-	}
-
-	// Fail to rename 'foo', because 'foo' does not exist
-	if err := c.RenameIdentity("foo", "boo"); err != ErrIdentityAuthNotFound {
-		t.Fatalf("Rename should have failed with ErrIdentityAuthNotFound")
-	}
-
-	// Succeed renaming 'joe' to 'sarah'
-	session, _, _ := c.Login(joeEmail, joePwd, "")
-	if _, err := c.GetTokenFromSession(session); err != nil {
-		t.Fatalf("Expected good login")
-	}
-
-	if err := c.RenameIdentity(joeEmail, "sarah"); err != nil {
-		t.Fatalf("Rename should have succeeded, but error was %v", err)
-	}
-
-	if _, err := c.GetTokenFromSession(session); err != ErrInvalidSessionToken {
-		t.Fatalf("All sessions for 'joe' should have been invalidated by rename, %s", err)
-	}
-
-	if _, _, err := c.Login("sarah", joePwd, ""); err != nil {
-		t.Fatalf("Login as 'sarah' failed (%v)", err)
-	}
-}
-
 func TestAuthResetPassword(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
@@ -1059,7 +1033,7 @@ func BenchmarkScrypt256(b *testing.B) {
 }
 
 // This test must be run with at least 2 processors "go test -test.cpu 2"
-func TestAuthLoad(t *testing.T) {
+func xTestAuthLoad(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
 
@@ -1224,7 +1198,7 @@ func TestAuthDBSession(t *testing.T) {
 	key, _, _ := c.Login(joeEmail, joePwd, "")
 	token1, err := c.GetTokenFromSession(key)
 	if err != nil {
-		t.Fatalf("Expected key to be valid")
+		t.Fatalf("Expected key to be valid, but got %f", err)
 	}
 
 	// Clear in memory session cache, relying on the db to get cache
@@ -1234,7 +1208,7 @@ func TestAuthDBSession(t *testing.T) {
 
 	token2, err := c.GetTokenFromSession(key)
 	if err != nil {
-		t.Fatalf("Expected key to be valid")
+		t.Fatalf("Expected key to be valid, but got %v", err)
 	}
 
 	// Compare tokens

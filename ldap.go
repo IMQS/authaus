@@ -124,6 +124,127 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	return ldapUsers, nil
 }
 
+func MergeLDAP(c *Central) {
+	ldapUsers, err := c.ldap.GetLdapUsers()
+	if err != nil {
+		c.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
+		return
+	}
+	imqsUsers, err := c.userStore.GetIdentities(GetIdentitiesFlagNone)
+	if err != nil {
+		c.Log.Warnf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
+		return
+	}
+	MergeLdapUsersIntoLocalUserStore(c, ldapUsers, imqsUsers)
+}
+
+// We are reading users from LDAP/AD and merging them into the IMQS userstore
+func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUsers []AuthUser) {
+	// Create maps from arrays
+	imqsUserUsernameMap := make(map[string]AuthUser)
+	for _, imqsUser := range imqsUsers {
+		if len(imqsUser.Username) > 0 {
+			imqsUserUsernameMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
+		}
+	}
+
+	imqsUserEmailMap := make(map[string]AuthUser)
+	for _, imqsUser := range imqsUsers {
+		if len(imqsUser.Email) > 0 {
+			imqsUserEmailMap[CanonicalizeIdentity(imqsUser.Email)] = imqsUser
+		}
+	}
+
+	ldapUserMap := make(map[string]AuthUser)
+	for _, ldapUser := range ldapUsers {
+		ldapUserMap[CanonicalizeIdentity(ldapUser.Username)] = ldapUser
+	}
+
+	// Insert or update
+	for _, ldapUser := range ldapUsers {
+		// This log is useful when debugging, but in regular operation the relevant details go into the logs when something changes (see below)
+		// x.Log.Infof("Merging user %20s %20s %20s '%s'", ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Email)
+		imqsUser, foundWithUsername := imqsUserUsernameMap[CanonicalizeIdentity(ldapUser.Username)]
+		foundWithEmail := false
+		if !foundWithUsername {
+			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
+		}
+		user := imqsUser
+		user.Email = ldapUser.Email
+		user.Username = ldapUser.Username
+		user.Firstname = ldapUser.Firstname
+		user.Lastname = ldapUser.Lastname
+		user.Mobilenumber = ldapUser.Mobilenumber
+		user.Type = UserTypeLDAP
+		if !foundWithUsername && !foundWithEmail {
+			user.Created = time.Now().UTC()
+			user.Modified = time.Now().UTC()
+
+			// WARNING: Weird thing that looked like a compiler bug:
+			// We have found that a certain ldap user (WilburGS) has an email that ends with a space.
+			// This space mysteriously disappears when the address of `user` is taken.
+			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
+				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
+			}
+
+			// Log to audit trail user created
+			if x.Auditor != nil {
+				contextData := userInfoToAuditTrailJSON(user, "")
+				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
+			}
+		} else if foundWithEmail || !equalsForLDAPMerge(user, imqsUser) {
+			if imqsUser.Type == UserTypeDefault {
+				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
+			}
+			user.Modified = time.Now().UTC()
+
+			// WARNING: Weird thing that looked like a compiler bug:
+			// We have found that a certain ldap user (WilburGS) has an email that ends with a space.
+			// This space mysteriously disappears when the address of `user` is taken.
+			if err := x.userStore.UpdateIdentity(&user); err != nil {
+				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
+			} else {
+				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
+				x.Log.Infof("old: %v", userInfoToJSON(imqsUser))
+				x.Log.Infof("new: %v", userInfoToJSON(user))
+			}
+
+			// Log to audit trail user updated
+			if x.Auditor != nil {
+				contextData := userInfoToAuditTrailJSON(user, "")
+				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionUpdated)
+			}
+		}
+	}
+
+	// Remove
+	for _, imqsUser := range imqsUsers {
+		_, found := ldapUserMap[CanonicalizeIdentity(imqsUser.Username)]
+		if !found {
+			// We only archive ldap users that are not on the ldap system, but are not on ours, imqs users should remain
+			if imqsUser.Type == UserTypeLDAP {
+				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
+					x.Log.Warnf("LDAP merge: Archive identity failed with (%v)", err)
+				}
+
+				// Log to audit trail user deleted
+				if x.Auditor != nil {
+					contextData := userInfoToAuditTrailJSON(imqsUser, "")
+					x.Auditor.AuditUserAction(imqsUser.Username, "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
+				}
+			}
+		}
+	}
+}
+
+func equalsForLDAPMerge(a, b AuthUser) bool {
+	return a.Email == b.Email &&
+		a.Firstname == b.Firstname &&
+		a.Lastname == b.Lastname &&
+		a.Mobilenumber == b.Mobilenumber &&
+		a.Username == b.Username
+}
+
 func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 	con, err := NewLDAPConnect(config)
 	if err != nil {

@@ -28,7 +28,7 @@ const (
 
 	defaultSessionExpirySeconds = 30 * 24 * 3600
 
-	defaultLdapMergeTickerSeconds = 60
+	defaultSyncMergeTickerSeconds = 3 * 60
 )
 
 var (
@@ -96,13 +96,14 @@ the identity that performed the request, when this token expires, and
 the permit belonging to this identity.
 */
 type Token struct {
-	Identity     string
-	UserId       UserId
-	Email        string
-	Username     string
-	InternalUUID string
-	Expires      time.Time
-	Permit       Permit
+	Identity       string
+	UserId         UserId
+	Email          string
+	Username       string
+	InternalUUID   string
+	Expires        time.Time
+	Permit         Permit
+	OAuthSessionID string // Only applicable if this login occurred via OAuth
 }
 
 // Transform an identity into its canonical form. What this means is that any two identities
@@ -280,21 +281,23 @@ type Central struct {
 	MaxFailedLoginAttempts int // only applies if EnableAccountLocking is true
 	EnableAccountLocking   bool
 	OAuth                  OAuth
+	MSAAD                  MSAAD
 	DB                     *sql.DB
 
-	ldap                 LDAP
-	userStore            UserStore
-	permitDB             PermitDB
-	sessionDB            SessionDB
-	roleGroupDB          RoleGroupDB
-	renameLock           sync.Mutex
-	loginDelayMS         uint64 // Number of milliseconds by which we increase the delay login every time the user enters invalid credentials
-	userStoreMergeTicker *time.Ticker
-	mergeCount           int
-	ldapUsed             bool
-	ldapMergeTicker      time.Duration
-	tickerStopReq        chan bool
-	tickerStopResp       chan bool
+	ldap                        LDAP
+	userStore                   UserStore
+	permitDB                    PermitDB
+	sessionDB                   SessionDB
+	roleGroupDB                 RoleGroupDB
+	renameLock                  sync.Mutex
+	loginDelayMS                uint64 // Number of milliseconds by which we increase the delay login every time the user enters invalid credentials
+	shuttingDown                uint32
+	syncMergeCount              int
+	syncMergeInterval           time.Duration
+	syncMergeTickerStopRequest  chan bool
+	syncMergeTickerStopResponse chan bool
+	syncMergeEnabled            bool
+	msaadSyncMergeEnabled       bool
 }
 
 // Create a new Central object from the specified pieces.
@@ -302,8 +305,8 @@ type Central struct {
 func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
 	c.OAuth.Initialize(c)
+	c.MSAAD.Initialize(c)
 	if ldap != nil {
-		c.ldapUsed = true
 		c.ldap = &sanitizingLDAP{
 			backend: ldap,
 		}
@@ -335,6 +338,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		sessionDB   SessionDB
 		roleGroupDB RoleGroupDB
 	)
+	msaadUsed := config.MSAAD.ClientID != ""
 	ldapUsed := len(config.LDAP.LdapHost) > 0
 
 	startupLogger := log.New(resolveLogfile(config.Log.Filename))
@@ -423,14 +427,27 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if config.UserStore.PasswordExpirySeconds > 0 {
 		c.PasswordExpiresAfter = time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second
 	}
-	if ldapUsed {
-		c.ldapMergeTicker = defaultLdapMergeTickerSeconds * time.Second
-		if config.LDAP.LdapTickerTime > 0 {
-			c.ldapMergeTicker = time.Duration(config.LDAP.LdapTickerTime) * time.Second
+
+	c.msaadSyncMergeEnabled = msaadUsed
+	if ldapUsed || msaadUsed {
+		syncMergeSeconds := defaultSyncMergeTickerSeconds
+		if ldapUsed && config.LDAP.LdapTickerTime > 0 {
+			syncMergeSeconds = config.LDAP.LdapTickerTime
 		}
+		if msaadUsed && config.MSAAD.MergeIntervalSeconds > 0 {
+			// If you have LDAP and MSAAD, then MSAAD wins. This seems like an arbitrary
+			// distinction, because it's unlikely that you'll merge from both.
+			// It would be nice to be able to emit a warning here, but we don't have a logger yet.
+			// if config.MSAAD.MergeIntervalSeconds > 0 && config.LDAP.LdapTickerTime > 0 && config.MSAAD.MergeIntervalSeconds != config.LDAP.LdapTickerTime {
+			// }
+			syncMergeSeconds = config.MSAAD.MergeIntervalSeconds
+		}
+		c.syncMergeInterval = time.Duration(syncMergeSeconds) * time.Second
 		c.StartMergeTicker()
 	}
+
 	c.OAuth.Config = config.OAuth
+	c.MSAAD.Config = config.MSAAD
 
 	c.loginDelayMS = 500 // add 500 ms per invalid login attempt
 
@@ -512,7 +529,7 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 
 	x.Stats.ResetInvalidPasswordHistory(x.Log, username, clientIPAddress)
 
-	sessionkey, token, err = x.CreateSession(&user, clientIPAddress)
+	sessionkey, token, err = x.CreateSession(&user, clientIPAddress, "")
 	if err == nil {
 		x.Stats.IncrementGoodLogin(x.Log)
 		x.Log.Infof("Login successful (%v)", user.UserId)
@@ -525,7 +542,8 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 // Returns a session key, which can be used in future to retrieve the token.
 // The internal session expiry is controlled with NewSessionExpiresAfter.
 // The session key is typically sent to the client as a cookie.
-func (x *Central) CreateSession(user *AuthUser, clientIPAddress string) (sessionkey string, token *Token, err error) {
+// oauthSessionID is only applicable when this is an OAuth login.
+func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID string) (sessionkey string, token *Token, err error) {
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(user.UserId); err != nil {
 		x.Log.Infof("Login GetPermit failed (%v) (%v)", user.UserId, err)
@@ -540,10 +558,11 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress string) (session
 	}
 
 	token = &Token{
-		Permit:       *permit,
-		Identity:     user.getIdentity(),
-		UserId:       user.UserId,
-		InternalUUID: user.InternalUUID,
+		Permit:         *permit,
+		Identity:       user.getIdentity(),
+		UserId:         user.UserId,
+		InternalUUID:   user.InternalUUID,
+		OAuthSessionID: oauthSessionID,
 	}
 
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
@@ -644,18 +663,23 @@ func (x *Central) AuthenticateUser(identity, password string, authTypeCheck Auth
 
 // Merges ldap with user store every merge tick
 func (x *Central) StartMergeTicker() error {
-	x.Log.Info("Starting LDAP merge process")
-	x.userStoreMergeTicker = time.NewTicker(x.ldapMergeTicker)
-	x.tickerStopReq = make(chan bool)
-	x.tickerStopResp = make(chan bool)
+	x.Log.Info("Starting sync merge goroutine")
+	if x.ldap != nil {
+		x.Log.Info("LDAP sync merge enabled")
+	}
+	if x.msaadSyncMergeEnabled {
+		x.Log.Info("MSAAD sync merge enabled")
+	}
+	x.syncMergeTickerStopRequest = make(chan bool)
+	x.syncMergeTickerStopResponse = make(chan bool)
 	go func() {
 		x.MergeTick()
 		for {
 			select {
-			case <-x.userStoreMergeTicker.C:
+			case <-time.After(x.syncMergeInterval):
 				x.MergeTick()
-			case <-x.tickerStopReq:
-				x.tickerStopResp <- true
+			case <-x.syncMergeTickerStopRequest:
+				x.syncMergeTickerStopResponse <- true
 				return
 			}
 		}
@@ -666,22 +690,21 @@ func (x *Central) StartMergeTicker() error {
 
 func (x *Central) MergeTick() {
 	timeStart := time.Now()
-	ldapUsers, err := x.ldap.GetLdapUsers()
-	if err != nil {
-		x.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
-		return
+
+	if x.ldap != nil {
+		MergeLDAP(x)
 	}
-	imqsUsers, err := x.userStore.GetIdentities(GetIdentitiesFlagNone)
-	if err != nil {
-		x.Log.Warnf("Failed to retrieve users from Userstore for merge to take place (%v)", err)
-		return
+	if x.msaadSyncMergeEnabled {
+		if err := x.MSAAD.SynchronizeUsers(); err != nil {
+			x.Log.Warnf("MSAAD synchronization failed: %v", err)
+		}
 	}
-	x.MergeLdapUsersIntoLocalUserStore(ldapUsers, imqsUsers)
+
 	timeComplete := time.Now()
-	if x.mergeCount%60 == 0 {
+	if x.syncMergeCount%60 == 0 {
 		x.Log.Infof("Merge process duration: %.3f seconds", timeComplete.Sub(timeStart).Seconds())
 	}
-	x.mergeCount++
+	x.syncMergeCount++
 }
 
 func userInfoToAuditTrailJSON(user AuthUser, clientIPAddress string) string {
@@ -706,115 +729,6 @@ func userInfoToAuditTrailJSON(user AuthUser, clientIPAddress string) string {
 func userInfoToJSON(user AuthUser) string {
 	userJSON, _ := json.Marshal(user)
 	return string(userJSON)
-}
-
-// We are reading users from LDAP/AD and merging them into the IMQS userstore
-func (x *Central) MergeLdapUsersIntoLocalUserStore(ldapUsers []AuthUser, imqsUsers []AuthUser) {
-	// Create maps from arrays
-	imqsUserUsernameMap := make(map[string]AuthUser)
-	for _, imqsUser := range imqsUsers {
-		if len(imqsUser.Username) > 0 {
-			imqsUserUsernameMap[CanonicalizeIdentity(imqsUser.Username)] = imqsUser
-		}
-	}
-
-	imqsUserEmailMap := make(map[string]AuthUser)
-	for _, imqsUser := range imqsUsers {
-		if len(imqsUser.Email) > 0 {
-			imqsUserEmailMap[CanonicalizeIdentity(imqsUser.Email)] = imqsUser
-		}
-	}
-
-	ldapUserMap := make(map[string]AuthUser)
-	for _, ldapUser := range ldapUsers {
-		ldapUserMap[CanonicalizeIdentity(ldapUser.Username)] = ldapUser
-	}
-
-	// Insert or update
-	for _, ldapUser := range ldapUsers {
-		// This log is useful when debugging, but in regular operation the relevant details go into the logs when something changes (see below)
-		// x.Log.Infof("Merging user %20s %20s %20s '%s'", ldapUser.Username, ldapUser.Firstname, ldapUser.Lastname, ldapUser.Email)
-		imqsUser, foundWithUsername := imqsUserUsernameMap[CanonicalizeIdentity(ldapUser.Username)]
-		foundWithEmail := false
-		if !foundWithUsername {
-			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
-		}
-		user := imqsUser
-		user.Email = ldapUser.Email
-		user.Username = ldapUser.Username
-		user.Firstname = ldapUser.Firstname
-		user.Lastname = ldapUser.Lastname
-		user.Mobilenumber = ldapUser.Mobilenumber
-		user.Type = UserTypeLDAP
-		if !foundWithUsername && !foundWithEmail {
-			user.Created = time.Now().UTC()
-			user.Modified = time.Now().UTC()
-
-			// WARNING: Weird compiler bug.
-			// We have found that a certain ldap user (WilburGS) has an email
-			// that ends with a space. This space mysteriously disappears when
-			// the address of `user` is taken.
-			if _, err := x.userStore.CreateIdentity(&user, ""); err != nil {
-				x.Log.Warnf("LDAP merge: Create identity failed with (%v)", err)
-			}
-
-			// Log to audit trail user created
-			if x.Auditor != nil {
-				contextData := userInfoToAuditTrailJSON(user, "")
-				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
-			}
-		} else if foundWithEmail || !user.equals(imqsUser) {
-			if imqsUser.Type == UserTypeDefault {
-				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
-			}
-			user.Modified = time.Now().UTC()
-
-			// WARNING: Weird compiler bug.
-			// We have found that a certain ldap user (WilburGS) has an email
-			// that ends with a space. This space mysteriously disappears when
-			// the address of `user` is taken.
-			if err := x.userStore.UpdateIdentity(&user); err != nil {
-				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
-			} else {
-				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
-				x.Log.Infof("old: %v", userInfoToJSON(imqsUser))
-				x.Log.Infof("new: %v", userInfoToJSON(user))
-			}
-
-			// Log to audit trail user updated
-			if x.Auditor != nil {
-				contextData := userInfoToAuditTrailJSON(user, "")
-				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionUpdated)
-			}
-		}
-	}
-
-	// Remove
-	for _, imqsUser := range imqsUsers {
-		_, found := ldapUserMap[CanonicalizeIdentity(imqsUser.Username)]
-		if !found {
-			// We only archive ldap users that are not on the ldap system, but are not on ours, imqs users should remain
-			if imqsUser.Type == UserTypeLDAP {
-				if err := x.userStore.ArchiveIdentity(imqsUser.UserId); err != nil {
-					x.Log.Warnf("LDAP merge: Archive identity failed with (%v)", err)
-				}
-
-				// Log to audit trail user deleted
-				if x.Auditor != nil {
-					contextData := userInfoToAuditTrailJSON(imqsUser, "")
-					x.Auditor.AuditUserAction(imqsUser.Username, "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
-				}
-			}
-		}
-	}
-}
-
-func (u AuthUser) equals(user AuthUser) bool {
-	return u.Email == user.Email &&
-		u.Firstname == user.Firstname &&
-		u.Lastname == user.Lastname &&
-		u.Mobilenumber == user.Mobilenumber &&
-		u.Username == user.Username
 }
 
 // Logout, which erases the session key
@@ -950,7 +864,7 @@ func (x *Central) ArchiveIdentity(userId UserId) error {
 	return nil
 }
 
-// GetUserFromIdentity gets AuthUser object from identity.
+// GetUserFromIdentity gets AuthUser object from either an email address or a username.
 func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromIdentity(identity)
 	if e == nil {
@@ -1040,11 +954,10 @@ func (x *Central) Close() {
 	if x.Log != nil {
 		x.Log.Infof("Authaus has started shutting down")
 	}
-	if x.userStoreMergeTicker != nil {
-		x.userStoreMergeTicker.Stop()
-		x.tickerStopReq <- true
-		<-x.tickerStopResp
-		x.userStoreMergeTicker = nil
+	atomic.StoreUint32(&x.shuttingDown, 1)
+	if x.syncMergeEnabled {
+		x.syncMergeTickerStopRequest <- true
+		<-x.syncMergeTickerStopResponse
 	}
 	if x.ldap != nil {
 		x.ldap.Close()

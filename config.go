@@ -46,6 +46,25 @@ Full populated config:
 		"SysAdminEmail":  "joeAdmin@example.com",
 		"LdapSearchFilter": "(&(objectCategory=person)(objectClass=user))"
 	},
+	"OAuth": {
+		"Verbose": false,
+		"Providers": {
+			"eMerge": {
+				"Type": "msaad",
+				"Title": "Hooli",
+				"LoginURL": "https://login.microsoftonline.com/{your tenant id here}/oauth2/v2.0/authorize",
+				"TokenURL": "https://login.microsoftonline.com/{your tenant id here}/oauth2/v2.0/token",
+				"RedirectURL": "https://mysite.example.com/auth/oauth/finish",
+				"ClientID": "your client UUID here",
+				"Scope": "openid email offline_access",
+				"ClientSecret": "your secret here"
+			}
+		}
+	},
+	"MSAAD": {
+		"ClientID": "your client UUID",
+		"ClientSecret": "your secret"
+	},
 	"SessionDB": {
 		"MaxActiveSessions": 0,
 		"SessionExpirySeconds": 2592000,
@@ -156,6 +175,7 @@ type Config struct {
 	LDAP                   ConfigLDAP
 	UserStore              ConfigUserStoreDB
 	OAuth                  ConfigOAuth
+	MSAAD                  ConfigMSAAD
 	AuditServiceUrl        string
 	EnableAccountLocking   bool
 	MaxFailedLoginAttempts int
