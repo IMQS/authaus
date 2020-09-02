@@ -477,7 +477,7 @@ func (x *OAuth) purgeExpiredChallenges() {
 		// This is racy, because another thread could do the DELETE while we're reading,
 		// but for debugging with a small number of initial users, should be sufficient for our needs.
 		rows, err := x.parent.DB.Query("SELECT id FROM oauthchallenge WHERE created < $1", expired)
-		if err != nil {
+		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
 				id := ""
@@ -527,6 +527,7 @@ func (x *OAuth) upgradeChallengeToSession(id string, token *oauthToken) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	if x.Config.Verbose {
 		x.parent.Log.Infof("Upgrading oauth challenge '%v'", id[:6])
@@ -537,7 +538,6 @@ func (x *OAuth) upgradeChallengeToSession(id string, token *oauthToken) error {
 		token.ExpiresIn = 120
 	}
 
-	defer tx.Rollback()
 	_, err = tx.Exec("INSERT INTO oauthsession SELECT id,provider,created,$1 FROM oauthchallenge WHERE id = $2", time.Now().UTC(), id)
 	if err != nil {
 		return fmt.Errorf("Error inserting into oauthsession: %w", err)
