@@ -409,6 +409,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	}
 
 	groupsChanged := false
+	addEnabled := false
 
 	for aadRole, internalGroupName := range m.Config.RoleToGroup {
 		internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
@@ -423,6 +424,10 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		}
 		if aadUser.hasRoleByPrincipleDisplayName(aadRole) {
 			// ensure that the user belongs to 'internalGroup'
+			// check if there are no 'required' groups, and if not, flag user to be enabled
+			if len(m.Config.EssentialRoles) == 0 {
+				addEnabled = true
+			}
 			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
 				m.parent.Log.Infof(logPrefix+" grant %v to %v (from AAD role %v)", internalGroupName, nameInLogs, aadRole)
 				if !m.Config.DryRun {
@@ -440,6 +445,21 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 					groupIDs = removeFromGroupList(groupIDs, idx)
 				}
 			}
+		}
+	}
+
+	// test if user belongs to ANY groups in the mapping
+	enabledGroup := roleGroups.nameToGroup["enabled"]
+	if addEnabled && indexInGroupInList(groupIDs, enabledGroup.ID) == -1 {
+		groupIDs = append(groupIDs, enabledGroup.ID)
+		groupsChanged = true
+	}
+
+	if !addEnabled && indexInGroupInList(groupIDs, enabledGroup.ID) != -1 {
+		idx := indexInGroupInList(groupIDs, enabledGroup.ID)
+		if idx != -1 {
+			groupIDs = removeFromGroupList(groupIDs, idx)
+			groupsChanged = true
 		}
 	}
 
