@@ -74,12 +74,32 @@ func (x *PermissionNameTable) Inverted() map[string]PermissionU16 {
 	return inverted
 }
 
+// GroupNameIsLegal asserts whether or not the name is legal
 func GroupNameIsLegal(name string) bool {
 	return name != "" && strings.TrimSpace(name) == name
 }
 
-// Our group IDs are unsigned 32-bit integers
+// GroupIDU32 is our group IDs are unsigned 32-bit integers
 type GroupIDU32 uint32
+
+// GroupIDU32s is a containing the group IDs
+type GroupIDU32s []GroupIDU32
+
+// IndexOf returns the index of the group
+func (gid *GroupIDU32s) IndexOf(idx GroupIDU32) int {
+	for i, x := range *gid {
+		if x == idx {
+			return i
+		}
+	}
+	return -1
+}
+
+// ContainsIndex returns whether or not the requested index is contained in the
+// group
+func (gid *GroupIDU32s) ContainsIndex(idx GroupIDU32) bool {
+	return gid.IndexOf(idx) != -1
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -171,7 +191,7 @@ func EncodePermit(groupIds []GroupIDU32) []byte {
 }
 
 // DecodePermit decodes a Permit into a list of Group IDs
-func DecodePermit(permit []byte) ([]GroupIDU32, error) {
+func DecodePermit(permit []byte) (GroupIDU32s, error) {
 	if len(permit)%4 != 0 {
 		return nil, ErrPermitInvalid
 	}
@@ -209,7 +229,7 @@ func PermitResolveToList(permit []byte, db RoleGroupDB) (PermissionList, error) 
 			}
 		}
 		list := make(PermissionList, 0)
-		for bit, _ := range bits {
+		for bit := range bits {
 			list = append(list, bit)
 		}
 		return list, nil
@@ -233,7 +253,7 @@ func GroupNamesToIDs(groups []string, db RoleGroupDB) ([]GroupIDU32, error) {
 	return ids, nil
 }
 
-// Converts group IDs to names
+// GroupIDsToName converts group IDs to names
 func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB) ([]string, error) {
 	names := make([]string, len(groups))
 	for i, gid := range groups {

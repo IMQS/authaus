@@ -31,15 +31,17 @@ import (
 
 // ConfigMSAAD is the JSON definition for the Microsoft Azure Active Directory synchronization settings
 type ConfigMSAAD struct {
-	Verbose              bool   // If true, then emit verbose logging
-	DryRun               bool   // If true, don't actually take any action, just log the intended actions
-	TenantID             string // Your tenant UUID (ie ID of your AAD instance)
-	ClientID             string // Your client UUID (ie ID of your application)
-	ClientSecret         string
-	MergeIntervalSeconds int               // If non-zero, then overrides the merge interval
-	EssentialRoles       []string          // List of principleName of AAD roles. If this list is not empty, then the user must belong to at least one of these groups, in order to be created in the Authaus DB
-	RoleToGroup          map[string]string // Map from principleName of AAD role, to Authaus group.
-	AllowArchiveUser     bool              // If true, then archive users who no longer have the relevant roles in the AAD
+	Verbose                 bool              // If true, then emit verbose logging
+	DryRun                  bool              // If true, don't actually take any action, just log the intended actions
+	TenantID                string            // Your tenant UUID (ie ID of your AAD instance)
+	ClientID                string            // Your client UUID (ie ID of your application)
+	ClientSecret            string            // Secrets used for authenticating Azure AD requests
+	MergeIntervalSeconds    int               // If non-zero, then overrides the merge interval
+	DefaultRoles            []string          // Roles that are activated by default if a user has any one of the AAD roles
+	AutoDiscoverPermissions bool              // Experimental config to allow the AD system to attempt to pick up any IMQS related configurations. This takes precidence over explicitly specifying the RoleToGroup in conf, and will therefore not be validated against the role to group after it has been fetched
+	Domain                  string            // Domain is embedded in the client configuration as a text field that one can use to scan AD role names and discover permissions. It is only relevant when AutoDiscoverPermissions is set to true
+	RoleToGroup             map[string]string // Map from principleName of AAD role, to Authaus group.
+	AllowArchiveUser        bool              // If true, then archive users who no longer have the relevant roles in the AAD
 }
 
 type msaadBearerTokenJSON struct {
@@ -98,7 +100,7 @@ func (u *msaadUserJSON) bestEmail() string {
 
 func (u *msaadUserJSON) toAuthUser() AuthUser {
 	name, surname := u.nameAndSurname()
-	au := AuthUser{
+	return AuthUser{
 		Type:         UserTypeMSAAD,
 		Email:        u.bestEmail(),
 		Firstname:    name,
@@ -106,7 +108,6 @@ func (u *msaadUserJSON) toAuthUser() AuthUser {
 		Mobilenumber: u.MobilePhone,
 		ExternalUUID: u.ID,
 	}
-	return au
 }
 
 // Returns true if any fields have changed
@@ -137,13 +138,72 @@ type msaadUser struct {
 	roles   []*msaadRoleJSON
 }
 
-func (u *msaadUser) hasRoleByPrincipleDisplayName(principleDisplayName string) bool {
+// MatchType attempts to give more information about the type of match that was
+// detected
+type MatchType int
+
+const (
+	MatchTypeNone       MatchType = 0
+	MatchTypeStartsWith           = 1 << (iota - 1)
+	MatchTypeEndsWith
+	MatchTypeExact
+	MatchTypeStandard = MatchTypeExact | MatchTypeStartsWith | MatchTypeEndsWith
+)
+
+func (u *msaadUser) hasRoleByPrincipalDisplayName(principalDisplayName string, preferredMatchConditions MatchType) bool {
 	for _, r := range u.roles {
-		if r.PrincipalDisplayName == principleDisplayName {
+		if preferredMatchConditions == MatchTypeNone {
+			preferredMatchConditions = MatchTypeStandard
+		}
+
+		if Match(principalDisplayName, r.PrincipalDisplayName)&preferredMatchConditions != 0 {
 			return true
 		}
 	}
 	return false
+}
+
+// Match attempts to provide a descr
+func Match(lhs, rhs string) MatchType {
+	lhs, rhs = swapIfNecessary(lhs, rhs)
+
+	var (
+		isWildcard    = strings.Contains(lhs, "*")
+		lhsNoWildcard = strings.TrimRight(lhs, "*")
+	)
+
+	// Because of swap, we can assume that the lhs string in this scope any of
+	// the candidate strings were to contain a wildcard, it would at least be the
+	// lhs string
+	if !isWildcard && lhs == rhs {
+		return MatchTypeExact
+	} else if isWildcard && strings.HasPrefix(rhs, lhsNoWildcard) {
+		return MatchTypeStartsWith
+	} else if isWildcard && strings.HasSuffix(rhs, lhsNoWildcard) {
+		return MatchTypeEndsWith
+	}
+
+	return MatchTypeNone
+}
+
+// swapIfNecessary is a rudimentary helper that allows us to swap the contents
+// of two strings if any one of the following conditions is met:
+// (a) rhs is shorter than lhs
+// (b) rhs contains a wildcard (either at the beginning or the end) and lhs does
+// not
+func swapIfNecessary(lhs, rhs string) (string, string) {
+	lhsContainsWildcard := strings.Contains(lhs, "*")
+	rhsContainsWildcard := strings.Contains(rhs, "*")
+
+	if len(rhs) < len(lhs) {
+		return rhs, lhs
+	} else if lhsContainsWildcard && !rhsContainsWildcard {
+		return lhs, rhs
+	} else if rhsContainsWildcard && !lhsContainsWildcard {
+		return rhs, lhs
+	}
+
+	return lhs, rhs
 }
 
 type msaadRolesJSON struct {
@@ -170,6 +230,38 @@ type msaadRoleJSON struct {
 	PrincipalID          string `json:"principalId"`
 	PrincipalType        string `json:"principalType"`
 	ResourceDisplayName  string `json:"resourceDisplayName"`
+}
+
+func (m *msaadRoleJSON) IsDomain(domain string) bool {
+	return matchesDomain(m.PrincipalDisplayName, domain)
+}
+
+// IsGeneral attempts to distinguish between permissions that are created for
+// a specific person on the AD tenant, and permissions that are created using the
+// accepted (underscore delimited) convention. For example, permissions with
+// obfuscated yet conceptually similar names like "Piet Pompies" and "Nelson
+// Mandela" exist in the tenant belonging to the first client that this
+// integration was built for.
+// The most obvious difference between these sets of permissions is that
+// these permissions do not contain underscores.
+func (m *msaadRoleJSON) IsGeneral() bool {
+	return strings.Contains(m.PrincipalDisplayName, "_")
+}
+
+// ExtractPermissionsName tries to extract the module name from the Azure permission.
+// It relies heavily on the convention that
+func (m *msaadRoleJSON) ExtractPermissionsName(domain string) string {
+	if !m.IsDomain(domain) || !m.IsGeneral() {
+		return ""
+	}
+	// This code assumes that the last section of a string whose sections are
+	// delimited by a semicolon is the correct permission that we are looking for
+	arr := strings.Split(m.PrincipalDisplayName, "_")
+	idx := len(arr) - 2
+	if idx < 0 {
+		idx = 0
+	}
+	return arr[idx]
 }
 
 // cachedRoleGroups is a cache of all the internal groups, as well as tables that allow us to
@@ -206,11 +298,15 @@ func splitDisplayName(dn string) (string, string) {
 	return dn[:firstSpace], dn[firstSpace+1:]
 }
 
+// Initialize seeks to initialize the parent context on the MSAAD object
 func (m *MSAAD) Initialize(parent *Central) {
 	m.parent = parent
 	m.tokenExpiresAt = time.Now().Add(-time.Hour)
 }
 
+// SynchronizeUsers rebuilds the role groups cache, as well as re-fetches the
+// users from MSAAD, for the purpose of bring IMQS' internal roledb cache and
+// postgres database up to date
 func (m *MSAAD) SynchronizeUsers() error {
 	cachedRoleGroups, err := m.buildCachedRoleGroups()
 	if err != nil {
@@ -232,21 +328,21 @@ func (m *MSAAD) SynchronizeUsers() error {
 	}
 
 	// Augment AAD user data with AAD roles
-	if len(m.Config.RoleToGroup) != 0 || len(m.Config.EssentialRoles) != 0 {
-		err = m.getAADRoles(aadUsers)
+	if len(m.Config.RoleToGroup) != 0 || len(m.Config.DefaultRoles) != 0 {
+		err = m.populateAADRoles(aadUsers)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Merge users into Authaus database
-	existing, err := m.parent.userStore.GetIdentities(GetIdentitiesFlagNone)
+	existingUsers, err := m.parent.userStore.GetIdentities(GetIdentitiesFlagNone)
 	if err != nil {
 		return err
 	}
 	emailToExisting := map[string]int{}
 	uuidToExisting := map[string]int{}
-	for i, u := range existing {
+	for i, u := range existingUsers {
 		emailToExisting[CanonicalizeIdentity(u.Email)] = i
 		if u.ExternalUUID != "" {
 			uuidToExisting[u.ExternalUUID] = i
@@ -268,19 +364,19 @@ func (m *MSAAD) SynchronizeUsers() error {
 		internalUserID := UserId(0)
 		if foundExisting {
 			// check if user needs to be updated
-			internalUserID = existing[ix].UserId
-			if aadUser.profile.injectIntoAuthUser(&existing[ix]) {
+			internalUserID = existingUsers[ix].UserId
+			if aadUser.profile.injectIntoAuthUser(&existingUsers[ix]) {
 				if m.Config.DryRun {
 					m.parent.Log.Infof("MSAAD dry-run: Update user %v %v %v", aadUser.profile.DisplayName, aadEmail, aadUser.profile.ID)
 				} else {
 					m.parent.Log.Infof("MSAAD update user %v %v %v", aadUser.profile.DisplayName, aadEmail, aadUser.profile.ID)
-					existing[ix].Modified = time.Now()
-					if err := m.parent.userStore.UpdateIdentity(&existing[ix]); err != nil {
+					existingUsers[ix].Modified = time.Now()
+					if err := m.parent.userStore.UpdateIdentity(&existingUsers[ix]); err != nil {
 						m.parent.Log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
 					}
 				}
 			}
-		} else if m.userBelongsHere(aadUser) {
+		} else if m.userBelongsHere(aadUser, MatchTypeStandard) {
 			// user does not exist, so create it
 			if m.Config.DryRun {
 				m.parent.Log.Infof("MSAAD dry-run: Create new user %v %v", aadUser.profile.DisplayName, aadEmail)
@@ -315,14 +411,16 @@ func (m *MSAAD) SynchronizeUsers() error {
 	if m.Config.AllowArchiveUser {
 		idToAAD := map[string]int{}
 		for i, aadUser := range aadUsers {
-			if m.userBelongsHere(aadUser) {
+			if m.userBelongsHere(aadUser, MatchTypeStandard) {
 				idToAAD[aadUser.profile.ID] = i
 			}
 		}
-		for _, user := range existing {
+
+		for _, user := range existingUsers {
 			if user.Type != UserTypeMSAAD {
 				continue
 			}
+
 			_, insideAAD := idToAAD[user.ExternalUUID]
 			if !insideAAD {
 				if m.Config.DryRun {
@@ -345,17 +443,29 @@ func (m *MSAAD) SynchronizeUsers() error {
 	return nil
 }
 
-// Returns true if either Config.EssentialRoles is empty, or if the user belongs to one of the essential roles
-func (m *MSAAD) userBelongsHere(user *msaadUser) bool {
-	if len(m.Config.EssentialRoles) == 0 {
-		return true
-	}
-	for _, essential := range m.Config.EssentialRoles {
-		if user.hasRoleByPrincipleDisplayName(essential) {
+// userBelongsHere tells us whether or not the user has at least one of the
+// permissions that is associated with IMQS.
+func (m *MSAAD) userBelongsHere(user *msaadUser, matchType MatchType) bool {
+	for azureName := range m.Config.RoleToGroup {
+		if user.hasRoleByPrincipalDisplayName(azureName, matchType) {
 			return true
 		}
 	}
+
+	if m.Config.AutoDiscoverPermissions {
+		for _, role := range user.roles {
+			if role.IsDomain(m.Config.Domain) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func matchesDomain(azureName string, domain string) bool {
+	an := strings.ToLower(azureName)
+	dn := strings.ToLower(domain)
+	return strings.Contains(an, dn)
 }
 
 func (m *MSAAD) buildCachedRoleGroups() (*cachedRoleGroups, error) {
@@ -393,11 +503,13 @@ func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 
 func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) error {
 	nameInLogs := aadUser.profile.bestEmail()
+
 	permit, err := m.parent.GetPermit(internalUserID)
 	if err != nil && err != ErrIdentityPermitNotFound {
 		m.parent.Log.Errorf("MSAAD failed to fetch permit for user %v: %v", nameInLogs, err)
 		return err
 	}
+
 	if permit == nil {
 		permit = &Permit{}
 	}
@@ -409,6 +521,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	}
 
 	groupsChanged := false
+	userHasAnyIMQSPermission := false
 
 	for aadRole, internalGroupName := range m.Config.RoleToGroup {
 		internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
@@ -421,7 +534,8 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		if m.Config.DryRun {
 			logPrefix = "MSAAD dry-run:"
 		}
-		if aadUser.hasRoleByPrincipleDisplayName(aadRole) {
+
+		if aadUser.hasRoleByPrincipalDisplayName(aadRole, MatchTypeStandard) {
 			// ensure that the user belongs to 'internalGroup'
 			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
 				m.parent.Log.Infof(logPrefix+" grant %v to %v (from AAD role %v)", internalGroupName, nameInLogs, aadRole)
@@ -430,16 +544,75 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 					groupIDs = append(groupIDs, internalGroup.ID)
 				}
 			}
+			userHasAnyIMQSPermission = true
 		} else {
 			// ensure that the user does not belong to 'internalGroup'
-			idx := indexInGroupInList(groupIDs, internalGroup.ID)
-			if idx != -1 {
+			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1 {
 				m.parent.Log.Infof(logPrefix+" remove %v from %v (lacking AAD role %v)", internalGroupName, nameInLogs, aadRole)
 				if !m.Config.DryRun {
 					groupsChanged = true
 					groupIDs = removeFromGroupList(groupIDs, idx)
 				}
 			}
+		}
+	}
+
+	// If the feature is enabled in IMQS, attempt to determine whether or not
+	// the permission exists in IMQS, and assign it if that is the case
+	if m.Config.AutoDiscoverPermissions {
+		for _, role := range aadUser.roles {
+			permissionName := role.ExtractPermissionsName(m.Config.Domain)
+			if permissionName == "" {
+				m.parent.Log.Errorf("Could not extract a meaningful candidate permission from MSAAD role'%v'", role.PrincipalDisplayName, m.Config.Domain)
+				continue
+			}
+			group, ok := roleGroups.nameToGroup[permissionName]
+			if !ok {
+				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission in domain '%v", role.PrincipalDisplayName, m.Config.Domain)
+				continue
+			}
+			if indexInGroupInList(groupIDs, group.ID) == -1 {
+				groupIDs = append(groupIDs, group.ID)
+				groupsChanged = true
+			}
+			userHasAnyIMQSPermission = true
+		}
+	}
+
+	// Add the DefaultRoles, where applicable in addition to the roles that were
+	// found in the RoleToGroup configuration
+	if userHasAnyIMQSPermission {
+		for _, internalGroupName := range m.Config.DefaultRoles {
+			internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
+			if !ok {
+				// Following the above logic, we have already logged this error
+				continue
+			}
+
+			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
+				m.parent.Log.Infof("MSAAD grant default role %v to %v", internalGroupName, nameInLogs)
+				groupIDs = append(groupIDs, internalGroup.ID)
+				groupsChanged = true
+			}
+		}
+		m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+	} else {
+		// REMOVE all default roles
+		for _, internalGroupName := range m.Config.DefaultRoles {
+			internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
+			if !ok {
+				// Following the above logic, we have already logged this error
+				continue
+			}
+
+			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1  {
+				m.parent.Log.Infof("MSAAD remove default role %v from %v (no MSADD roles)", internalGroupName, nameInLogs)
+				groupIDs = removeFromGroupList(groupIDs, idx)
+				groupsChanged = true
+			}
+		}
+		if groupsChanged {
+			m.parent.Log.Infof("MSAAD removed ALL default roles from %v (no MSADD roles)", nameInLogs)
 		}
 	}
 
@@ -484,8 +657,11 @@ func numParallelFetchThreads(nItems int) int {
 	return nThreads
 }
 
-// Fetch user roles.
-func (m *MSAAD) getAADRoles(users []*msaadUser) error {
+// populateAADRoles fetches the users roles and then appends the result to the users
+// parameter as a native slice of msaadJSON objects. The roles of the individual
+// user objects must be queried individually - which is the reason for making
+// separating this step from the fetching of the AAD users
+func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 	nThreads := numParallelFetchThreads(len(users))
 	// partition 'users' into nThreads groups
 	threadGroups := make([][]*msaadUser, nThreads)
@@ -536,6 +712,7 @@ func (m *MSAAD) getAADRoles(users []*msaadUser) error {
 		}
 		m.numAADRoleFetches++
 	}
+
 	return err
 }
 
