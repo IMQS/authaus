@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,8 +53,8 @@ var (
 	ErrInvalidCredentials   = errors.New("Invalid Credentials") // This error was created for LDAP authentication. LDAP does not return 'identity not found' or 'invalid password' but simply invalid credentials
 )
 
-// Use this whenever you return an Authaus error. We rely upon the prefix
-// of the error string to identify the broad category of the error.
+// NewError is to be used whenever you return an Authaus error. We rely upon the
+// prefix of the error string to identify the broad category of the error.
 func NewError(base error, detail string) error {
 	return errors.New(base.Error() + ": " + detail)
 }
@@ -64,29 +65,44 @@ type Permit struct {
 	Roles []byte
 }
 
-func (x *Permit) Clone() *Permit {
+// ToString puts out the string representation of the permit - only intended to
+// be used as a speedy debug helper
+func (p *Permit) ToString() string {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// Clone returns a copy of the permit
+func (p *Permit) Clone() *Permit {
 	cpy := &Permit{}
-	cpy.Roles = make([]byte, len(x.Roles))
-	copy(cpy.Roles, x.Roles)
+	cpy.Roles = make([]byte, len(p.Roles))
+	copy(cpy.Roles, p.Roles)
 	return cpy
 }
 
-func (x *Permit) Serialize() string {
-	return base64.StdEncoding.EncodeToString(x.Roles)
+// Serialize returns a base64 representation of the permit
+func (p *Permit) Serialize() string {
+	return base64.StdEncoding.EncodeToString(p.Roles)
 }
 
-func (x *Permit) Deserialize(encoded string) error {
-	*x = Permit{}
+// Deserialize decodes the encoded parameter and stores it in the native
+// permit struct
+func (p *Permit) Deserialize(encoded string) error {
+	*p = Permit{}
 	if roles, e := base64.StdEncoding.DecodeString(encoded); e == nil {
-		x.Roles = roles
+		p.Roles = roles
 		return nil
 	} else {
 		return e
 	}
 }
 
-func (a *Permit) Equals(b *Permit) bool {
-	return bytes.Equal(a.Roles, b.Roles)
+// Equals compares whether or not the roles in the resepective permits are equal
+func (p *Permit) Equals(b *Permit) bool {
+	return bytes.Equal(p.Roles, b.Roles)
 }
 
 /*
@@ -106,9 +122,10 @@ type Token struct {
 	OAuthSessionID string // Only applicable if this login occurred via OAuth
 }
 
-// Transform an identity into its canonical form. What this means is that any two identities
-// are considered equal if their canonical forms are equal. This is simply a lower-casing
-// of the identity, so that "bob@enterprise.com" is equal to "Bob@enterprise.com".
+// CanonicalizeIdentity transforms an identity into its canonical form. What this
+// means is that any two identities are considered equal if their canonical forms
+// are equal. This is simply a lower-casing of the identity, so that
+// "bob@enterprise.com" is equal to "Bob@enterprise.com".
 // It also trims the whitespace around the identity.
 func CanonicalizeIdentity(identity string) string {
 	return strings.TrimSpace(strings.ToLower(identity))
@@ -322,7 +339,11 @@ func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitD
 	c.MaxActiveSessions = 0
 	c.NewSessionExpiresAfter = time.Duration(defaultSessionExpirySeconds) * time.Second
 	c.Stats.UserLoginAttempts = make(map[string]uint64)
-	c.Log = log.New(resolveLogfile(logfile))
+
+	// We don't want logging to stdout when the service is running on a windows
+	// machine. This decision was made to avoid having to bloat the service with
+	// unnecessary config
+	c.Log = log.New(resolveLogfile(logfile), runtime.GOOS != "windows")
 	c.Log.Infof("Authaus successfully started up\n")
 
 	return c
@@ -341,7 +362,8 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	msaadUsed := config.MSAAD.ClientID != ""
 	ldapUsed := len(config.LDAP.LdapHost) > 0
 
-	startupLogger := log.New(resolveLogfile(config.Log.Filename))
+	// We don't want logging to stdout when the service is running on a windows machine
+	startupLogger := log.New(resolveLogfile(config.Log.Filename), runtime.GOOS != "windows")
 
 	defer func() {
 		if ePanic := recover(); ePanic != nil {
