@@ -480,6 +480,15 @@ func (m *MSAAD) buildCachedRoleGroups() (*cachedRoleGroups, error) {
 	return cache, nil
 }
 
+func indexInGroupInList(list []GroupIDU32, g GroupIDU32) int {
+	for i, x := range list {
+		if x == g {
+			return i
+		}
+	}
+	return -1
+}
+
 func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 	// since order of groups is not important, we can just swap in the last element, then pop
 	// off the final element from the slice, which is much faster than creating a new slice every time.
@@ -523,14 +532,14 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 
 		if aadUser.hasRoleByPrincipleDisplayName(aadRole, MatchTypeStandard) {
 			// ensure that the user belongs to 'internalGroup'
-			if groupIDs.ContainsIndex(internalGroup.ID) {
+			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
 				m.parent.Log.Infof(logPrefix+" grant %v to %v (from AAD role %v)", internalGroupName, nameInLogs, aadRole)
 				if !m.Config.DryRun {
-					userHasAnyIMQSPermission = true
 					groupsChanged = true
 					groupIDs = append(groupIDs, internalGroup.ID)
 				}
 			}
+			userHasAnyIMQSPermission = true
 		} else {
 			// ensure that the user does not belong to 'internalGroup'
 			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1 {
@@ -557,11 +566,11 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission in domain '%v", role.PrincipleDisplayName, m.Config.Domain)
 				continue
 			}
-			if !groupIDs.ContainsIndex(group.ID) {
+			if indexInGroupInList(groupIDs, group.ID) == -1 {
 				groupIDs = append(groupIDs, group.ID)
 				groupsChanged = true
-				userHasAnyIMQSPermission = true
 			}
+			userHasAnyIMQSPermission = true
 		}
 	}
 
@@ -575,13 +584,31 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 				continue
 			}
 
-			if groupIDs.ContainsIndex(internalGroup.ID) {
+			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
+				m.parent.Log.Infof("MSAAD grant default role %v to %v", internalGroupName, nameInLogs)
 				groupIDs = append(groupIDs, internalGroup.ID)
 				groupsChanged = true
 			}
-
 		}
-		m.parent.Log.Infof("MSAAD grant default roles to %v (default IMQS role)", nameInLogs)
+		m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+	} else {
+		// REMOVE all default roles
+		for _, internalGroupName := range m.Config.DefaultRoles {
+			internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
+			if !ok {
+				// Following the above logic, we have already logged this error
+				continue
+			}
+
+			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1  {
+				m.parent.Log.Infof("MSAAD remove default role %v from %v (no MSADD roles)", internalGroupName, nameInLogs)
+				groupIDs = removeFromGroupList(groupIDs, idx)
+				groupsChanged = true
+			}
+		}
+		if groupsChanged {
+			m.parent.Log.Infof("MSAAD removed ALL default roles from %v (no MSADD roles)", nameInLogs)
+		}
 	}
 
 	if groupsChanged && !m.Config.DryRun {
