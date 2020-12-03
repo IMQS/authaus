@@ -502,7 +502,9 @@ func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 }
 
 func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) error {
+
 	nameInLogs := aadUser.profile.bestEmail()
+	m.parent.Log.Debugf("MSAAD syncRoles started for %s", nameInLogs)
 
 	permit, err := m.parent.GetPermit(internalUserID)
 	if err != nil && err != ErrIdentityPermitNotFound {
@@ -523,6 +525,56 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	groupsChanged := false
 	userHasAnyIMQSPermission := false
 
+	// identify unmapped groups
+	removeIDs, _ := DecodePermit(make([]byte, 0))
+	allowedIDs, _ := DecodePermit(make([]byte, 0))
+
+	m.parent.Log.Debugf("MSAAD empty role arrays constructed")
+
+	// get all mapped group ids
+	for _, internalGroupName := range m.Config.RoleToGroup {
+		m.parent.Log.Debugf("MSAAD checking all roles: %v", internalGroupName)
+
+		internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
+		if !ok {
+			// We've already logged an error about this, so here we just ignore it
+			continue
+		}
+		m.parent.Log.Debugf("MSAAD add allowed ID for %v", internalGroupName)
+		allowedIDs = append(allowedIDs, internalGroup.ID)
+	}
+
+	for _, groupName := range m.Config.DefaultRoles {
+		m.parent.Log.Debugf("MSAAD checking default roles: %v", groupName)
+
+		internalGroup, ok := roleGroups.nameToGroup[groupName]
+		if !ok {
+			// We've already logged an error about this, so here we just ignore it
+			continue
+		}
+		m.parent.Log.Debugf("MSAAD add allowed default ID for %v", groupName)
+		allowedIDs = append(allowedIDs, internalGroup.ID)
+	}
+
+	// now remove all IDs from groupID that is NOT in allowedIDs
+	for _, groupID := range groupIDs {
+		if allowedIDs.IndexOf(groupID) == -1 {
+			m.parent.Log.Debugf("MSAAD unmapped ID %v, add to remove list", groupID)
+			removeIDs = append(removeIDs, groupID)
+		}
+	}
+
+	for _, id := range removeIDs {
+		if idx := groupIDs.IndexOf(id); idx != -1 {
+			group := roleGroups.idToGroup[id]
+			groupName := group.Name
+			m.parent.Log.Infof("MSAAD remove role %v for %v", groupName, nameInLogs)
+			groupIDs = removeFromGroupList(groupIDs, idx)
+			groupsChanged = true
+		}
+	}
+
+	// now synchronise with mapped items
 	for aadRole, internalGroupName := range m.Config.RoleToGroup {
 		internalGroup, ok := roleGroups.nameToGroup[internalGroupName]
 		if !ok {
@@ -596,7 +648,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 			}
 		}
 		if groupsChanged {
-			m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+			m.parent.Log.Debugf("MSAAD granted default roles to %v", nameInLogs)
 		}
 	} else {
 		// REMOVE all default roles
