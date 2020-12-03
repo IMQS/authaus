@@ -595,7 +595,9 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 				groupsChanged = true
 			}
 		}
-		m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+		if groupsChanged {
+			m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+		}
 	} else {
 		// REMOVE all default roles
 		for _, internalGroupName := range m.Config.DefaultRoles {
