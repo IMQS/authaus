@@ -150,13 +150,13 @@ const (
 	MatchTypeStandard = MatchTypeExact | MatchTypeStartsWith | MatchTypeEndsWith
 )
 
-func (u *msaadUser) hasRoleByPrincipleDisplayName(principleDisplayName string, preferredMatchConditions MatchType) bool {
+func (u *msaadUser) hasRoleByPrincipalDisplayName(principalDisplayName string, preferredMatchConditions MatchType) bool {
 	for _, r := range u.roles {
 		if preferredMatchConditions == MatchTypeNone {
 			preferredMatchConditions = MatchTypeStandard
 		}
 
-		if Match(principleDisplayName, r.PrincipleDisplayName)&preferredMatchConditions != 0 {
+		if Match(principalDisplayName, r.PrincipalDisplayName)&preferredMatchConditions != 0 {
 			return true
 		}
 	}
@@ -226,21 +226,26 @@ type msaadRolesJSON struct {
 type msaadRoleJSON struct {
 	ID                   string `json:"id"`
 	CreatedDateTime      string `json:"createdDateTime"`
-	PrincipleDisplayName string `json:"principalDisplayName"`
+	PrincipalDisplayName string `json:"principalDisplayName"`
 	PrincipalID          string `json:"principalId"`
 	PrincipalType        string `json:"principalType"`
 	ResourceDisplayName  string `json:"resourceDisplayName"`
 }
 
 func (m *msaadRoleJSON) IsDomain(domain string) bool {
-	return matchesDomain(m.PrincipleDisplayName, domain)
+	return matchesDomain(m.PrincipalDisplayName, domain)
 }
 
 // IsGeneral attempts to distinguish between permissions that are created for
 // a specific person on the AD tenant, and permissions that are created using the
-// accepted convention
+// accepted (underscore delimited) convention. For example, permissions with
+// obfuscated yet conceptually similar names like "Piet Pompies" and "Nelson
+// Mandela" exist in the tenant belonging to the first client that this
+// integration was built for.
+// The most obvious difference between these sets of permissions is that
+// these permissions do not contain underscores.
 func (m *msaadRoleJSON) IsGeneral() bool {
-	return strings.Contains(m.PrincipleDisplayName, "_")
+	return strings.Contains(m.PrincipalDisplayName, "_")
 }
 
 // ExtractPermissionsName tries to extract the module name from the Azure permission.
@@ -251,7 +256,7 @@ func (m *msaadRoleJSON) ExtractPermissionsName(domain string) string {
 	}
 	// This code assumes that the last section of a string whose sections are
 	// delimited by a semicolon is the correct permission that we are looking for
-	arr := strings.Split(m.PrincipleDisplayName, "_")
+	arr := strings.Split(m.PrincipalDisplayName, "_")
 	idx := len(arr) - 2
 	if idx < 0 {
 		idx = 0
@@ -442,7 +447,7 @@ func (m *MSAAD) SynchronizeUsers() error {
 // permissions that is associated with IMQS.
 func (m *MSAAD) userBelongsHere(user *msaadUser, matchType MatchType) bool {
 	for azureName := range m.Config.RoleToGroup {
-		if user.hasRoleByPrincipleDisplayName(azureName, matchType) {
+		if user.hasRoleByPrincipalDisplayName(azureName, matchType) {
 			return true
 		}
 	}
@@ -530,7 +535,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 			logPrefix = "MSAAD dry-run:"
 		}
 
-		if aadUser.hasRoleByPrincipleDisplayName(aadRole, MatchTypeStandard) {
+		if aadUser.hasRoleByPrincipalDisplayName(aadRole, MatchTypeStandard) {
 			// ensure that the user belongs to 'internalGroup'
 			if indexInGroupInList(groupIDs, internalGroup.ID) == -1 {
 				m.parent.Log.Infof(logPrefix+" grant %v to %v (from AAD role %v)", internalGroupName, nameInLogs, aadRole)
@@ -558,12 +563,12 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		for _, role := range aadUser.roles {
 			permissionName := role.ExtractPermissionsName(m.Config.Domain)
 			if permissionName == "" {
-				m.parent.Log.Errorf("Could not extract a meaningful candidate permission from MSAAD role'%v'", role.PrincipleDisplayName, m.Config.Domain)
+				m.parent.Log.Errorf("Could not extract a meaningful candidate permission from MSAAD role'%v'", role.PrincipalDisplayName, m.Config.Domain)
 				continue
 			}
 			group, ok := roleGroups.nameToGroup[permissionName]
 			if !ok {
-				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission in domain '%v", role.PrincipleDisplayName, m.Config.Domain)
+				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission in domain '%v", role.PrincipalDisplayName, m.Config.Domain)
 				continue
 			}
 			if indexInGroupInList(groupIDs, group.ID) == -1 {
