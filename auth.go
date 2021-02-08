@@ -530,12 +530,12 @@ func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Toke
 			x.Log.Infof("Once-off auth successful (%v)", user.UserId)
 			return t, nil
 		} else {
-			x.Log.Infof("Once-off auth GetPermit failed (%v) (%v)", user.UserId, ePermit)
+			x.Log.Errorf("Once-off auth GetPermit failed (%v) (%v)", user.UserId, ePermit)
 			return nil, ePermit
 		}
 	} else {
 		x.Stats.IncrementInvalidPasswords(x.Log)
-		x.Log.Infof("Once-off auth Authentication failed (%v) (%v)", user.UserId, eAuth)
+		x.Log.Errorf("Once-off auth Authentication failed (%v) (%v)", user.UserId, eAuth)
 		return nil, eAuth
 	}
 }
@@ -545,7 +545,7 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 	user, authErr := x.authenticate(username, password, clientIPAddress)
 	if authErr != nil {
 		err = authErr
-		x.Log.Infof("Login Authentication failed (%v) (%v)", username, err)
+		x.Log.Errorf("Login Authentication failed (%v) (%v)", username, err)
 		return sessionkey, token, err
 	}
 
@@ -568,7 +568,7 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID string) (sessionkey string, token *Token, err error) {
 	var permit *Permit
 	if permit, err = x.permitDB.GetPermit(user.UserId); err != nil {
-		x.Log.Infof("Login GetPermit failed (%v) (%v)", user.UserId, err)
+		x.Log.Errorf("Login GetPermit failed (%v) (%v)", user.UserId, err)
 		return sessionkey, token, err
 	}
 
@@ -601,7 +601,7 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 
 	sessionkey = generateSessionKey()
 	if err = x.sessionDB.Write(sessionkey, token); err != nil {
-		x.Log.Warnf("Writing session key failed (%v)", err)
+		x.Log.Errorf("Writing session key failed (%v)", err)
 		return sessionkey, token, err
 	}
 	return sessionkey, token, nil
@@ -612,7 +612,7 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 func (x *Central) authenticate(identity, password string, clientIPAddress string) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
-		return AuthUser{}, ErrIdentityAuthNotFound
+		return AuthUser{}, fmt.Errorf("%v: %v", ErrIdentityAuthNotFound, err)
 	}
 	var authTypeCheck AuthCheck
 	if x.PasswordExpiresAfter != 0 {
@@ -777,7 +777,7 @@ func (x *Central) GetPermits() (map[UserId]*Permit, error) {
 // Change a Permit.
 func (x *Central) SetPermit(userId UserId, permit *Permit) error {
 	if err := x.permitDB.SetPermit(userId, permit); err != nil {
-		x.Log.Infof("SetPermit failed (%v) (%v)", userId, err)
+		x.Log.Errorf("SetPermit failed (%v) (%v)", userId, err)
 		return err
 	}
 	x.Log.Infof("SetPermit successful (%v)", userId)
@@ -793,7 +793,7 @@ func (x *Central) SetPassword(userId UserId, password string) error {
 		enforceTypeCheck = PasswordEnforcementDefault
 	}
 	if err := x.userStore.SetPassword(userId, password, enforceTypeCheck); err != nil {
-		x.Log.Infof("SetPassword failed (%v) (%v)", userId, password)
+		x.Log.Errorf("SetPassword failed (%v) (%v)", userId, password)
 		return err
 	}
 	x.Log.Infof("SetPassword successful (%v)", userId)
@@ -806,7 +806,7 @@ func (x *Central) SetPassword(userId UserId, password string) error {
 func (x *Central) ResetPasswordStart(userId UserId, expires time.Time) (string, error) {
 	token, err := x.userStore.ResetPasswordStart(userId, expires)
 	if err != nil {
-		x.Log.Infof("ResetPasswordStart failed (%v) (%v)", userId, err)
+		x.Log.Errorf("ResetPasswordStart failed (%v) (%v)", userId, err)
 		return "", err
 	}
 	x.Log.Infof("ResetPasswordStart successful (%v)", userId)
@@ -823,7 +823,7 @@ func (x *Central) ResetPasswordFinish(userId UserId, token string, password stri
 		enforceTypeCheck = PasswordEnforcementDefault
 	}
 	if err := x.userStore.ResetPasswordFinish(userId, token, password, enforceTypeCheck); err != nil {
-		x.Log.Infof("ResetPasswordFinish failed (%v) (%v)", userId, err)
+		x.Log.Errorf("ResetPasswordFinish failed (%v) (%v)", userId, err)
 		return err
 	}
 	x.Log.Infof("ResetPasswordFinish successful (%v)", userId)
@@ -846,7 +846,7 @@ func (x *Central) CreateUserStoreIdentity(user *AuthUser, password string) (User
 func (x *Central) UpdateIdentity(user *AuthUser) error {
 	e := x.userStore.UpdateIdentity(user)
 	if e != nil {
-		x.Log.Warnf("Update Identity failed (%v) (%v)", user.UserId, e)
+		x.Log.Errorf("Update Identity failed (%v) (%v)", user.UserId, e)
 		return e
 	}
 
@@ -892,7 +892,7 @@ func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	if e == nil {
 		return *user, nil
 	} else {
-		x.Log.Infof("GetUserIdFromIdentity failed (%v) (%v)", identity, e)
+		x.Log.Errorf("GetUserIdFromIdentity failed (%v) (%v)", identity, e)
 	}
 	return AuthUser{}, e
 }
@@ -903,7 +903,7 @@ func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
 	if e == nil {
 		return *user, nil
 	} else {
-		x.Log.Infof("GetIdentityFromUserId failed (%v) (%v)", userId, e)
+		x.Log.Errorf("GetIdentityFromUserId failed (%v) (%v)", userId, e)
 	}
 	return AuthUser{}, e
 }
@@ -917,7 +917,7 @@ func (x *Central) GetUserNameFromUserId(userId UserId) string {
 	if e == nil {
 		return user.Firstname + " " + user.Lastname
 	} else {
-		x.Log.Infof("GetIdentityFromUserId failed (%v) (%v)", userId, e)
+		x.Log.Errorf("GetIdentityFromUserId failed (%v) (%v)", userId, e)
 	}
 	return ""
 }
@@ -944,7 +944,7 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 	}
 
 	if err := x.userStore.RenameIdentity(oldIdent, newIdent); err != nil {
-		x.Log.Warnf("RenameIdentity failed (%v -> %v) (%v)", oldIdent, newIdent, err)
+		x.Log.Errorf("RenameIdentity failed (%v -> %v) (%v)", oldIdent, newIdent, err)
 		return err
 	}
 

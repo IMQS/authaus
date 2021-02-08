@@ -51,6 +51,50 @@ type sqlUserStoreDB struct {
 	passwordExpiry time.Duration
 }
 
+type sqlUser struct {
+	userId               sql.NullInt64
+	email                sql.NullString
+	username             sql.NullString
+	firstName            sql.NullString
+	lastName             sql.NullString
+	mobileNumber         sql.NullString
+	telephoneNumber      sql.NullString
+	remarks              sql.NullString
+	created              pq.NullTime
+	createdBy            sql.NullInt64
+	modified             pq.NullTime
+	modifiedBy           sql.NullInt64
+	authUserType         sql.NullInt64
+	archived             sql.NullBool
+	internalUUID         sql.NullString
+	externalUUID         sql.NullString
+	passwordModifiedDate pq.NullTime
+	accountLocked        sql.NullBool
+}
+
+func (user *sqlUser) toAuthUser() *AuthUser {
+	return &AuthUser{
+		UserId:               UserId(user.userId.Int64),
+		Email:                user.email.String,
+		Username:             user.username.String,
+		Firstname:            user.firstName.String,
+		Lastname:             user.lastName.String,
+		Mobilenumber:         user.mobileNumber.String,
+		Telephonenumber:      user.telephoneNumber.String,
+		Remarks:              user.remarks.String,
+		Created:              user.created.Time,
+		CreatedBy:            UserId(user.createdBy.Int64),
+		Modified:             user.modified.Time,
+		ModifiedBy:           UserId(user.modifiedBy.Int64),
+		Type:                 AuthUserType(user.authUserType.Int64),
+		Archived:             user.archived.Bool,
+		InternalUUID:         user.internalUUID.String,
+		ExternalUUID:         user.externalUUID.String,
+		PasswordModifiedDate: user.passwordModifiedDate.Time,
+		AccountLocked:        user.accountLocked.Bool,
+	}
+}
+
 func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration) error {
 	x.passwordExpiry = passwordExpiry
 	return nil
@@ -94,25 +138,26 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 }
 
 func (x *sqlUserStoreDB) SetPassword(userId UserId, password string, enforceTypeCheck PasswordEnforcement) error {
-	if tx, etx := x.db.Begin(); etx == nil {
-		if enforceTypeCheck&PasswordEnforcementReuse != 0 && x.hasPasswordBeenUsedBefore(userId, password) {
-			tx.Rollback()
-			return ErrInvalidPastPassword
-		}
-
-		if earchive := x.archivePassword(tx, userId); earchive != nil {
-			tx.Rollback()
-			return earchive
-		}
-
-		if eupdate := x.setPasswordInternal(tx, userId, password); eupdate != nil {
-			tx.Rollback()
-			return eupdate
-		}
-		return tx.Commit()
-	} else {
-		return etx
+	var tx *sql.Tx
+	var err error
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+	if enforceTypeCheck&PasswordEnforcementReuse != 0 && x.hasPasswordBeenUsedBefore(userId, password) {
+		return ErrInvalidPastPassword
+	}
+	if err = x.archivePassword(tx, userId); err != nil {
+		return fmt.Errorf("Could not archive password: %v", err)
+	}
+	if err = x.setPasswordInternal(tx, userId, password); err != nil {
+		return fmt.Errorf("Could not update password: %v", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+
+	return nil
 }
 
 func (x *sqlUserStoreDB) setPasswordInternal(tx *sql.Tx, userId UserId, password string) error {
@@ -133,57 +178,71 @@ func (x *sqlUserStoreDB) setPasswordInternal(tx *sql.Tx, userId UserId, password
 }
 
 func (x *sqlUserStoreDB) ResetPasswordStart(userId UserId, expires time.Time) (string, error) {
-	if tx, etx := x.db.Begin(); etx == nil {
-		token := generatePasswordResetToken(expires)
-		if update, eupdate := tx.Exec(`UPDATE authuserpwd AS aup SET pwdtoken = $1 FROM authuserstore AS aus WHERE aus.userid = aup.userid AND aup.userid = $2 AND (aus.archived = false OR aus.archived IS NULL) AND aus.authusertype = $3`, token, userId, UserTypeDefault); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return token, tx.Commit()
-			} else {
-				tx.Rollback()
-				return "", ErrIdentityAuthNotFound
-			}
-		} else {
-			return "", eupdate
-		}
-	} else {
-		return "", etx
+	var tx *sql.Tx
+	var err error
+	if tx, err = x.db.Begin(); err != nil {
+		return "", fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+
+	token := generatePasswordResetToken(expires)
+	update, err := tx.Exec(`UPDATE authuserpwd AS aup SET pwdtoken = $1
+	FROM authuserstore AS aus
+	WHERE
+		aus.userid = aup.userid AND aup.userid = $2
+		AND (aus.archived = false OR aus.archived IS NULL)
+		AND aus.authusertype = $3`,
+		token, userId, UserTypeDefault,
+	)
+	if err != nil {
+		return "", fmt.Errorf("Could not execute update statement (ResetPasswordStart): %v", err.Error())
+	}
+	if affected, err := update.RowsAffected(); err != nil {
+		return "", fmt.Errorf("Could not execute find UserID record (ResetPasswordStart): %v", err.Error())
+	} else if affected != 1 {
+		return "", fmt.Errorf("Could not find UserID record (ResetPasswordStart): %v", ErrIdentityAuthNotFound)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return token, nil
 }
 
 func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, password string, enforceTypeCheck PasswordEnforcement) error {
-	if tx, etx := x.db.Begin(); etx == nil {
-		var truthToken sql.NullString
-		if escan := tx.QueryRow("SELECT pwdtoken FROM authuserpwd WHERE userid = $1", userId).Scan(&truthToken); escan != nil {
-			tx.Rollback()
-			if escan == sql.ErrNoRows {
-				return ErrIdentityAuthNotFound
-			}
-			return escan
-		}
+	var (
+		truthToken sql.NullString
+		tx         *sql.Tx
+		err        error
+	)
 
-		if everify := verifyPasswordResetToken(token, truthToken.String); everify != nil {
-			tx.Rollback()
-			return everify
-		}
-
-		if enforceTypeCheck&PasswordEnforcementReuse != 0 && x.hasPasswordBeenUsedBefore(userId, password) {
-			tx.Rollback()
-			return ErrInvalidPastPassword
-		}
-
-		if earchive := x.archivePassword(tx, userId); earchive != nil {
-			tx.Rollback()
-			return earchive
-		}
-
-		if eupdate := x.setPasswordInternal(tx, userId, password); eupdate != nil {
-			tx.Rollback()
-			return eupdate
-		}
-		return tx.Commit()
-	} else {
-		return etx
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+
+	if err = tx.QueryRow("SELECT pwdtoken FROM authuserpwd WHERE userid = $1", userId).Scan(&truthToken); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrIdentityAuthNotFound
+		}
+		return fmt.Errorf("Could not read pwdtoken: %v", err)
+	}
+	if err = verifyPasswordResetToken(token, truthToken.String); err != nil {
+		return fmt.Errorf("Could not verify password reset token: %v", err)
+	}
+	if enforceTypeCheck&PasswordEnforcementReuse != 0 && x.hasPasswordBeenUsedBefore(userId, password) {
+		return ErrInvalidPastPassword
+	}
+	if err = x.archivePassword(tx, userId); err != nil {
+		return fmt.Errorf("Could not archive password: %v", err)
+	}
+	if err = x.setPasswordInternal(tx, userId, password); err != nil {
+		return fmt.Errorf("Could not reset password: %v", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return nil
+
 }
 
 func (x *sqlUserStoreDB) archivePassword(tx *sql.Tx, userId UserId) error {
@@ -389,74 +448,84 @@ func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 		return err
 	}
 
-	var externalUUID *string
+	var (
+		externalUUID *string
+		tx           *sql.Tx
+	)
 	if user.ExternalUUID != "" {
 		externalUUID = &user.ExternalUUID
 	}
-
-	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, `+
-			`remarks = $7, modified = $8, modifiedby = $9, authusertype = $10, externaluuid = $11`+
-			` WHERE userid = $12 AND (archived = false OR archived IS NULL)`,
-			user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber,
-			user.Remarks, user.Modified, user.ModifiedBy, user.Type, externalUUID,
-			user.UserId); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return tx.Commit()
-			} else {
-				tx.Rollback()
-				return ErrIdentityAuthNotFound
-			}
-		} else {
-			tx.Rollback()
-			return eupdate
-		}
-	} else {
-		return etx
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+
+	update, err := tx.Exec(`UPDATE authuserstore SET email = $1, username = $2, firstname = $3, lastname = $4, mobile = $5, phone = $6, `+
+		`remarks = $7, modified = $8, modifiedby = $9, authusertype = $10, externaluuid = $11`+
+		` WHERE userid = $12 AND (archived = false OR archived IS NULL)`,
+		user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber,
+		user.Remarks, user.Modified, user.ModifiedBy, user.Type, externalUUID, user.UserId)
+	if err != nil {
+		return fmt.Errorf("Could not update identity: %v", err)
+	}
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		return fmt.Errorf("User could not be updated: %v", ErrIdentityAuthNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return nil
 }
 
 func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
-	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, true, userId); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return tx.Commit()
-			} else {
-				tx.Rollback()
-				return ErrIdentityAuthNotFound
-			}
-		} else {
-			tx.Rollback()
-			return eupdate
-		}
-	} else {
-		return etx
+	var tx *sql.Tx
+	var err error
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, true, userId)
+	if err != nil {
+		return fmt.Errorf("Could not update auth user: %v", err)
+	}
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		return fmt.Errorf("User could not be updated: %v", ErrIdentityAuthNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return nil
 }
 
 func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
-	if tx, etx := x.db.Begin(); etx == nil {
-		// Check if the new name exists (and is not archived)
-		if exists, err := x.identityExists(tx, newIdent); err != nil {
-			return err
-		} else if exists {
-			return ErrIdentityExists
-		}
+	var (
+		tx     *sql.Tx
+		err    error
+		update sql.Result
+	)
 
-		if update, eupdate := tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2 AND (archived = false OR archived IS NULL)`, newIdent, CanonicalizeIdentity(oldIdent)); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return tx.Commit()
-			} else {
-				tx.Rollback()
-				return ErrIdentityAuthNotFound
-			}
-		} else {
-			tx.Rollback()
-			return eupdate
-		}
-	} else {
-		return etx
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+	// Check if the new name exists (and is not archived)
+	if exists, err := x.identityExists(tx, newIdent); err != nil {
+		return fmt.Errorf("Could not determine if identity exists: %v", err)
+	} else if exists {
+		return ErrIdentityExists
+	}
+	if update, err = tx.Exec(`UPDATE authuserstore SET email = $1 WHERE LOWER(email) = $2 AND (archived = false OR archived IS NULL)`, newIdent, CanonicalizeIdentity(oldIdent)); err != nil {
+		return fmt.Errorf("Could not update record: %v", err)
+	}
+	if affected, _ := update.RowsAffected(); err != nil {
+		return fmt.Errorf("")
+	} else if affected != 1 {
+		return fmt.Errorf("No rows were affected during update: %v", ErrIdentityAuthNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return nil
 }
 
 func selectUsersSQL() string {
@@ -483,57 +552,17 @@ func selectUsersSQL() string {
 }
 
 func selectUsersScan(rows scannable) (*AuthUser, error) {
-	type sqlUser struct {
-		userId               sql.NullInt64
-		email                sql.NullString
-		username             sql.NullString
-		firstName            sql.NullString
-		lastName             sql.NullString
-		mobileNumber         sql.NullString
-		telephoneNumber      sql.NullString
-		remarks              sql.NullString
-		created              pq.NullTime
-		createdBy            sql.NullInt64
-		modified             pq.NullTime
-		modifiedBy           sql.NullInt64
-		authUserType         sql.NullInt64
-		archived             sql.NullBool
-		internalUUID         sql.NullString
-		externalUUID         sql.NullString
-		passwordModifiedDate pq.NullTime
-		accountLocked        sql.NullBool
-	}
 	user := sqlUser{}
 	if err := rows.Scan(&user.userId, &user.email, &user.username, &user.firstName, &user.lastName, &user.mobileNumber,
 		&user.telephoneNumber, &user.remarks, &user.created, &user.createdBy, &user.modified, &user.modifiedBy,
 		&user.authUserType, &user.archived, &user.internalUUID, &user.externalUUID,
 		&user.passwordModifiedDate, &user.accountLocked); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, ErrIdentityAuthNotFound
+			return nil, fmt.Errorf("While scanning user, no rows were found: %v", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("Could not scan user: %v", err)
 	}
-	au := &AuthUser{
-		UserId:               UserId(user.userId.Int64),
-		Email:                user.email.String,
-		Username:             user.username.String,
-		Firstname:            user.firstName.String,
-		Lastname:             user.lastName.String,
-		Mobilenumber:         user.mobileNumber.String,
-		Telephonenumber:      user.telephoneNumber.String,
-		Remarks:              user.remarks.String,
-		Created:              user.created.Time,
-		CreatedBy:            UserId(user.createdBy.Int64),
-		Modified:             user.modified.Time,
-		ModifiedBy:           UserId(user.modifiedBy.Int64),
-		Type:                 AuthUserType(user.authUserType.Int64),
-		Archived:             user.archived.Bool,
-		InternalUUID:         user.internalUUID.String,
-		ExternalUUID:         user.externalUUID.String,
-		PasswordModifiedDate: user.passwordModifiedDate.Time,
-		AccountLocked:        user.accountLocked.Bool,
-	}
-	return au, nil
+	return user.toAuthUser(), nil
 }
 
 func (x *sqlUserStoreDB) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]AuthUser, error) {
@@ -673,26 +702,23 @@ func (x *sqlPermitDB) GetPermits() (map[UserId]*Permit, error) {
 }
 
 func (x *sqlPermitDB) SetPermit(userId UserId, permit *Permit) error {
+	var tx *sql.Tx
+	var err error
 	encodedPermit := permit.Serialize()
-	if tx, etx := x.db.Begin(); etx == nil {
-		if update, eupdate := tx.Exec(`UPDATE authuserpwd SET permit = $1 WHERE userid = $2`, encodedPermit, userId); eupdate == nil {
-			if affected, _ := update.RowsAffected(); affected == 1 {
-				return tx.Commit()
-			} else {
-				if _, ecreate := tx.Exec(`INSERT INTO authuserpwd (userid, permit) VALUES ($1, $2)`, userId, encodedPermit); ecreate == nil {
-					return tx.Commit()
-				} else {
-					tx.Rollback()
-					return ecreate
-				}
-			}
-		} else {
-			tx.Rollback()
-			return eupdate
-		}
-	} else {
-		return etx
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
+	defer tx.Rollback()
+	update, err := tx.Exec(`UPDATE authuserpwd SET permit = $1 WHERE userid = $2`, encodedPermit, userId)
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		if _, err = tx.Exec(`INSERT INTO authuserpwd (userid, permit) VALUES ($1, $2)`, userId, encodedPermit); err != nil {
+			return fmt.Errorf("Could neither update nor insert permit: %v", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %v", err)
+	}
+	return nil
 }
 
 func (x *sqlPermitDB) RenameIdentity(oldIdent, newIdent string) error {
@@ -753,12 +779,11 @@ func getPermitsFromDB(db *sql.DB, tableName, permitField, userIdField string) (m
 		if err != nil {
 			return nil, err
 		}
-		if strUserId.Valid {
-			if userId, err := strconv.ParseInt(strUserId.String, 10, 64); err == nil {
-				permits[UserId(userId)] = p
-			} else {
-				return nil, err
-			}
+		if !strUserId.Valid {
+			return nil, fmt.Errorf("Could not parse ID into number: %v", err)
+		}
+		if userID, err := strconv.ParseInt(strUserId.String, 10, 64); err == nil {
+			permits[UserId(userID)] = p
 		}
 	}
 	return permits, err
@@ -769,18 +794,17 @@ func verifyAuthausHash(password, hash string) bool {
 	if err != nil {
 		return false
 	}
-	if len(block) == hashLengthV1 {
-		if block[0] != 1 {
-			return false
-		}
-		scrypted, err := scrypt.Key([]byte(password), block[1:33], scryptN_V1, 8, 1, 32)
-		if err != nil {
-			return false
-		}
-		return subtle.ConstantTimeCompare(block[33:], scrypted) == 1
-	} else {
+	if len(block) != hashLengthV1 {
 		return false
 	}
+	if block[0] != 1 {
+		return false
+	}
+	scrypted, err := scrypt.Key([]byte(password), block[1:33], scryptN_V1, 8, 1, 32)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare(block[33:], scrypted) == 1
 }
 
 func computeAuthausHash(password string) (string, error) {
