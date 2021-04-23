@@ -352,13 +352,11 @@ func (x *sqlGroupDB) GetGroupsRaw() ([]RawAuthGroup, error) {
 
 	var groups []RawAuthGroup
 	for rows.Next() {
-		name := ""
-		permList := ""
-		var id GroupIDU32
-		if errScan := rows.Scan(&id, &name, &permList); errScan != nil {
+		r := RawAuthGroup{}
+		if errScan := rows.Scan(&r.ID, &r.Name, &r.PermList); errScan != nil {
 			return nil, errScan
 		}
-		groups = append(groups, RawAuthGroup{ID: id, Name: name, PermList: permList})
+		groups = append(groups, r)
 	}
 	return groups, nil
 }
@@ -438,13 +436,7 @@ type RoleGroupCache struct {
 
 // GetGroupsRaw's results are not cached. The point is to get the current state of the db for the export
 func (x *RoleGroupCache) GetGroupsRaw() ([]RawAuthGroup, error) {
-	x.groupsLock.RLock()
-	groups, err := x.backend.GetGroupsRaw()
-	if err != nil {
-		return nil, err
-	}
-	x.groupsLock.Unlock()
-	return groups, nil
+	return x.backend.GetGroupsRaw()
 }
 
 func (x *RoleGroupCache) GetGroups() ([]*AuthGroup, error) {
