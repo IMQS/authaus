@@ -343,7 +343,6 @@ func (x *sqlGroupDB) GetGroups() ([]*AuthGroup, error) {
 }
 
 func (x *sqlGroupDB) GetGroupsRaw() ([]RawAuthGroup, error) {
-	// return readAllGroups(x.db.Query("SELECT id,name,permlist FROM authgroup"))
 	rows, queryError := x.db.Query("SELECT id,name,permlist FROM authgroup")
 	if queryError != nil {
 		return nil, queryError
