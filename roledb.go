@@ -107,6 +107,7 @@ func (gid *GroupIDU32s) ContainsIndex(idx GroupIDU32) bool {
 // of permissions that it enables.
 type RoleGroupDB interface {
 	GetGroups() ([]*AuthGroup, error)
+	GetGroupsRaw() ([]RawAuthGroup, error)
 	GetByName(name string) (*AuthGroup, error)
 	GetByID(id GroupIDU32) (*AuthGroup, error)
 	InsertGroup(group *AuthGroup) error
@@ -150,6 +151,12 @@ type AuthGroup struct {
 	ID       GroupIDU32     // DB-generated id
 	Name     string         // Administrators need this name to keep sense of things. Example of this is "finance" or "engineering".
 	PermList PermissionList // Application-defined permission bits (ie every value from 0..65535 pertains to one particular permission)
+}
+
+type RawAuthGroup struct {
+	ID       GroupIDU32
+	Name     string
+	PermList string
 }
 
 func (x *AuthGroup) encodePermList() string {
@@ -253,6 +260,18 @@ func GroupNamesToIDs(groups []string, db RoleGroupDB) ([]GroupIDU32, error) {
 	return ids, nil
 }
 
+func ReadRawGroups(importedGroups []RawAuthGroup) ([]AuthGroup, error) {
+	var groups []AuthGroup
+	for _, importedGroup := range importedGroups {
+		if permList, epermit := parsePermListBase64(importedGroup.PermList); epermit == nil {
+			groups = append(groups, AuthGroup{importedGroup.ID, importedGroup.Name, permList})
+		} else {
+			return nil, epermit
+		}
+	}
+	return groups, nil
+}
+
 // GroupIDsToName converts group IDs to names
 func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB) ([]string, error) {
 	names := make([]string, len(groups))
@@ -335,6 +354,24 @@ func (x *sqlGroupDB) GetGroups() ([]*AuthGroup, error) {
 	return readAllGroups(x.db.Query("SELECT id,name,permlist FROM authgroup"))
 }
 
+func (x *sqlGroupDB) GetGroupsRaw() ([]RawAuthGroup, error) {
+	rows, queryError := x.db.Query("SELECT id,name,permlist FROM authgroup")
+	if queryError != nil {
+		return nil, queryError
+	}
+	defer rows.Close()
+
+	var groups []RawAuthGroup
+	for rows.Next() {
+		r := RawAuthGroup{}
+		if errScan := rows.Scan(&r.ID, &r.Name, &r.PermList); errScan != nil {
+			return nil, errScan
+		}
+		groups = append(groups, r)
+	}
+	return groups, nil
+}
+
 func (x *sqlGroupDB) GetByName(name string) (*AuthGroup, error) {
 	//fmt.Printf("Reading group %v\n", name)
 	return readSingleGroup(x.db.QueryRow("SELECT id,name,permlist FROM authgroup WHERE name = $1", name), name)
@@ -406,6 +443,11 @@ type RoleGroupCache struct {
 	groupsByName map[string]*AuthGroup
 	groupsLock   sync.RWMutex // this guards groupsByID, groupsByName, hasAll
 	hasAll       bool
+}
+
+// GetGroupsRaw's results are not cached. The point is to get the current state of the db for the export
+func (x *RoleGroupCache) GetGroupsRaw() ([]RawAuthGroup, error) {
+	return x.backend.GetGroupsRaw()
 }
 
 func (x *RoleGroupCache) GetGroups() ([]*AuthGroup, error) {

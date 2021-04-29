@@ -27,6 +27,10 @@ func (x *dummyRoleGroupDB) GetGroups() ([]*AuthGroup, error) {
 	return groups, nil
 }
 
+func (x *dummyRoleGroupDB) GetGroupsRaw() ([]RawAuthGroup, error) {
+	return nil, nil
+}
+
 func (x *dummyRoleGroupDB) GetByName(name string) (*AuthGroup, error) {
 	x.groupsLock.RLock()
 	defer x.groupsLock.RUnlock()
