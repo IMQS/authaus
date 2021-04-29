@@ -260,6 +260,18 @@ func GroupNamesToIDs(groups []string, db RoleGroupDB) ([]GroupIDU32, error) {
 	return ids, nil
 }
 
+func ReadRawGroups(importedGroups []RawAuthGroup) ([]AuthGroup, error) {
+	var groups []AuthGroup
+	for _, importedGroup := range importedGroups {
+		if permList, epermit := parsePermListBase64(importedGroup.PermList); epermit == nil {
+			groups = append(groups, AuthGroup{importedGroup.ID, importedGroup.Name, permList})
+		} else {
+			return nil, epermit
+		}
+	}
+	return groups, nil
+}
+
 // GroupIDsToName converts group IDs to names
 func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB) ([]string, error) {
 	names := make([]string, len(groups))
