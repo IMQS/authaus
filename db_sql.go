@@ -36,8 +36,9 @@ approximately 1 millisecond to compute.
 */
 
 const (
-	hashLengthV1 = 65
-	scryptN_V1   = 256
+	hashLengthV1                  = 65
+	scryptN_V1                    = 256
+	defaultOldPasswordHistorySize = 15
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -47,8 +48,9 @@ type scannable interface {
 }
 
 type sqlUserStoreDB struct {
-	db             *sql.DB
-	passwordExpiry time.Duration
+	db                     *sql.DB
+	passwordExpiry         time.Duration
+	oldPasswordHistorySize int // When enforcing "may not re-use old password" policy, look back this many entries to find old (and therefore invalid) passwords
 }
 
 type sqlUser struct {
@@ -95,8 +97,13 @@ func (user *sqlUser) toAuthUser() *AuthUser {
 	}
 }
 
-func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration) error {
-	x.passwordExpiry = passwordExpiry
+func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration, oldPasswordHistorySize int) error {
+	if passwordExpiry != 0 {
+		x.passwordExpiry = passwordExpiry
+	}
+	if oldPasswordHistorySize != 0 {
+		x.oldPasswordHistorySize = oldPasswordHistorySize
+	}
 	return nil
 }
 
@@ -274,7 +281,7 @@ func (x *sqlUserStoreDB) getRecentPasswordsForUser(userId UserId) ([]string, err
 	}
 	passwords = append(passwords, currentPassword)
 
-	rows, err := x.db.Query("SELECT password FROM authpwdarchive WHERE userid = $1 ORDER BY created DESC LIMIT 15", userId)
+	rows, err := x.db.Query("SELECT password FROM authpwdarchive WHERE userid = $1 ORDER BY created DESC LIMIT $2", userId, x.oldPasswordHistorySize)
 	if err != nil {
 		return passwords, err
 	}
@@ -824,6 +831,7 @@ func computeAuthausHash(password string) (string, error) {
 func NewUserStoreDB_SQL(db *sql.DB) (UserStore, error) {
 	userStore := new(sqlUserStoreDB)
 	userStore.db = db
+	userStore.oldPasswordHistorySize = defaultOldPasswordHistorySize
 	return userStore, nil
 }
 

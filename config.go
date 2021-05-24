@@ -160,8 +160,9 @@ type ConfigLDAP struct {
 }
 
 type ConfigUserStoreDB struct {
-	DisablePasswordReuse  bool
-	PasswordExpirySeconds int
+	DisablePasswordReuse   bool
+	OldPasswordHistorySize int // When DisablePasswordReuse is true, this is how far back in history we look (i.e. number of password changes), to determine if a password has been used before
+	PasswordExpirySeconds  int
 }
 
 /*

@@ -539,8 +539,8 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		}
 
 		if internalGroup, ok := roleGroups.nameToGroup[internalGroupName]; ok {
-		    m.parent.Log.Debugf("MSAAD add allowed ID for %v", internalGroupName)
-		    allowedIDs = append(allowedIDs, internalGroup.ID)
+			m.parent.Log.Debugf("MSAAD add allowed ID for %v", internalGroupName)
+			allowedIDs = append(allowedIDs, internalGroup.ID)
 		}
 	}
 
@@ -619,12 +619,12 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		for _, role := range aadUser.roles {
 			permissionName := role.ExtractPermissionsName(m.Config.Domain)
 			if permissionName == "" {
-				m.parent.Log.Errorf("Could not extract a meaningful candidate permission from MSAAD role'%v'", role.PrincipalDisplayName, m.Config.Domain)
+				m.parent.Log.Errorf("Could not extract a meaningful candidate permission from MSAAD role '%v' in domain '%v'", role.PrincipalDisplayName, m.Config.Domain)
 				continue
 			}
 			group, ok := roleGroups.nameToGroup[permissionName]
 			if !ok {
-				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission in domain '%v", role.PrincipalDisplayName, m.Config.Domain)
+				m.parent.Log.Errorf("Though MSAAD role '%v' matches domain '%v', it is not a valid permission", role.PrincipalDisplayName, m.Config.Domain)
 				continue
 			}
 			if indexInGroupInList(groupIDs, group.ID) == -1 {
@@ -663,7 +663,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 				continue
 			}
 
-			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1  {
+			if idx := groupIDs.IndexOf(internalGroup.ID); idx != -1 {
 				m.parent.Log.Infof("MSAAD remove default role %v from %v (no MSADD roles)", internalGroupName, nameInLogs)
 				groupIDs = removeFromGroupList(groupIDs, idx)
 				groupsChanged = true
