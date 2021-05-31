@@ -429,7 +429,11 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		panic(fmt.Errorf("Error connecting to RoleGroupDB: %v", err))
 	}
 
-	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second)
+	oldPasswordHistorySize := config.UserStore.OldPasswordHistorySize
+	if oldPasswordHistorySize == 0 {
+		oldPasswordHistorySize = defaultOldPasswordHistorySize
+	}
+	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.DB = db
@@ -437,17 +441,26 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if config.SessionDB.SessionExpirySeconds != 0 {
 		c.NewSessionExpiresAfter = time.Duration(config.SessionDB.SessionExpirySeconds) * time.Second
 	}
+	startupLogger.Infof("Sessions expire after %v", c.NewSessionExpiresAfter)
 	if config.UserStore.DisablePasswordReuse {
 		c.DisablePasswordReuse = config.UserStore.DisablePasswordReuse
-	}
-	if config.EnableAccountLocking {
-		c.EnableAccountLocking = config.EnableAccountLocking
+		startupLogger.Infof("Most recent %v passwords not allowed to be reused", oldPasswordHistorySize)
+	} else if config.UserStore.OldPasswordHistorySize != 0 {
+		startupLogger.Warnf("OldPasswordHistorySize of %v is specified, but DisablePasswordReuse is not. This limit of %v will have no effect.",
+			config.UserStore.OldPasswordHistorySize, config.UserStore.OldPasswordHistorySize)
 	}
 	if config.MaxFailedLoginAttempts > 0 {
 		c.MaxFailedLoginAttempts = config.MaxFailedLoginAttempts
 	}
+	if config.EnableAccountLocking {
+		c.EnableAccountLocking = config.EnableAccountLocking
+		startupLogger.Infof("Accounts are locked after %v failed login attempts", c.MaxFailedLoginAttempts)
+	}
 	if config.UserStore.PasswordExpirySeconds > 0 {
 		c.PasswordExpiresAfter = time.Duration(config.UserStore.PasswordExpirySeconds) * time.Second
+	}
+	if c.PasswordExpiresAfter != 0 {
+		startupLogger.Infof("Passwords expire after %v", c.PasswordExpiresAfter)
 	}
 
 	c.msaadSyncMergeEnabled = msaadUsed
