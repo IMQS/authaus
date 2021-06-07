@@ -625,7 +625,10 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 func (x *Central) authenticate(identity, password string, clientIPAddress string) (AuthUser, error) {
 	user, err := x.userStore.GetUserFromIdentity(identity)
 	if err != nil {
-		return AuthUser{}, fmt.Errorf("%v: %v", ErrIdentityAuthNotFound, err)
+		if !errors.Is(err, ErrIdentityAuthNotFound) {
+			err = fmt.Errorf("%v: %w", ErrIdentityAuthNotFound, err)
+		}
+		return AuthUser{}, err
 	}
 	var authTypeCheck AuthCheck
 	if x.PasswordExpiresAfter != 0 {
@@ -923,8 +926,15 @@ func (x *Central) GetUserFromUserId(userId UserId) (AuthUser, error) {
 
 // GetUserNameFromUserId gets AuthUser full name from userid.
 func (x *Central) GetUserNameFromUserId(userId UserId) string {
-	if userId == 0 {
+	switch userId {
+	case UserIdAdministrator:
 		return "Administrator"
+	case UserIdLDAPMerge:
+		return "LDAP Merge"
+	case UserIdOAuthImplicitCreate:
+		return "OAuth Sign-in"
+	case UserIdMSAADMerge:
+		return "MSAAD Merge"
 	}
 	user, e := x.userStore.GetUserFromUserId(userId)
 	if e == nil {
@@ -985,6 +995,10 @@ func (x *Central) GetRoleGroupDB() RoleGroupDB {
 	return x.roleGroupDB
 }
 
+func (x *Central) IsShuttingDown() bool {
+	return atomic.LoadUint32(&x.shuttingDown) == 0
+}
+
 func (x *Central) Close() {
 	if x.Log != nil {
 		x.Log.Infof("Authaus has started shutting down")
@@ -1019,7 +1033,8 @@ func (x *Central) Close() {
 	}
 	if x.Log != nil {
 		x.Log.Infof("Authaus has shut down")
-		x.Log = nil
+		// Don't set Log to nil, because a background/cleanup goroutine can't be expected to
+		// check for x.Log being nil every time before it emits a log message.
 	}
 }
 

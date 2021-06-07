@@ -149,7 +149,7 @@ func (x *OAuth) Initialize(parent *Central) {
 	go func() {
 		// Startup grace
 		time.Sleep(5 * time.Second)
-		for {
+		for !x.parent.IsShuttingDown() {
 			x.purgeUnusedOAuthSessions()
 			time.Sleep(time.Minute)
 		}
@@ -165,7 +165,7 @@ func (x *OAuth) Initialize(parent *Central) {
 			}
 			// Startup grace
 			time.Sleep(5 * time.Second)
-			for {
+			for !x.parent.IsShuttingDown() {
 				x.validateTokens()
 				time.Sleep(time.Duration(interval) * time.Second)
 			}
@@ -846,8 +846,8 @@ func (x *OAuth) createOrGetUserID(profile *OAuthUserProfile) (UserId, error) {
 		Modified:     time.Now().UTC(),
 		Type:         UserTypeOAuth,
 		ExternalUUID: profile.UUID,
-		//CreatedBy            UserId
-		//ModifiedBy           UserId
+		CreatedBy:    UserIdOAuthImplicitCreate,
+		ModifiedBy:   UserIdOAuthImplicitCreate,
 		//Archived             bool
 		//PasswordModifiedDate time.Time
 		//AccountLocked        bool

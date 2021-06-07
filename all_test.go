@@ -868,10 +868,10 @@ func TestAuthResetPassword(t *testing.T) {
 	c := setup(t)
 	defer Teardown(c)
 
-	if _, err := c.ResetPasswordStart(notFoundUserId, time.Now()); err != ErrIdentityAuthNotFound {
+	if _, err := c.ResetPasswordStart(notFoundUserId, time.Now()); !errors.Is(err, ErrIdentityAuthNotFound) {
 		t.Fatalf("ResetPasswordStart should fail with ErrIdentityAuthNotFound instead of %v", err)
 	}
-	if err := c.ResetPasswordFinish(joeUserId, "", "12345"); err != ErrInvalidPasswordToken {
+	if err := c.ResetPasswordFinish(joeUserId, "", "12345"); !errors.Is(err, ErrInvalidPasswordToken) {
 		t.Fatalf("ResetPasswordFinish should fail with ErrInvalidPasswordToken instead of %v", err)
 	}
 
@@ -898,13 +898,13 @@ func TestAuthResetPassword(t *testing.T) {
 	if err := c.ResetPasswordFinish(notFoundUserId, token2, "yes"); err != ErrIdentityAuthNotFound {
 		t.Fatalf("ResetPasswordFinish should fail with ErrIdentityAuthNotFound instead of %v", err)
 	}
-	if err := c.ResetPasswordFinish(joeUserId, token1, "yes"); err != ErrInvalidPasswordToken {
+	if err := c.ResetPasswordFinish(joeUserId, token1, "yes"); !errors.Is(err, ErrInvalidPasswordToken) {
 		t.Fatalf("ResetPasswordFinish on dead token should fail with ErrInvalidPasswordToken instead of %v", err)
 	}
 	if err := c.ResetPasswordFinish(joeUserId, token2, "12345"); err != nil {
 		t.Fatalf("ResetPasswordFinish should succeed instead of %v", err)
 	}
-	if err := c.ResetPasswordFinish(joeUserId, token2, "12345"); err != ErrInvalidPasswordToken {
+	if err := c.ResetPasswordFinish(joeUserId, token2, "12345"); !errors.Is(err, ErrInvalidPasswordToken) {
 		t.Fatalf("ResetPasswordFinish a 2nd time should fail with ErrInvalidPasswordToken instead of %v", err)
 	}
 	if token, err := c.GetTokenFromIdentityPassword(joeEmail, joePwd); err == nil || token != nil {
@@ -919,7 +919,7 @@ func TestAuthResetPassword(t *testing.T) {
 
 	// Test time expiry
 	token3, _ := c.ResetPasswordStart(joeUserId, time.Now().Add(-3*time.Second))
-	if err := c.ResetPasswordFinish(joeUserId, token3, "12345"); err != ErrPasswordTokenExpired {
+	if err := c.ResetPasswordFinish(joeUserId, token3, "12345"); !errors.Is(err, ErrPasswordTokenExpired) {
 		t.Fatalf("ResetPasswordFinish should have failed with ErrPasswordTokenExpired instead of %v", err)
 	}
 
@@ -1300,8 +1300,8 @@ func TestAuthUpdateIdentity(t *testing.T) {
 		ModifiedBy:      newModifiedBy,
 		Type:            UserTypeLDAP,
 	}
-	if err := c.UpdateIdentity(&notFoundUser); err != ErrIdentityAuthNotFound {
-		t.Fatalf("TestUpdateIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
+	if err := c.UpdateIdentity(&notFoundUser); err == nil {
+		t.Fatalf("Expected ErrIdentityAuthNotFound, but got: %v", err)
 	}
 
 	joeUser := AuthUser{
@@ -1387,7 +1387,7 @@ func TestAuthArchiveIdentity(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	if err := c.ArchiveIdentity(notFoundUserId); err != ErrIdentityAuthNotFound {
+	if err := c.ArchiveIdentity(notFoundUserId); !errors.Is(err, ErrIdentityAuthNotFound) {
 		t.Fatalf("TestArchiveIdentity failed: Expected ErrIdentityAuthNotFound, but got: %v", err)
 	}
 
@@ -1430,8 +1430,8 @@ func TestAuthArchiveIdentity(t *testing.T) {
 	// Using an ldap backend, authentication will succeed, as we cannot archive users on the ldap system.
 	if !*backend_ldap {
 		// Try to authenticate with archived user
-		if _, err := c.GetTokenFromIdentityPassword(joeEmail, joePwd); err != ErrIdentityAuthNotFound {
-			t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to authenticate: %v", err)
+		if _, err := c.GetTokenFromIdentityPassword(joeEmail, joePwd); err == nil {
+			t.Fatalf("Archived user should not be allowed to authenticate: %v", err)
 		}
 	}
 
@@ -1449,18 +1449,18 @@ func TestAuthArchiveIdentity(t *testing.T) {
 		ModifiedBy:      0,
 		Type:            UserTypeDefault,
 	}
-	if err := c.UpdateIdentity(&joeUser); err != ErrIdentityAuthNotFound {
-		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be updated: %v", err)
+	if err := c.UpdateIdentity(&joeUser); err == nil {
+		t.Fatalf("Archived user should not be allowed to be updated: %v", err)
 	}
 
 	// Try resetting password of archived user
-	if _, err := c.ResetPasswordStart(joeUserId, time.Now()); err != ErrIdentityAuthNotFound {
-		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be reset password: %v", err)
+	if _, err := c.ResetPasswordStart(joeUserId, time.Now()); err == nil {
+		t.Fatalf("Archived user should not be allowed to be reset password: %v", err)
 	}
 
 	// Try renaming email of archived user
-	if err := c.RenameIdentity(joeEmail, "newJoe"); err != ErrIdentityAuthNotFound {
-		t.Fatalf("TestArchiveIdentity failed, archived user should not be allowed to be rename identity: %v", err)
+	if err := c.RenameIdentity(joeEmail, "newJoe"); err == nil {
+		t.Fatalf("Archived user should not be allowed to be rename identity: %v", err)
 	}
 }
 

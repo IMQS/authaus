@@ -49,6 +49,21 @@ const (
 
 type UserId int64
 
+const (
+	// The value 0 was originally placed in the CreatedBy and ModifiedBy fields of a user's record,
+	// when that user was created or modified by the LDAP sync process. Later, we decided to
+	// formalize this, which is when UserIdLDAPMerge was born.
+	// These constants are embedded inside our DB, in the CreatedBy and ModifiedBy fields of
+	// a user's record, so they may not change.
+	UserIdAdministrator UserId = 0
+	// skip -1, because it's such a frequent "invalid" integer code
+	UserIdLDAPMerge           = -2 // Created/Modified by LDAP integration
+	UserIdOAuthImplicitCreate = -3 // Created implicitly by OAuth sign-in
+	UserIdMSAADMerge          = -4 // Created/Modified by MSAAD integration
+	// NOTE:
+	// If you add to this list, be sure to update GetUserNameFromUserId() too
+)
+
 type AuthUserType int
 
 func (u AuthUserType) CanSetPassword() bool {
