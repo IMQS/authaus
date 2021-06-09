@@ -1300,8 +1300,8 @@ func TestAuthUpdateIdentity(t *testing.T) {
 		ModifiedBy:      newModifiedBy,
 		Type:            UserTypeLDAP,
 	}
-	if err := c.UpdateIdentity(&notFoundUser); err == nil {
-		t.Fatalf("Expected ErrIdentityAuthNotFound, but got: %v", err)
+	if err := c.UpdateIdentity(&notFoundUser); !errors.Is(err, ErrIdentityAuthNotFound) {
+		t.Fatalf("Expected ErrIdentityAuthNotFound %v", err)
 	}
 
 	joeUser := AuthUser{
@@ -1431,7 +1431,7 @@ func TestAuthArchiveIdentity(t *testing.T) {
 	if !*backend_ldap {
 		// Try to authenticate with archived user
 		if _, err := c.GetTokenFromIdentityPassword(joeEmail, joePwd); err == nil {
-			t.Fatalf("Archived user should not be allowed to authenticate: %v", err)
+			t.Fatalf("Archived user should not be allowed to authenticate")
 		}
 	}
 
@@ -1450,17 +1450,17 @@ func TestAuthArchiveIdentity(t *testing.T) {
 		Type:            UserTypeDefault,
 	}
 	if err := c.UpdateIdentity(&joeUser); err == nil {
-		t.Fatalf("Archived user should not be allowed to be updated: %v", err)
+		t.Fatalf("Archived user should not be allowed to be updated")
 	}
 
 	// Try resetting password of archived user
 	if _, err := c.ResetPasswordStart(joeUserId, time.Now()); err == nil {
-		t.Fatalf("Archived user should not be allowed to be reset password: %v", err)
+		t.Fatalf("Archived user should not be allowed to be reset password")
 	}
 
 	// Try renaming email of archived user
 	if err := c.RenameIdentity(joeEmail, "newJoe"); err == nil {
-		t.Fatalf("Archived user should not be allowed to be rename identity: %v", err)
+		t.Fatalf("Archived user should not be allowed to be rename identity")
 	}
 }
 

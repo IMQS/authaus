@@ -476,7 +476,7 @@ func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 		return fmt.Errorf("Could not update identity: %v", err)
 	}
 	if affected, _ := update.RowsAffected(); affected != 1 {
-		return fmt.Errorf("User could not be updated: %v", ErrIdentityAuthNotFound)
+		return fmt.Errorf("User could not be updated: %w", ErrIdentityAuthNotFound)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("Could not commit transaction: %v", err)
