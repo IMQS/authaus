@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -371,6 +370,7 @@ func (m *MSAAD) SynchronizeUsers() error {
 				} else {
 					m.parent.Log.Infof("MSAAD update user %v %v %v", aadUser.profile.DisplayName, aadEmail, aadUser.profile.ID)
 					existingUsers[ix].Modified = time.Now()
+					existingUsers[ix].ModifiedBy = UserIdMSAADMerge
 					if err := m.parent.userStore.UpdateIdentity(&existingUsers[ix]); err != nil {
 						m.parent.Log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
 					}
@@ -386,6 +386,8 @@ func (m *MSAAD) SynchronizeUsers() error {
 				user := aadUser.profile.toAuthUser()
 				user.Created = time.Now()
 				user.Modified = user.Created
+				user.CreatedBy = UserIdMSAADMerge
+				user.ModifiedBy = UserIdMSAADMerge
 				if newUserID, err := m.parent.userStore.CreateIdentity(&user, ""); err != nil {
 					m.parent.Log.Warnf("MSAAD: Create identity %v failed: %v", aadEmail, err)
 				} else {
@@ -740,7 +742,7 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 				// users on this AAD, then it certainly pays to parallelize these fetches.
 				selectURL := "https://graph.microsoft.com/v1.0/users/" + user.profile.ID + "/appRoleAssignments"
 				for selectURL != "" {
-					if atomic.LoadUint32(&m.parent.shuttingDown) != 0 {
+					if m.parent.IsShuttingDown() {
 						break
 					}
 					j := msaadRolesJSON{}

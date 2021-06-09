@@ -178,7 +178,9 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 		user.Type = UserTypeLDAP
 		if !foundWithUsername && !foundWithEmail {
 			user.Created = time.Now().UTC()
+			user.CreatedBy = UserIdLDAPMerge
 			user.Modified = time.Now().UTC()
+			user.ModifiedBy = UserIdLDAPMerge
 
 			// WARNING: Weird thing that looked like a compiler bug:
 			// We have found that a certain ldap user (WilburGS) has an email that ends with a space.
@@ -197,6 +199,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 				x.Log.Infof("Updating user of Default user type, to LDAP user type: %v", imqsUser.Email)
 			}
 			user.Modified = time.Now().UTC()
+			user.ModifiedBy = UserIdLDAPMerge
 
 			// WARNING: Weird thing that looked like a compiler bug:
 			// We have found that a certain ldap user (WilburGS) has an email that ends with a space.

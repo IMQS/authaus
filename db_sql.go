@@ -188,7 +188,7 @@ func (x *sqlUserStoreDB) ResetPasswordStart(userId UserId, expires time.Time) (s
 	var tx *sql.Tx
 	var err error
 	if tx, err = x.db.Begin(); err != nil {
-		return "", fmt.Errorf("Could not begin transaction: %v", err)
+		return "", fmt.Errorf("Could not begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -202,15 +202,15 @@ func (x *sqlUserStoreDB) ResetPasswordStart(userId UserId, expires time.Time) (s
 		token, userId, UserTypeDefault,
 	)
 	if err != nil {
-		return "", fmt.Errorf("Could not execute update statement (ResetPasswordStart): %v", err.Error())
+		return "", fmt.Errorf("Could not execute update statement (ResetPasswordStart): %w", err)
 	}
 	if affected, err := update.RowsAffected(); err != nil {
-		return "", fmt.Errorf("Could not execute find UserID record (ResetPasswordStart): %v", err.Error())
+		return "", fmt.Errorf("Could not execute find UserID record (ResetPasswordStart): %w", err)
 	} else if affected != 1 {
-		return "", fmt.Errorf("Could not find UserID record (ResetPasswordStart): %v", ErrIdentityAuthNotFound)
+		return "", fmt.Errorf("Could not find UserID record (ResetPasswordStart): %w", ErrIdentityAuthNotFound)
 	}
 	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("Could not commit transaction: %v", err)
+		return "", fmt.Errorf("Could not commit transaction: %w", err)
 	}
 	return token, nil
 }
@@ -231,22 +231,22 @@ func (x *sqlUserStoreDB) ResetPasswordFinish(userId UserId, token string, passwo
 		if err == sql.ErrNoRows {
 			return ErrIdentityAuthNotFound
 		}
-		return fmt.Errorf("Could not read pwdtoken: %v", err)
+		return fmt.Errorf("Could not read pwdtoken: %w", err)
 	}
 	if err = verifyPasswordResetToken(token, truthToken.String); err != nil {
-		return fmt.Errorf("Could not verify password reset token: %v", err)
+		return fmt.Errorf("Could not verify password reset token: %w", err)
 	}
 	if enforceTypeCheck&PasswordEnforcementReuse != 0 && x.hasPasswordBeenUsedBefore(userId, password) {
 		return ErrInvalidPastPassword
 	}
 	if err = x.archivePassword(tx, userId); err != nil {
-		return fmt.Errorf("Could not archive password: %v", err)
+		return fmt.Errorf("Could not archive password: %w", err)
 	}
 	if err = x.setPasswordInternal(tx, userId, password); err != nil {
-		return fmt.Errorf("Could not reset password: %v", err)
+		return fmt.Errorf("Could not reset password: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("Could not commit transaction: %v", err)
+		return fmt.Errorf("Could not commit transaction: %w", err)
 	}
 	return nil
 
@@ -476,7 +476,7 @@ func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 		return fmt.Errorf("Could not update identity: %v", err)
 	}
 	if affected, _ := update.RowsAffected(); affected != 1 {
-		return fmt.Errorf("User could not be updated: %v", ErrIdentityAuthNotFound)
+		return fmt.Errorf("User could not be updated: %w", ErrIdentityAuthNotFound)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("Could not commit transaction: %v", err)
@@ -493,13 +493,13 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 	defer tx.Rollback()
 	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, true, userId)
 	if err != nil {
-		return fmt.Errorf("Could not update auth user: %v", err)
+		return fmt.Errorf("Could not update auth user: %w", err)
 	}
 	if affected, _ := update.RowsAffected(); affected != 1 {
-		return fmt.Errorf("User could not be updated: %v", ErrIdentityAuthNotFound)
+		return fmt.Errorf("User could not be updated: %w", ErrIdentityAuthNotFound)
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("Could not commit transaction: %v", err)
+		return fmt.Errorf("Could not commit transaction: %w", err)
 	}
 	return nil
 }
