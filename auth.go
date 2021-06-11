@@ -996,7 +996,7 @@ func (x *Central) GetRoleGroupDB() RoleGroupDB {
 }
 
 func (x *Central) IsShuttingDown() bool {
-	return atomic.LoadUint32(&x.shuttingDown) == 0
+	return atomic.LoadUint32(&x.shuttingDown) != 0
 }
 
 func (x *Central) Close() {
