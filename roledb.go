@@ -272,14 +272,21 @@ func ReadRawGroups(importedGroups []RawAuthGroup) ([]AuthGroup, error) {
 	return groups, nil
 }
 
-// GroupIDsToName converts group IDs to names
-func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB) ([]string, error) {
+// GroupIDsToName converts group IDs to names.
+// The 'cache' parameter is used to speed up subsequent calls to this function,
+// because this function tends to get used in loops.
+func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB, cache map[GroupIDU32]string) ([]string, error) {
 	names := make([]string, len(groups))
 	for i, gid := range groups {
-		if group, err := db.GetByID(gid); err != nil {
-			return nil, err
+		if cache[gid] != "" {
+			names[i] = cache[gid]
 		} else {
-			names[i] = group.Name
+			if group, err := db.GetByID(gid); err != nil {
+				return nil, err
+			} else {
+				names[i] = group.Name
+				cache[gid] = group.Name
+			}
 		}
 	}
 	return names, nil
