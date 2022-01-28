@@ -28,6 +28,23 @@ type PermissionU16 uint16
 // A list of permissions
 type PermissionList []PermissionU16
 
+func (a *PermissionList) Diff(b *PermissionList) *PermissionList {
+	d := PermissionList{}
+	for _, ep := range *a {
+		found := false
+		for _, np := range *b {
+			if ep == np {
+				found = true
+				break
+			}
+		}
+		if !found {
+			d = append(d, ep)
+		}
+	}
+	return &d
+}
+
 // Has returns true if the list contains this permission
 func (x PermissionList) Has(perm PermissionU16) bool {
 	for _, bit := range x {
