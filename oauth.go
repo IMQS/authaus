@@ -97,6 +97,14 @@ func (t *oauthToken) toJSON() string {
 	return string(b)
 }
 
+func minInt(a int, b int) int {
+	if a > b {
+		return b
+	} else {
+		return a
+	}
+}
+
 /*
 GET https://graph.microsoft.com/v1.0/me
 {
@@ -348,6 +356,109 @@ func (x *OAuth) HttpHandlerOAuthTest(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, resp.Body)
 		resp.Body.Close()
 	}
+}
+
+// OAuthLoginUsernamePassword
+// Provides support for username and password login to MSAAD
+// App to app authentication.
+// This is NOT recommended for normal user access but for trusted applications that have their own user credentials in MSAAD
+// AND is linked to the same tenant ID under which auth operates.
+func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) error {
+	// Microsoft Azure Active Directory is the only provider we've needed to implement so far
+
+	/* TODO : We refer to the "provider" by name in the config (e.g. emerge), but in the database, we refer to it by
+	type alone. In essence the store does not have any information on WHICH provider will be used to authenticate against,
+	should there be more than one of the same type.
+	*/
+
+	var provider *ConfigOAuthProvider
+	for _, p := range x.Config.Providers {
+		if p.Type == OAuthProviderMSAAD {
+			provider = p
+		}
+	}
+	if provider == nil {
+		return fmt.Errorf("OAuth provider '%v' not configured", OAuthProviderMSAAD)
+	}
+
+	//client_id:56ba925b-6912-4068-ac2c-d77997310431 (example)
+	//scope:user.read openid profile
+	//client_secret:
+	//grant_type:password
+	//username:john.von.neumann@mathsworld.com
+	//password:
+
+	params := map[string]string{
+		"client_id":     provider.ClientID,
+		"scope":         provider.Scope,
+		"client_secret": url.QueryEscape(provider.ClientSecret),
+		"grant_type":    "password",
+		"username":      username,
+		"password":      password,
+	}
+
+	// make the call to msaad
+	resp, err := http.DefaultClient.Post(provider.TokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
+	if err != nil {
+		return fmt.Errorf("Error acquiring access token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("Error reading access token body: %w", err)
+	}
+
+	token := oauthToken{}
+	if err := json.Unmarshal(body, &token); err != nil {
+		return fmt.Errorf("Error unmarshalling access token JSON: %w", err)
+	}
+
+	if token.Error != "" {
+		return fmt.Errorf("Error acquiring access token: %v, %v", token.Error, token.ErrorDescription)
+	}
+
+	// at this point we know the user is valid
+	if token.RefreshToken == "" {
+		// This is not strictly an error - maybe some workflows are fine
+		// with this, particularly if the expiry time is large.
+		// However, I'm just being super conservative here.
+		// Note also, that if the only purpose of OAuth is to authenticate
+		// the person, and get their email/profile, then this error is
+		// entirely bogus, and can be removed.
+		// The offline_access scope is required for MSAAD to send a refresh_token.
+		// I have no idea how general that principle is, with other OAuth providers.
+		return fmt.Errorf("Access Token acquired, but it has no refresh_token. Perhaps you forgot to request the offline_access scope?")
+	}
+
+	// create a bogus oauthsession entry
+	db := x.parent.DB
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if x.Config.Verbose {
+		x.parent.Log.Infof("Insert placeholder oauthsession '%v'", username[:minInt(6, len(username))])
+	}
+
+	_, err = tx.Exec("DELETE FROM oauthchallenge WHERE id = $1", username)
+	if err != nil {
+		return fmt.Errorf("Error deleting from oauthchallenge: %w", err)
+	}
+
+	_, err = tx.Exec("INSERT INTO oauthsession SELECT id,provider,created,$1 FROM oauthchallenge WHERE id = $2", time.Now().UTC(), username)
+	if err != nil {
+		return fmt.Errorf("Error inserting into oauthsession: %w", err)
+	}
+	_, err = tx.Exec("UPDATE oauthsession SET token = $1 WHERE id = $2", token.toJSON(), username)
+	if err != nil {
+		return fmt.Errorf("Error updating oauthsession with initial token: %w", err)
+	}
+
+	// the user does not have a session (and therefore no permit either), it is the caller's responsibility to create the session
+	return tx.Commit()
 }
 
 // Perform an HTTP request, using the token associated with the given ID to authenticate the request.
