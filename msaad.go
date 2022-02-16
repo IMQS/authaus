@@ -14,7 +14,7 @@ package authaus
 // because each fetch is a different HTTP request, and no matter what our bandwidth is,
 // we pay a latency cost if we're going over the sea.
 //
-// To mitigate this cost, we parallize the fetching of the roles, and this has an almost
+// To mitigate this cost, we parallelize the fetching of the roles, and this has an almost
 // linear speedup over fetching them serially.
 
 import (
@@ -41,6 +41,7 @@ type ConfigMSAAD struct {
 	Domain                  string            // Domain is embedded in the client configuration as a text field that one can use to scan AD role names and discover permissions. It is only relevant when AutoDiscoverPermissions is set to true
 	RoleToGroup             map[string]string // Map from principleName of AAD role, to Authaus group.
 	AllowArchiveUser        bool              // If true, then archive users who no longer have the relevant roles in the AAD
+	PassthroughClientIDs    []string          // Client IDs of trusted IMQS apps utilising app-to-app passthrough auth
 }
 
 type msaadBearerTokenJSON struct {
