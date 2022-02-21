@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -359,12 +358,12 @@ func (x *OAuth) HttpHandlerOAuthTest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// OAuthLoginUsernamePassword
 // Provides support for username and password login to MSAAD
 // App to app authentication.
 // This is NOT recommended for normal user access but for trusted applications that have their own user credentials in MSAAD
 // AND is linked to the same tenant ID under which auth operates.
-
-func (x *OAuth) OAuthLoginUsernamePassword(r *http.Request, username string, password string) error {
+func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) error {
 	// Microsoft Azure Active Directory is the only provider we've needed to implement so far
 
 	/* TODO : We refer to the "provider" by name in the config (e.g. emerge), but in the database, we refer to it by
@@ -379,15 +378,14 @@ func (x *OAuth) OAuthLoginUsernamePassword(r *http.Request, username string, pas
 		}
 	}
 	if provider == nil {
-		errorMsg := fmt.Sprintf("OAuth provider '%v' not configured", OAuthProviderMSAAD)
-		return errors.New(errorMsg)
+		return fmt.Errorf("OAuth provider '%v' not configured", OAuthProviderMSAAD)
 	}
 
-	//client_id:54358a07-89cb-40b4-b99f-5a981c627f58
+	//client_id:56ba925b-6912-4068-ac2c-d77997310431 (example)
 	//scope:user.read openid profile
 	//client_secret:
 	//grant_type:password
-	//username:SA_PA_ASSETCORE@awemerge.co.za
+	//username:john.von.neumann@mathsworld.com
 	//password:
 
 	params := map[string]string{
@@ -402,26 +400,22 @@ func (x *OAuth) OAuthLoginUsernamePassword(r *http.Request, username string, pas
 	// make the call to msaad
 	resp, err := http.DefaultClient.Post(provider.TokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
 	if err != nil {
-		err1 := fmt.Errorf("Error acquiring access token: %w", err)
-		return err1
+		return fmt.Errorf("Error acquiring access token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		err1 := fmt.Errorf("Error reading access token body: %w", err)
-		return err1
+		return fmt.Errorf("Error reading access token body: %w", err)
 	}
 
 	token := oauthToken{}
 	if err := json.Unmarshal(body, &token); err != nil {
-		err1 := fmt.Errorf("Error unmarshalling access token JSON: %w", err)
-		return err1
+		return fmt.Errorf("Error unmarshalling access token JSON: %w", err)
 	}
 
 	if token.Error != "" {
-		err1 := fmt.Errorf("Error acquiring access token: %v, %v", token.Error, token.ErrorDescription)
-		return err1
+		return fmt.Errorf("Error acquiring access token: %v, %v", token.Error, token.ErrorDescription)
 	}
 
 	// at this point we know the user is valid
@@ -434,8 +428,7 @@ func (x *OAuth) OAuthLoginUsernamePassword(r *http.Request, username string, pas
 		// entirely bogus, and can be removed.
 		// The offline_access scope is required for MSAAD to send a refresh_token.
 		// I have no idea how general that principle is, with other OAuth providers.
-		err1 := fmt.Errorf("Access Token acquired, but it has no refresh_token. Perhaps you forgot to request the offline_access scope?")
-		return err1
+		return fmt.Errorf("Access Token acquired, but it has no refresh_token. Perhaps you forgot to request the offline_access scope?")
 	}
 
 	// create a bogus oauthsession entry
