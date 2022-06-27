@@ -119,10 +119,11 @@ func (u *msaadUserJSON) injectIntoAuthUser(target *AuthUser) bool {
 		u.MobilePhone != target.Mobilenumber ||
 		target.Type != UserTypeMSAAD ||
 		email != target.Email ||
-		u.ID != target.ExternalUUID
+		u.ID != target.ExternalUUID ||
+		target.Username == ""
 	// if changed {
-	// 	fmt.Printf("A: %20v %20v %10v %v %v %v\n", name, surname, u.MobilePhone, UserTypeMSAAD, email, u.ID)
-	// 	fmt.Printf("B: %20v %20v %10v %v %v %v\n", target.Firstname, target.Lastname, target.Mobilenumber, target.Type, target.Email, target.ExternalUUID)
+	// 	fmt.Printf("A: %20v %20v %10v %v %v %v %v\n", name, surname, u.MobilePhone, UserTypeMSAAD, email, u.ID, u.UserPrincipalName)
+	// 	fmt.Printf("B: %20v %20v %10v %v %v %v %v\n", target.Firstname, target.Lastname, target.Mobilenumber, target.Type, target.Email, target.ExternalUUID, target.Username)
 	// }
 	target.Firstname = name
 	target.Lastname = surname
@@ -130,6 +131,20 @@ func (u *msaadUserJSON) injectIntoAuthUser(target *AuthUser) bool {
 	target.Type = UserTypeMSAAD
 	target.Email = email
 	target.ExternalUUID = u.ID
+	// Username is a special case for AAD. Microsoft has the concept of UserPrincipalName which uniquely identifies a user
+	// by their source domain. This then avoids the issue of federated stores assigning new usernames, confusing the issue and risking duplication.
+	// It takes the format username@domain, where domain is where the account is registered.
+	// For example an IMQS user may be federated through the `westerncape.gov.za' tenant, but will have originated with `eoh.com`.
+	// The correct userPrincipalName should be username@eoh.com.
+	// We fall back to email in the unlikely case where UserPrincipalName is blank.
+	if target.Username == "" {
+		if u.UserPrincipalName != "" {
+			target.Username = u.UserPrincipalName
+		} else {
+			target.Username = email
+		}
+	}
+
 	return changed
 }
 
@@ -305,7 +320,7 @@ func (m *MSAAD) Initialize(parent *Central) {
 }
 
 // SynchronizeUsers rebuilds the role groups cache, as well as re-fetches the
-// users from MSAAD, for the purpose of bring IMQS' internal roledb cache and
+// users from MSAAD, for the purpose of bringing IMQS' internal roledb cache and
 // postgres database up to date
 func (m *MSAAD) SynchronizeUsers() error {
 	cachedRoleGroups, err := m.buildCachedRoleGroups()
@@ -365,6 +380,9 @@ func (m *MSAAD) SynchronizeUsers() error {
 		if foundExisting {
 			// check if user needs to be updated
 			internalUserID = existingUsers[ix].UserId
+			// In the case where the user was NOT found using UUID, the user has been created manually or
+			// by some other means. Regardless, since the user exists in MSAAD (by email/UserPrincipalName, it needs to be updated with the
+			// correct references and its type set to MSAAD
 			if aadUser.profile.injectIntoAuthUser(&existingUsers[ix]) {
 				if m.Config.DryRun {
 					m.parent.Log.Infof("MSAAD dry-run: Update user %v %v %v", aadUser.profile.DisplayName, aadEmail, aadUser.profile.ID)
