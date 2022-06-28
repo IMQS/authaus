@@ -131,18 +131,10 @@ func (u *msaadUserJSON) injectIntoAuthUser(target *AuthUser) bool {
 	target.Type = UserTypeMSAAD
 	target.Email = email
 	target.ExternalUUID = u.ID
-	// Username is a special case for AAD. Microsoft has the concept of UserPrincipalName which uniquely identifies a user
-	// by their source domain. This then avoids the issue of federated stores assigning new usernames, confusing the issue and risking duplication.
-	// It takes the format username@domain, where domain is where the account is registered.
-	// For example an IMQS user may be federated through the `westerncape.gov.za' tenant, but will have originated with `eoh.com`.
-	// The correct userPrincipalName should be username@eoh.com.
-	// We fall back to email in the unlikely case where UserPrincipalName is blank.
+	// We previously used UserPrincipalName here, but its format was cumbersome, so we
+	// fall back to email.
 	if target.Username == "" {
-		if u.UserPrincipalName != "" {
-			target.Username = u.UserPrincipalName
-		} else {
-			target.Username = email
-		}
+		target.Username = email
 	}
 
 	return changed
