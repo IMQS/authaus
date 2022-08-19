@@ -240,12 +240,17 @@ type sqlGroupDB struct {
 // Group has 0..n PermList
 // We produce a list of all unique PermList that appear in any
 // of the groups inside this permit. You can think of this as a binary OR operation.
+// In case of missing groups, the function will proceed with "best effort", but also set the error.
+// Only the first error will be returned.
 func PermitResolveToList(permit []byte, db RoleGroupDB) (PermissionList, error) {
-	bits := make(map[PermissionU16]bool, 0)
+	bits := make(map[PermissionU16]bool)
+	var groupError error
 	if groupIDs, err := DecodePermit(permit); err == nil {
 		for _, gid := range groupIDs {
 			if group, egroup := db.GetByID(gid); egroup != nil {
-				return nil, egroup
+				if groupError == nil {
+					groupError = egroup
+				}
 			} else {
 				for _, bit := range group.PermList {
 					bits[bit] = true
@@ -256,7 +261,7 @@ func PermitResolveToList(permit []byte, db RoleGroupDB) (PermissionList, error) 
 		for bit := range bits {
 			list = append(list, bit)
 		}
-		return list, nil
+		return list, groupError
 	} else {
 		return nil, err
 	}
@@ -289,24 +294,44 @@ func ReadRawGroups(importedGroups []RawAuthGroup) ([]AuthGroup, error) {
 	return groups, nil
 }
 
-// GroupIDsToName converts group IDs to names.
-// The 'cache' parameter is used to speed up subsequent calls to this function,
-// because this function tends to get used in loops.
-func GroupIDsToNames(groups []GroupIDU32, db RoleGroupDB, cache map[GroupIDU32]string) ([]string, error) {
-	names := make([]string, len(groups))
-	for i, gid := range groups {
-		if cache[gid] != "" {
-			names[i] = cache[gid]
-		} else {
-			if group, err := db.GetByID(gid); err != nil {
-				return nil, err
-			} else {
-				names[i] = group.Name
-				cache[gid] = group.Name
-			}
+// GroupIDsToNames converts group IDs to names.
+// The 'cache' parameter is used to speed up subsequent calls to this function, because this function tends to get used
+// in loops. The function does not remove items from the cache - cache management is left to the consumer. Do not reuse
+// the cache outside local iterative control structures or in longer running processes.
+// In case of missing groups, the function will proceed with "best effort", but also set the error.
+// Only the first error will be returned.
+// On error, should the calling function decide to proceed, a null check MUST be performed on the `name` array.
+func GroupIDsToNames(groupIds []GroupIDU32, db RoleGroupDB, cache map[GroupIDU32]string) (name []string, e error) {
+	names := make([]string, 0, len(groupIds))
+	var errGroup error
+	if len(cache) == 0 {
+		if err := addAllGroupNamesToCache(db, cache); err != nil {
+			return nil, err
 		}
 	}
-	return names, nil
+
+	for _, gid := range groupIds {
+		if cache[gid] == "" {
+			if errGroup == nil {
+				errGroup = fmt.Errorf("Group %v not found", gid)
+			}
+		} else {
+			names = append(names, cache[gid])
+		}
+	}
+
+	return names, errGroup
+}
+
+func addAllGroupNamesToCache(db RoleGroupDB, cache map[GroupIDU32]string) error {
+	if groupsDB, err := db.GetGroups(); err == nil {
+		for _, giddb := range groupsDB {
+			cache[giddb.ID] = giddb.Name
+		}
+	} else {
+		return err
+	}
+	return nil
 }
 
 func encodePermList(permlist PermissionList) []byte {
@@ -456,7 +481,9 @@ func (x *sqlGroupDB) Close() {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/* Role Group cache
+/*
+	Role Group cache
+
 This caches all role groups from the backend database. We assume that this database will never be
 particularly large, so we simply allow our cache to grow indefinitely.
 All public functions are thread-safe.

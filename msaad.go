@@ -55,20 +55,22 @@ type msaadUsersJSON struct {
 	Value    []*msaadUserJSON `json:"value"`
 }
 
-/* Example:
-{
-	"businessPhones": [],
-	"displayName": "Name Surname",
-	"givenName": "Name",
-	"jobTitle": null,
-	"mail": "Name.surname@capetown.gov.za",
-	"mobilePhone": null,
-	"officeLocation": null,
-	"preferredLanguage": null,
-	"surname": "Surname",
-	"userPrincipalName": "another@email.address",
-	"id": "5c712197-beef-deef-ffff-f11bb800f365"
-}
+/*
+Example:
+
+	{
+		"businessPhones": [],
+		"displayName": "Name Surname",
+		"givenName": "Name",
+		"jobTitle": null,
+		"mail": "Name.surname@capetown.gov.za",
+		"mobilePhone": null,
+		"officeLocation": null,
+		"preferredLanguage": null,
+		"surname": "Surname",
+		"userPrincipalName": "another@email.address",
+		"id": "5c712197-beef-deef-ffff-f11bb800f365"
+	}
 */
 type msaadUserJSON struct {
 	DisplayName       string `json:"displayName"`
@@ -219,6 +221,7 @@ type msaadRolesJSON struct {
 }
 
 // Example of a single role:
+//
 //	{
 //		"id": "qo0xrCYXk0yY8SkamzjdzeSmfTjLkNFCg9Wo9c89En4",
 //		"deletedDateTime": null,
@@ -277,6 +280,14 @@ type cachedRoleGroups struct {
 	groups      []*AuthGroup
 	nameToGroup map[string]*AuthGroup
 	idToGroup   map[GroupIDU32]*AuthGroup
+}
+
+func (crg *cachedRoleGroups) idToGroupName(i GroupIDU32) string {
+	groupName := "<unknown>"
+	if g, ok := crg.idToGroup[i]; ok {
+		groupName = g.Name
+	}
+	return groupName
 }
 
 // MSAAD is a container for the Microsoft Azure Active Directory synchronization system
@@ -589,7 +600,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 
 	for _, id := range removeIDs {
 		if idx := groupIDs.IndexOf(id); idx != -1 {
-			m.parent.Log.Infof("MSAAD remove role %v for %v", roleGroups.idToGroup[id].Name, nameInLogs)
+			m.parent.Log.Infof("MSAAD remove role %v for %v", roleGroups.idToGroupName(GroupIDU32(idx)), nameInLogs)
 			groupIDs = removeFromGroupList(groupIDs, idx)
 			groupsChanged = true
 		}

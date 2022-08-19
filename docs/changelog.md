@@ -2,6 +2,9 @@
 
 ## current
 
+* fix: Auth fails if a group is not found in a user permit. (ASG-1990)
+* fix: Patch vulnerabilities in golang.org/x/crypto
+
 ## v1.0.30
 
 * fix: ASG-2690: Enhance OAuth logging
