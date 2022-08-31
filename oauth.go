@@ -54,7 +54,7 @@ type oauthStartResponseJSON struct {
 	LoginURL string
 }
 
-// This is just a container for OAuth functions and state, so that we don't
+// OAuth This is just a container for OAuth functions and state, so that we don't
 // pollute the 'Central' struct with all of our stuff.
 type OAuth struct {
 	Config ConfigOAuth
@@ -181,7 +181,7 @@ func (x *OAuth) Initialize(parent *Central) {
 	}
 }
 
-// This is a GET or POST request that the frontend calls, in order to start an OAuth login sequence
+// HttpHandlerOAuthStart This is a GET or POST request that the frontend calls, in order to start an OAuth login sequence
 func (x *OAuth) HttpHandlerOAuthStart(w http.ResponseWriter, r *http.Request) {
 	// This is just some extremely crude rate limiting, but this is an interactive
 	// flow that involves a bunch of user clicks, so I feel it's OK to impose it here.
@@ -223,7 +223,7 @@ func (x *OAuth) HttpHandlerOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// This is a dummy "finish" handler. A real handler would be a function where you create
+// HttpHandlerOAuthFinish This is a dummy "finish" handler. A real handler would be a function where you create
 // a session cookie, and then redirect the user to a reasonable landing page.
 func (x *OAuth) HttpHandlerOAuthFinish(w http.ResponseWriter, r *http.Request) {
 	res, err := x.OAuthFinish(r)
@@ -322,7 +322,7 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	return &result, nil
 }
 
-// It's useful to keep a function like this around, so that you can iterate on this stuff without having
+// HttpHandlerOAuthTest It's useful to keep a function like this around, so that you can iterate on this stuff without having
 // to go through a complete login cycle every time. I'm afraid I'm going to burn up some max-logins-per-hour
 // quota or something like that.
 func (x *OAuth) HttpHandlerOAuthTest(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +363,7 @@ func (x *OAuth) HttpHandlerOAuthTest(w http.ResponseWriter, r *http.Request) {
 // App to app authentication.
 // This is NOT recommended for normal user access but for trusted applications that have their own user credentials in MSAAD
 // AND is linked to the same tenant ID under which auth operates.
-func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) error {
+func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) (error, string) {
 	// Microsoft Azure Active Directory is the only provider we've needed to implement so far
 
 	/* TODO : We refer to the "provider" by name in the config (e.g. emerge), but in the database, we refer to it by
@@ -378,7 +378,7 @@ func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) err
 		}
 	}
 	if provider == nil {
-		return fmt.Errorf("OAuth provider '%v' not configured", OAuthProviderMSAAD)
+		return fmt.Errorf("OAuth provider '%v' not configured", OAuthProviderMSAAD), ""
 	}
 
 	//client_id:56ba925b-6912-4068-ac2c-d77997310431 (example)
@@ -400,22 +400,22 @@ func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) err
 	// make the call to msaad
 	resp, err := http.DefaultClient.Post(provider.TokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
 	if err != nil {
-		return fmt.Errorf("Error acquiring access token: %w", err)
+		return fmt.Errorf("Error acquiring access token: %w", err), ""
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("Error reading access token body: %w", err)
+		return fmt.Errorf("Error reading access token body: %w", err), ""
 	}
 
 	token := oauthToken{}
 	if err := json.Unmarshal(body, &token); err != nil {
-		return fmt.Errorf("Error unmarshalling access token JSON: %w", err)
+		return fmt.Errorf("Error unmarshalling access token JSON: %w", err), ""
 	}
 
 	if token.Error != "" {
-		return fmt.Errorf("Error acquiring access token: %v, %v", token.Error, token.ErrorDescription)
+		return fmt.Errorf("Error acquiring access token: %v, %v", token.Error, token.ErrorDescription), ""
 	}
 
 	// at this point we know the user is valid
@@ -428,37 +428,37 @@ func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) err
 		// entirely bogus, and can be removed.
 		// The offline_access scope is required for MSAAD to send a refresh_token.
 		// I have no idea how general that principle is, with other OAuth providers.
-		return fmt.Errorf("Access Token acquired, but it has no refresh_token. Perhaps you forgot to request the offline_access scope?")
+		return fmt.Errorf("Access Token acquired, but it has no refresh_token. Perhaps you forgot to request the offline_access scope?"), ""
 	}
 
-	// create a bogus oauthsession entry
+	// create an oauthsession entry
+
 	db := x.parent.DB
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return err, ""
 	}
 	defer tx.Rollback()
 
 	if x.Config.Verbose {
-		x.parent.Log.Infof("Insert placeholder oauthsession '%v'", username[:minInt(6, len(username))])
+		x.parent.Log.Infof("Insert placeholder oauthsession for '%v'", username[:minInt(6, len(username))])
 	}
 
-	_, err = tx.Exec("DELETE FROM oauthchallenge WHERE id = $1", username)
-	if err != nil {
-		return fmt.Errorf("Error deleting from oauthchallenge: %w", err)
-	}
+	instantNow := time.Now().UTC()
 
-	_, err = tx.Exec("INSERT INTO oauthsession SELECT id,provider,created,$1 FROM oauthchallenge WHERE id = $2", time.Now().UTC(), username)
+	// this is NOT an auth session key, but a unique identifier for the oauth session entry
+	key := generateSessionKey()
+	_, err = tx.Exec("INSERT INTO oauthsession(id, provider, created, updated) VALUES ($1, $2, $3, $4)", key, provider.Title, instantNow, instantNow)
 	if err != nil {
-		return fmt.Errorf("Error inserting into oauthsession: %w", err)
+		return fmt.Errorf("Error inserting into oauthsession: %w", err), ""
 	}
-	_, err = tx.Exec("UPDATE oauthsession SET token = $1 WHERE id = $2", token.toJSON(), username)
+	_, err = tx.Exec("UPDATE oauthsession SET token = $1 WHERE id = $2", token.toJSON(), key)
 	if err != nil {
-		return fmt.Errorf("Error updating oauthsession with initial token: %w", err)
+		return fmt.Errorf("Error updating oauthsession with initial token: %w", err), ""
 	}
 
 	// the user does not have a session (and therefore no permit either), it is the caller's responsibility to create the session
-	return tx.Commit()
+	return tx.Commit(), key
 }
 
 // Perform an HTTP request, using the token associated with the given ID to authenticate the request.
