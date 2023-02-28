@@ -205,6 +205,64 @@ func createMigrations() []migration.Migrator {
 			FROM authuserstore
 			WHERE authuserstore.userid = authsession.userid;
 		`)}),
+
+		// 14. Add triggers to ensure that created, createdby and modified for the authuserstore table gets set correctly.
+		// created - this gets set to NOW() when a record gets inserted. Once the record has been inserted this value
+		// should not change and the update trigger ensures this.
+		// createdby - if this value is null when a record gets inserted an exception will be raised. Once the record has
+		// been inserted this value should not change and the update trigger ensures this.
+		// modified - this value should always be set to NOW() whenever a record gets inserted or updated.
+		//
+		// The naming convention used for the functions and triggers is as follows:
+		// {database name}_{schema name}_{table name}_{type of trigger}
+		// type of trigger:
+		// first character denoted when the action happens. 'b' for before, 'a' for after.
+		// second character denoted the type of action. 'i' for insert, 'u' for update.
+		// the last character just indicates that this is for a trigger and 't' is used.
+		simple(`
+			CREATE FUNCTION auth_public_authuserstore_bit()
+			RETURNS TRIGGER 
+			LANGUAGE 'plpgsql'
+			AS $$
+			BEGIN
+				NEW.created = NOW();
+				NEW.modified = NOW();
+				CASE 
+					WHEN (NEW.createdby IS NULL) THEN
+						RAISE EXCEPTION 'createdby cannot be null.';
+					ELSE
+						RETURN NEW;
+				END CASE;
+			END;
+			$$;
+			CREATE TRIGGER auth_public_authuserstore_bit
+				BEFORE INSERT
+				ON public.authuserstore
+				FOR EACH ROW EXECUTE PROCEDURE auth_public_authuserstore_bit();
+	
+			--------------------------------------------------------------------------------------------------------------------
+	
+			CREATE FUNCTION auth_public_authuserstore_but()
+				RETURNS TRIGGER 
+				LANGUAGE 'plpgsql'
+			AS $$
+			BEGIN
+				NEW.modified = NOW();
+				CASE
+					WHEN ((OLD.created != NEW.created) OR (OLD.created IS NOT NULL AND NEW.created IS NULL)) THEN
+						RAISE EXCEPTION 'The created timestamp cannot be modified.';
+					WHEN ((OLD.createdby != NEW.createdby) OR (OLD.createdby IS NOT NULL AND NEW.createdby IS NULL)) THEN
+						RAISE EXCEPTION 'createdby cannot be modified.';
+					ELSE
+						RETURN NEW;
+				END CASE;
+			END;
+			$$;
+			CREATE TRIGGER auth_public_authuserstore_but
+				BEFORE UPDATE
+				ON public.authuserstore
+				FOR EACH ROW EXECUTE PROCEDURE auth_public_authuserstore_but();
+		`),
 	}
 }
 
