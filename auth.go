@@ -593,13 +593,15 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 	}
 
 	token = &Token{
-		Permit:         *permit,
 		Identity:       user.getIdentity(),
 		UserId:         user.UserId,
+		Username:       user.Username,
+		Permit:         *permit,
 		InternalUUID:   user.InternalUUID,
 		OAuthSessionID: oauthSessionID,
 	}
 
+	// Email          string
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
 	if x.PasswordExpiresAfter != 0 && user.Type != UserTypeLDAP {
 		userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
