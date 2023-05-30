@@ -596,6 +596,7 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 		Permit:         *permit,
 		Identity:       user.getIdentity(),
 		UserId:         user.UserId,
+		Username:       user.Username,
 		InternalUUID:   user.InternalUUID,
 		OAuthSessionID: oauthSessionID,
 	}
