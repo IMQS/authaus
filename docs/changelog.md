@@ -2,6 +2,10 @@
 
 ## current
 
+## v1.0.28
+
+* fix: Set Email and Username variables on the Token in CreateSession()
+
 ## v1.0.27
 
 * fix: Add authuserstore db triggers. (ASG-2210)
