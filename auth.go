@@ -593,12 +593,10 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 	}
 
 	token = &Token{
+		Permit:         *permit,
 		Identity:       user.getIdentity(),
 		UserId:         user.UserId,
-		Email:          user.Email,
-		Username:       user.Username,
 		InternalUUID:   user.InternalUUID,
-		Permit:         *permit,
 		OAuthSessionID: oauthSessionID,
 	}
 
