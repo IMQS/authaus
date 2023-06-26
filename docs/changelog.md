@@ -2,6 +2,8 @@
 
 ## current
 
+## v1.0.29
+
 * fix: ASG-2622: Change all msaad logs to *info*.
 
 ## v1.0.28
