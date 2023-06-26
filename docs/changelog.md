@@ -2,6 +2,8 @@
 
 ## current
 
+* fix: ASG-2622: Change all msaad logs to *info*.
+
 ## v1.0.28
 
 * fix: Set Email and Username variables on the Token in CreateSession()

@@ -516,7 +516,9 @@ func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 
 func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) error {
 	nameInLogs := aadUser.profile.bestEmail()
-	m.parent.Log.Tracef("MSAAD syncRoles started for %s", nameInLogs)
+	if m.parent.MSAAD.Config.Verbose {
+		m.parent.Log.Infof("MSAAD syncRoles started for %s", nameInLogs)
+	}
 
 	permit, err := m.parent.GetPermit(internalUserID)
 	if err != nil && err != ErrIdentityPermitNotFound {
@@ -542,24 +544,26 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	allowedIDs, _ := DecodePermit(make([]byte, 0))
 
 	if m.parent.MSAAD.Config.Verbose {
-		m.parent.Log.Debugf("MSAAD empty role arrays constructed")
+		m.parent.Log.Infof("MSAAD empty role arrays constructed")
 	}
 
 	// get all mapped group ids
 	for _, internalGroupName := range m.Config.RoleToGroup {
 		if m.parent.MSAAD.Config.Verbose {
-			m.parent.Log.Debugf("MSAAD checking all roles: %v", internalGroupName)
+			m.parent.Log.Infof("MSAAD checking all roles: %v", internalGroupName)
 		}
 
 		if internalGroup, ok := roleGroups.nameToGroup[internalGroupName]; ok {
-			m.parent.Log.Debugf("MSAAD add allowed ID for %v", internalGroupName)
+			if m.parent.MSAAD.Config.Verbose {
+				m.parent.Log.Infof("MSAAD add allowed ID for %v", internalGroupName)
+			}
 			allowedIDs = append(allowedIDs, internalGroup.ID)
 		}
 	}
 
 	for _, groupName := range m.Config.DefaultRoles {
 		if m.parent.MSAAD.Config.Verbose {
-			m.parent.Log.Debugf("MSAAD checking default roles: %v", groupName)
+			m.parent.Log.Infof("MSAAD checking default roles: %v", groupName)
 		}
 
 		internalGroup, ok := roleGroups.nameToGroup[groupName]
@@ -568,7 +572,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 			continue
 		}
 		if m.parent.MSAAD.Config.Verbose {
-			m.parent.Log.Debugf("MSAAD add allowed default ID for %v", groupName)
+			m.parent.Log.Infof("MSAAD add allowed default ID for %v", groupName)
 		}
 		allowedIDs = append(allowedIDs, internalGroup.ID)
 	}
@@ -577,7 +581,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	for _, groupID := range groupIDs {
 		if allowedIDs.IndexOf(groupID) == -1 {
 			if m.parent.MSAAD.Config.Verbose {
-				m.parent.Log.Debugf("MSAAD unmapped ID %v, add to remove list", groupID)
+				m.parent.Log.Infof("MSAAD unmapped ID %v, add to remove list", groupID)
 			}
 			removeIDs = append(removeIDs, groupID)
 		}
@@ -665,7 +669,9 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 			}
 		}
 		if groupsChanged {
-			m.parent.Log.Debugf("MSAAD granted default roles to %v", nameInLogs)
+			if m.parent.MSAAD.Config.Verbose {
+				m.parent.Log.Infof("MSAAD granted default roles to %v", nameInLogs)
+			}
 		}
 	} else {
 		// REMOVE all default roles
@@ -762,9 +768,9 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 						break
 					}
 					if m.parent.MSAAD.Config.Verbose {
-						m.parent.Log.Debugf("User %v (%v): %v\n", user.profile.bestEmail(), user.profile.ID, j)
+						m.parent.Log.Infof("User %v (%v): %v\n", user.profile.bestEmail(), user.profile.ID, j)
 						for _, u := range j.Value {
-							m.parent.Log.Debugf("%v MSAAD User Permission: (%v)", user.profile.bestEmail(), u)
+							m.parent.Log.Infof("%v MSAAD User Permission: (%v)", user.profile.bestEmail(), u)
 						}
 					}
 					user.roles = append(user.roles, j.Value...)
