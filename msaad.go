@@ -55,7 +55,7 @@ type msaadUsersJSON struct {
 	Value    []*msaadUserJSON `json:"value"`
 }
 
-/* Example:
+/* Example #1 (on-tenant user):
 {
 	"businessPhones": [],
 	"displayName": "Name Surname",
@@ -70,6 +70,25 @@ type msaadUsersJSON struct {
 	"id": "5c712197-beef-deef-ffff-f11bb800f365"
 }
 */
+
+/* Example #2 (federated or 'guest' user):
+   {
+       "id": "cb682f69-...",
+       "displayName": "Jaco Vosloo",
+       "givenName": "Jaco",
+       "surname": "Vosloo",
+       "mobilePhone": null,
+       "userPrincipalName": "Jacobus.Vosloo_eoh.com#EXT#@dtpwemerge.onmicrosoft.com",
+       "mail": "Jacobus.Vosloo@eoh.com",
+       "appRoleAssignments@odata.context": "xxx",
+       "appRoleAssignments": []
+   }
+
+	NOTE THE COMBINED userPrincipalName. If `mail` is not available, we'll have to parse userPrincipalName
+	Going forward, we'll want `appRoleAssignments` to be populated with e.g. IMQS APP so we can at least filter *before*
+	we pull the individual's roles.
+*/
+
 type msaadUserJSON struct {
 	DisplayName       string `json:"displayName"`
 	GivenName         string `json:"givenName"`

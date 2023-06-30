@@ -741,6 +741,8 @@ func (x *Central) MergeTick() {
 	}
 
 	timeComplete := time.Now()
+
+	// I'm not sure why this here, surely you want to indicate that the merge routine has run every time?
 	if x.syncMergeCount%60 == 0 {
 		x.Log.Infof("Merge process duration: %.3f seconds", timeComplete.Sub(timeStart).Seconds())
 	}
