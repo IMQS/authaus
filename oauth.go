@@ -283,7 +283,7 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	// Ask the OAuth server for the user details, so that we log the user into Authaus
 	profile, err := x.getUserProfile(id, provider)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch user profile: '%w'", err)
+		return nil, fmt.Errorf("Failed to fetch user profile for id (%v): '%w'", id, err)
 	}
 
 	if x.Config.Verbose {
@@ -923,7 +923,7 @@ func (x *OAuth) getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuth
 	req, _ := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
 	req.Header.Set("Content-Type", "application/json")
 	if err := x.makeAuthenticatedRequestForJSON(id, req, &ms); err != nil {
-		return nil, fmt.Errorf("Failed to fetch user profile: %w", err)
+		return nil, fmt.Errorf("Failed to fetch user profile (%v): %w", id, err)
 	}
 
 	email := ms.Mail

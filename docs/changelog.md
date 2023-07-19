@@ -2,6 +2,10 @@
 
 ## current
 
+## v1.0.30
+
+* fix: ASG-2690: Enhance OAuth logging
+
 ## v1.0.29
 
 * fix: ASG-2622: Change all msaad logs to *info*.
