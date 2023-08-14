@@ -72,14 +72,15 @@ type OAuth struct {
 
 /*
 Example:
-{
-	"access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6Ik5HVEZ2ZEstZnl0aEV1Q...",
-	"token_type": "Bearer",
-	"expires_in": 3599,
-	"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read",
-	"refresh_token": "AwABAAAAvPM1KaPlrEqdFSBzjqfTGAMxZGUTdM0t4B4...",
-	"id_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.eyJhdWQiOiIyZDRkMTFhMi1mODE0LTQ2YTctOD...",
-}
+
+	{
+		"access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6Ik5HVEZ2ZEstZnl0aEV1Q...",
+		"token_type": "Bearer",
+		"expires_in": 3599,
+		"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read",
+		"refresh_token": "AwABAAAAvPM1KaPlrEqdFSBzjqfTGAMxZGUTdM0t4B4...",
+		"id_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.eyJhdWQiOiIyZDRkMTFhMi1mODE0LTQ2YTctOD...",
+	}
 */
 type oauthToken struct {
 	AccessToken      string  `json:"access_token"`
@@ -107,20 +108,21 @@ func minInt(a int, b int) int {
 
 /*
 GET https://graph.microsoft.com/v1.0/me
-{
-	"@odata.context":"https://graph.microsoft.com/v1.0/$metadata#users/$entity",
-	"businessPhones":[],
-	"displayName":"Ben Harper",
-	"givenName":"Ben",
-	"jobTitle":null,
-	"mail":null,
-	"mobilePhone":null,
-	"officeLocation":null,
-	"preferredLanguage":null,
-	"surname":"Harper",
-	"userPrincipalName":"ben.harper@dtpwemerge.onmicrosoft.com",
-	"id":"daf5d9a0-cf27-4913-9a7f-eafd5b590a45"
-}
+
+	{
+		"@odata.context":"https://graph.microsoft.com/v1.0/$metadata#users/$entity",
+		"businessPhones":[],
+		"displayName":"Ben Harper",
+		"givenName":"Ben",
+		"jobTitle":null,
+		"mail":null,
+		"mobilePhone":null,
+		"officeLocation":null,
+		"preferredLanguage":null,
+		"surname":"Harper",
+		"userPrincipalName":"ben.harper@dtpwemerge.onmicrosoft.com",
+		"id":"daf5d9a0-cf27-4913-9a7f-eafd5b590a45"
+	}
 */
 type msaadUserProfile struct {
 	DisplayName       string `json:"displayName"`
@@ -237,7 +239,7 @@ func (x *OAuth) HttpHandlerOAuthFinish(w http.ResponseWriter, r *http.Request) {
 // OAuthFinish handles the URL where the user gets redirected after completing a successful login to the OAuth provider.
 // It is the OAuth provider's website that redirects the user back here. This is a GET request, and inside the
 // URL, behind the fragment, are the login details.
-// One major thing omitted from this function, is the creation of a session record, and returning a cookie
+// One major thing omitted from this function, is the **creation of a session record**, and returning a cookie
 // to the browser. This is intentional, because it's very likely that you may want to do additional things,
 // such as assigning some roles, before creating the session.
 // If AllowCreateUser is false, and the user does not exist in the Authaus database, then this function
@@ -260,9 +262,9 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	providerName, pkceVerifier, err := x.getChallenge(id)
 	if err != nil {
 		if x.Config.Verbose {
-			x.parent.Log.Infof("OAuth failed to retrieve session '%v': %v", id[:6], err)
+			x.parent.Log.Infof("OAuth failed to retrieve challenge session from DB ('%v'): %v", id[:6], err)
 		}
-		return nil, fmt.Errorf("Failed to retrieve session: %w", err)
+		return nil, fmt.Errorf("Failed to retrieve challenge session from DB: %w", err)
 	}
 	provider := x.Config.Providers[providerName]
 	if provider == nil {
@@ -274,7 +276,7 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	}
 	token, err := x.getAccessToken(provider, code, pkceVerifier)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to get access token: '%w'", err)
+		return nil, fmt.Errorf("Failed to get client access token: '%w'", err)
 	}
 	if err := x.upgradeChallengeToSession(id, token); err != nil {
 		return nil, fmt.Errorf("Failed to commit token to database: '%w'", err)
@@ -549,12 +551,12 @@ func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier
 
 	resp, err := http.DefaultClient.Post(provider.TokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
 	if err != nil {
-		return nil, fmt.Errorf("Error acquiring access token: %w", err)
+		return nil, fmt.Errorf("Error acquiring client access token: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("Error reading access token body: %w", err)
+		return nil, fmt.Errorf("Error reading client access token body: %w", err)
 	}
 
 	token := oauthToken{}
@@ -582,7 +584,10 @@ func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier
 	return &token, nil
 }
 
+// purgeExpiredChallenges : Maintenance function to clear expired challenge records typically created when a user
+// starts an OAuth login process.
 func (x *OAuth) purgeExpiredChallenges() {
+	//TODO : add mutex to prevent race conditions
 	expired := time.Now().Add(-x.Config.LoginExpiry())
 	if x.Config.Verbose {
 		// This is racy, because another thread could do the DELETE while we're reading,
@@ -758,7 +763,7 @@ func (x *OAuth) getOrRefreshToken(id string) (*oauthToken, error) {
 		}
 
 		// We are done. On the next iteration of the loop, everything should succeed
-		x.parent.Log.Infof("Refreshed OAuth token %v", id[:6])
+		x.parent.Log.Infof("Refreshed OAuth token for OAuth session %v", id[:6])
 	}
 	// Unreachable code
 	return nil, nil

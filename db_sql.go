@@ -716,6 +716,7 @@ func (x *sqlPermitDB) SetPermit(userId UserId, permit *Permit) error {
 		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
 	defer tx.Rollback()
+	//TODO : Set `updated` with now
 	update, err := tx.Exec(`UPDATE authuserpwd SET permit = $1 WHERE userid = $2`, encodedPermit, userId)
 	if affected, _ := update.RowsAffected(); affected != 1 {
 		if _, err = tx.Exec(`INSERT INTO authuserpwd (userid, permit) VALUES ($1, $2)`, userId, encodedPermit); err != nil {
