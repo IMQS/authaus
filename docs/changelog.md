@@ -2,6 +2,8 @@
 
 ## current
 
+* feat: Add map lookup for AuthUserType names (ASG-2921)
+
 ## v1.0.31
 
 * fix: Auth fails if a group is not found in a user permit. (ASG-1990)
@@ -22,6 +24,19 @@
 ## v1.0.27
 
 * fix: Add authuserstore db triggers. (ASG-2210)
+
+Introduced db triggers for the public.authuserstore db table within the auth db.
+
+These triggers will enforce the following.
+
+`created (timestamp)` will now be set to NOW() on creation of a record by the
+trigger itself.  
+`created` can also now not be modified on an update.  
+`modified (timestamp)` will now be set to NOW() on creation and record update by
+the trigger itself.  
+`createdby (int)` is now a mandatory field and the trigger wil raise in exception
+if it is not provided.  
+`createdby` can also not be modified on any subsequent update.
 
 ## v1.0.26
 

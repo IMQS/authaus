@@ -21,6 +21,13 @@ const (
 	UserTypeMSAAD   AuthUserType = 3 // Created via sync from Microsoft Azure Active Directory
 )
 
+var AuthUserTypeStrings = map[AuthUserType]string{
+	UserTypeDefault: "DEFAULT",
+	UserTypeLDAP:    "LDAP",
+	UserTypeOAuth:   "OAUTH",
+	UserTypeMSAAD:   "MSAAD",
+}
+
 var (
 	veryFarFuture = time.Date(3000, 1, 1, 1, 1, 1, 1, time.UTC)
 	nextUserId    UserId
