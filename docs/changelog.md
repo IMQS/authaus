@@ -2,6 +2,8 @@
 
 ## current
 
+## v1.0.32
+
 * feat: Add map lookup for AuthUserType names (ASG-2921)
 
 ## v1.0.31
