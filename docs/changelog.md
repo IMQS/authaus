@@ -2,6 +2,8 @@
 
 ## current
 
+* fix: Update to Go118 
+
 ## v1.0.32
 
 * feat: Add map lookup for AuthUserType names (ASG-2921)
