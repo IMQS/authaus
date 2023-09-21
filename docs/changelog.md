@@ -2,7 +2,13 @@
 
 ## current
 
-* fix: Update to Go118 
+## v1.0.33
+
+* fix: Update to Go118
+
+Technically this is not an API change, so we don't have to create a new version,
+but we want to officially release a new version if the binaries could be
+different - because the build process is different.
 
 ## v1.0.32
 
