@@ -434,7 +434,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if oldPasswordHistorySize == 0 {
 		oldPasswordHistorySize = defaultOldPasswordHistorySize
 	}
-	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize)
+	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize, config.UserStore.UsersExemptFromExpiring)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.DB = db
