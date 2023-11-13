@@ -122,7 +122,7 @@ func (x *sqlUserStoreDB) ExemptFromExpiryCheck(username string) bool {
 }
 
 func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck AuthCheck) error {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	row := x.db.QueryRow(`SELECT userid, userName FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
 	var userName string
 	if err := row.Scan(&userId, &userName); err != nil {
