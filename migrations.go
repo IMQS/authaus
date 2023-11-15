@@ -1,6 +1,7 @@
 package authaus
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -58,6 +59,18 @@ func SqlCreateDatabase(conx *DBConnection) error {
 	} else {
 		return e
 	}
+}
+
+func GetMigrationVersion(conx *DBConnection) (int, error) {
+	db, err := migration.Open(conx.Driver, conx.ConnectionString(), createMigrations())
+	if err != nil {
+		return -1, err
+	}
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: 0,
+		ReadOnly:  true,
+	})
+	return migration.DefaultGetVersion(tx)
 }
 
 func RunMigrations(conx *DBConnection) error {
@@ -290,7 +303,9 @@ func addInternalUUIDs(tx migration.LimitedTx) error {
 	return nil
 }
 
-/* This moves from the old in-house migration system to BurntSushi
+/*
+	This moves from the old in-house migration system to BurntSushi
+
 The system can be in one of three permissible states here:
 1. Empty DB
 2. Authaus DB prior to BurntSushi

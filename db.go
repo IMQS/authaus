@@ -140,7 +140,9 @@ type SessionDB interface {
 	Delete(sessionkey string) error                    // Delete a token (used to implement "logout")
 	PermitChanged(userId UserId, permit *Permit) error // Assign the new permit to all of the sessions belonging to 'identity'
 	InvalidateSessionsForIdentity(userId UserId) error // Delete all sessions belonging to the given identity. This is called after a password has been changed, or an identity renamed.
-	Close()                                            // Typically used to close a database handle
+	GetAllTokens(includeExpired bool) ([]*Token, error)
+	GetAllOAuthTokenIDs() ([]string, error)
+	Close() // Typically used to close a database handle
 }
 
 type AuthUser struct {
@@ -381,6 +383,15 @@ func (x *dummySessionDB) Read(sessionkey string) (*Token, error) {
 	return token, nil
 }
 
+func (x *dummySessionDB) GetAllTokens(includeExpired bool) ([]*Token, error) {
+	//TODO implement me
+	panic("implement me")
+}
+func (x *dummySessionDB) GetAllOAuthTokenIDs() ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (x *dummySessionDB) Delete(sessionkey string) error {
 	x.sessionsLock.Lock()
 	delete(x.sessions, sessionkey)
@@ -521,6 +532,14 @@ func (x *cachedSessionDB) Read(sessionkey string) (*Token, error) {
 			return nil, ErrInvalidSessionToken
 		}
 	}
+}
+
+func (x *cachedSessionDB) GetAllTokens(includeExpired bool) ([]*Token, error) {
+	return x.db.GetAllTokens(includeExpired)
+}
+
+func (x *cachedSessionDB) GetAllOAuthTokenIDs() ([]string, error) {
+	return x.db.GetAllOAuthTokenIDs()
 }
 
 func (x *cachedSessionDB) Delete(sessionkey string) error {

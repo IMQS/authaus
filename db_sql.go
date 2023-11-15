@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -663,28 +664,104 @@ func (x *sqlSessionDB) Read(sessionkey string) (*Token, error) {
 			return nil, err
 		}
 	} else {
-		if err := token.Permit.Deserialize(epermit); err != nil {
-			return nil, err
-		} else {
-			token.UserId = UserId(userId)
-			user, err := getUserFromUserId(x.db, token.UserId)
-			if err != nil {
+		return x.populateToken(token, epermit, userId, oauthID)
+	}
+}
+
+func (x *sqlSessionDB) populateToken(token *Token, epermit string, userId int64, oauthID sql.NullString) (*Token, error) {
+	if err := token.Permit.Deserialize(epermit); err != nil {
+		return nil, err
+	}
+	token.UserId = UserId(userId)
+	user, err := getUserFromUserId(x.db, token.UserId)
+	if err != nil {
+		return nil, err
+	}
+	token.Username = user.Username
+	token.Email = user.Email
+	if user.Type == UserTypeLDAP {
+		token.Identity = user.Username
+	} else {
+		token.Identity = user.Email
+	}
+	if oauthID.Valid {
+		token.OAuthSessionID = oauthID.String
+	}
+
+	return token, nil
+}
+
+func (x *sqlSessionDB) GetAllTokens(includeExpired bool) ([]*Token, error) {
+	type scanResult struct {
+		userId  int64
+		permit  string
+		oAuthID sql.NullString
+		token   *Token
+	}
+
+	var r *sql.Rows
+	var e error
+	query := `SELECT userid, permit, expires, internaluuid, oauthid FROM authsession`
+	if includeExpired {
+		r, e = x.db.Query(query)
+	} else {
+		query += ` WHERE expires > $1`
+		r, e = x.db.Query(query, time.Now())
+	}
+
+	if e != nil {
+		return nil, e
+	}
+
+	defer r.Close()
+	var scanResults []*scanResult
+	var tokens []*Token
+	for r.Next() {
+		s := scanResult{
+			userId:  0,
+			permit:  "",
+			oAuthID: sql.NullString{},
+			token:   &Token{},
+		}
+
+		if err := r.Scan(&s.userId, &s.permit, &s.token.Expires, &s.token.InternalUUID, &s.oAuthID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrInvalidSessionToken
+			} else {
 				return nil, err
 			}
-			token.Username = user.Username
-			token.Email = user.Email
-			if user.Type == UserTypeLDAP {
-				token.Identity = user.Username
-			} else {
-				token.Identity = user.Email
-			}
-			if oauthID.Valid {
-				token.OAuthSessionID = oauthID.String
-			}
-
-			return token, nil
+		} else {
+			scanResults = append(scanResults, &s)
 		}
 	}
+	for _, s := range scanResults {
+		if t, err := x.populateToken(s.token, s.permit, s.userId, s.oAuthID); err != nil {
+			continue
+		} else {
+			tokens = append(tokens, t)
+		}
+	}
+	return tokens, nil
+}
+
+func (x *sqlSessionDB) GetAllOAuthTokenIDs() ([]string, error) {
+	db := x.db
+	ids := make([]string, 0)
+	r, err := db.Query("SELECT id, token FROM oauthsession")
+	if err != nil {
+		return nil, sql.ErrNoRows
+	}
+	for r.Next() {
+		var id string
+		var tokenStr string
+		var token Token
+		r.Scan(&id, &tokenStr)
+		if err := json.Unmarshal([]byte(tokenStr), &token); err != nil {
+			return nil, fmt.Errorf("error unmarshalling token %v from database: %w", id[:6], err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (x *sqlSessionDB) Delete(sessionkey string) error {

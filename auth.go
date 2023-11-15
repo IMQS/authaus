@@ -522,6 +522,14 @@ func (x *Central) GetTokenFromSession(sessionkey string) (*Token, error) {
 	}
 }
 
+func (x *Central) GetAllTokens(includeExpired bool) ([]*Token, error) {
+	return x.sessionDB.GetAllTokens(includeExpired)
+}
+
+func (x *Central) GetAllOAuthTokenIDs() ([]string, error) {
+	return x.sessionDB.GetAllOAuthTokenIDs()
+}
+
 // Perform a once-off authentication
 func (x *Central) GetTokenFromIdentityPassword(identity, password string) (*Token, error) {
 	// Treat empty identity specially, since this is a very common condition, and
@@ -1008,6 +1016,54 @@ func (x *Central) GetAuthenticatorIdentities(getIdentitiesFlag GetIdentitiesFlag
 // GetRoleGroupDB retrieves the Role Group Database (which may be nil)
 func (x *Central) GetRoleGroupDB() RoleGroupDB {
 	return x.roleGroupDB
+}
+
+func (x *Central) RemoveGroupFromAllUsers(groupIDString string) error {
+	gID, err := strconv.ParseUint(groupIDString, 10, 32)
+	if err != nil {
+		return err
+	}
+	groupID := GroupIDU32(gID)
+
+	users, err := x.GetAuthenticatorIdentities(GetIdentitiesFlagDeleted)
+	if err != nil {
+		return err
+	}
+
+	for _, user := range users {
+		perm, err := x.GetPermit(user.UserId)
+		if err != nil {
+			continue
+		}
+
+		groups, err := DecodePermit(perm.Roles)
+		if err != nil {
+			return err
+		}
+
+		// Remove the group from the list of groups
+		modified := false
+		for i, g := range groups {
+			if g == groupID {
+				groups = append(groups[:i], groups[i+1:]...)
+				modified = true
+			}
+		}
+
+		// Encode the permit
+		if modified {
+			perm.Roles = EncodePermit(groups)
+			x.Log.Infof("Removing group %v: setting permit for %v\n", groupID, user.Email)
+
+			//Set the permit
+			err = x.SetPermit(user.UserId, perm)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (x *Central) IsShuttingDown() bool {
