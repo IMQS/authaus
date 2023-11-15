@@ -23,6 +23,10 @@ TODO: Add test that verifies that SetPassword does not create an identity if tha
 Create a test Postgres database:
 	create database authaus_test owner = authaus_test;
 
+Create a test for password expiry (PasswordExpiresAfter).
+
+Create a test for users exempt from expiry (UsersExemptFromExpiring).
+
 Suggested test runs that you should do:
 
 	-- Test using maps/arrays mocking the backend:
