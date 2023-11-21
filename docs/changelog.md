@@ -2,6 +2,8 @@
 
 ## current
 
+## v1.0.34
+
 * feat: Add exempt from expiring functionality (ASG-3055)
 
 ## v1.0.33
