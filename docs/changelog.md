@@ -2,6 +2,8 @@
 
 ## current
 
+* feat: Add exempt from expiring functionality (ASG-3055)
+
 ## v1.0.33
 
 * fix: Update to Go118

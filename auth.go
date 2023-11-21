@@ -287,19 +287,20 @@ type Central struct {
 	// Stats must be first so that we are guaranteed to get it 8-byte aligned. We atomically
 	// increment counters inside CentralStats, and the atomic functions need 8-byte alignment
 	// on their operands.
-	Stats                  CentralStats
-	Auditor                Auditor
-	LockingPolicy          LockingPolicy
-	Log                    *log.Logger
-	MaxActiveSessions      int32
-	NewSessionExpiresAfter time.Duration
-	DisablePasswordReuse   bool
-	PasswordExpiresAfter   time.Duration
-	MaxFailedLoginAttempts int // only applies if EnableAccountLocking is true
-	EnableAccountLocking   bool
-	OAuth                  OAuth
-	MSAAD                  MSAAD
-	DB                     *sql.DB
+	Stats                   CentralStats
+	Auditor                 Auditor
+	LockingPolicy           LockingPolicy
+	Log                     *log.Logger
+	MaxActiveSessions       int32
+	NewSessionExpiresAfter  time.Duration
+	DisablePasswordReuse    bool
+	PasswordExpiresAfter    time.Duration
+	UsersExemptFromExpiring []string
+	MaxFailedLoginAttempts  int // only applies if EnableAccountLocking is true
+	EnableAccountLocking    bool
+	OAuth                   OAuth
+	MSAAD                   MSAAD
+	DB                      *sql.DB
 
 	ldap                        LDAP
 	userStore                   UserStore
@@ -433,7 +434,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if oldPasswordHistorySize == 0 {
 		oldPasswordHistorySize = defaultOldPasswordHistorySize
 	}
-	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize)
+	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize, config.UserStore.UsersExemptFromExpiring)
 
 	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
 	c.DB = db
@@ -461,6 +462,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 	if c.PasswordExpiresAfter != 0 {
 		startupLogger.Infof("Passwords expire after %v", c.PasswordExpiresAfter)
+	}
+	if len(config.UserStore.UsersExemptFromExpiring) > 0 {
+		c.UsersExemptFromExpiring = config.UserStore.UsersExemptFromExpiring
 	}
 
 	c.msaadSyncMergeEnabled = msaadUsed
@@ -573,6 +577,15 @@ func (x *Central) Login(username, password string, clientIPAddress string) (sess
 	return
 }
 
+func (x *Central) ExemptFromExpiryCheck(username string) bool {
+	for _, user := range x.UsersExemptFromExpiring {
+		if user == username {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateSession creates a new login session, after you have authenticated the caller
 // Returns a session key, which can be used in future to retrieve the token.
 // The internal session expiry is controlled with NewSessionExpiresAfter.
@@ -603,7 +616,7 @@ func (x *Central) CreateSession(user *AuthUser, clientIPAddress, oauthSessionID 
 	}
 
 	sessionExpiry := time.Now().Add(x.NewSessionExpiresAfter)
-	if x.PasswordExpiresAfter != 0 && user.Type != UserTypeLDAP {
+	if x.PasswordExpiresAfter != 0 && user.Type != UserTypeLDAP && !x.ExemptFromExpiryCheck(user.Username) {
 		userPasswordExpiry := user.PasswordModifiedDate.Add(x.PasswordExpiresAfter)
 		if userPasswordExpiry.Before(sessionExpiry) {
 			token.Expires = userPasswordExpiry

@@ -48,9 +48,10 @@ type scannable interface {
 }
 
 type sqlUserStoreDB struct {
-	db                     *sql.DB
-	passwordExpiry         time.Duration
-	oldPasswordHistorySize int // When enforcing "may not re-use old password" policy, look back this many entries to find old (and therefore invalid) passwords
+	db                      *sql.DB
+	passwordExpiry          time.Duration
+	oldPasswordHistorySize  int      // When enforcing "may not re-use old password" policy, look back this many entries to find old (and therefore invalid) passwords
+	usersExemptFromExpiring []string // List of users that are not subject to password expiry. Username will be used for comparison.
 }
 
 type sqlUser struct {
@@ -97,20 +98,34 @@ func (user *sqlUser) toAuthUser() *AuthUser {
 	}
 }
 
-func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration, oldPasswordHistorySize int) error {
+func (x *sqlUserStoreDB) SetConfig(passwordExpiry time.Duration, oldPasswordHistorySize int, usersExemptFromExpiring []string) error {
 	if passwordExpiry != 0 {
 		x.passwordExpiry = passwordExpiry
 	}
 	if oldPasswordHistorySize != 0 {
 		x.oldPasswordHistorySize = oldPasswordHistorySize
 	}
+	if len(usersExemptFromExpiring) > 0 {
+		x.usersExemptFromExpiring = usersExemptFromExpiring
+	}
+
 	return nil
 }
 
+func (x *sqlUserStoreDB) ExemptFromExpiryCheck(username string) bool {
+	for _, user := range x.usersExemptFromExpiring {
+		if user == username {
+			return true
+		}
+	}
+	return false
+}
+
 func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck AuthCheck) error {
-	row := x.db.QueryRow(`SELECT userid FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
+	row := x.db.QueryRow(`SELECT userid, username FROM authuserstore WHERE (LOWER(email) = $1 OR LOWER(username) = $1) AND (archived = false OR archived IS NULL)`, CanonicalizeIdentity(identity))
 	var userId int64
-	if err := row.Scan(&userId); err != nil {
+	var username string
+	if err := row.Scan(&userId, &username); err != nil {
 		return ErrIdentityAuthNotFound
 	}
 
@@ -136,7 +151,7 @@ func (x *sqlUserStoreDB) Authenticate(identity, password string, authTypeCheck A
 		return ErrInvalidPassword
 	}
 
-	if x.passwordExpiry != 0 && authTypeCheck&AuthCheckPasswordExpired != 0 {
+	if x.passwordExpiry != 0 && authTypeCheck&AuthCheckPasswordExpired != 0 && !x.ExemptFromExpiryCheck(username) {
 		if lastUpdated.Add(x.passwordExpiry).Before(time.Now()) {
 			return ErrPasswordExpired
 		}

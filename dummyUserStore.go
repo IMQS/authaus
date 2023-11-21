@@ -71,7 +71,7 @@ func (x *dummyUserStore) Close() {
 	nextUserId = 0
 }
 
-func (x *dummyUserStore) SetConfig(passwordExpiry time.Duration, oldPasswordHistorySize int) error {
+func (x *dummyUserStore) SetConfig(passwordExpiry time.Duration, oldPasswordHistorySize int, usersExemptFromExpiring []string) error {
 	x.passswordExpiry = passwordExpiry
 	return nil
 }
