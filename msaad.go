@@ -397,6 +397,13 @@ func (m *MSAAD) SynchronizeUsers() error {
 					existingUsers[ix].ModifiedBy = UserIdMSAADMerge
 					if err := m.parent.userStore.UpdateIdentity(&existingUsers[ix]); err != nil {
 						m.parent.Log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
+					} else {
+						if m.parent.Auditor != nil {
+							contextData := userInfoToAuditTrailJSON(existingUsers[ix], "")
+							m.parent.Auditor.AuditUserAction(
+								m.parent.GetUserNameFromUserId(existingUsers[ix].ModifiedBy),
+								"User Profile: "+existingUsers[ix].Username+" (user details)", contextData, AuditActionUpdated)
+						}
 					}
 				}
 			}
@@ -421,15 +428,22 @@ func (m *MSAAD) SynchronizeUsers() error {
 
 				if m.parent.Auditor != nil {
 					contextData := userInfoToAuditTrailJSON(user, "")
-					m.parent.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
+					m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(user.CreatedBy),
+						"User Profile: "+user.Username, contextData, AuditActionCreated)
 				}
 			}
 		}
 
 		if internalUserID != UserId(0) {
 			// update groups of user
-			if err := m.syncRoles(cachedRoleGroups, aadUser, internalUserID); err != nil {
+			if changed, err := m.syncRoles(cachedRoleGroups, aadUser, internalUserID); err != nil {
 				m.parent.Log.Errorf("MSAAD failed to synchronize roles for user %v: %v", aadUser.profile.DisplayName, err)
+			} else {
+				if changed && m.parent.Auditor != nil {
+					contextData := msaadUserInfoToAuditTrailJSON(*aadUser, internalUserID, "")
+					m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(UserIdMSAADMerge),
+						"User Profile: "+aadUser.profile.bestEmail()+" (groups updated)", contextData, AuditActionUpdated)
+				}
 			}
 		}
 	}
@@ -459,7 +473,8 @@ func (m *MSAAD) SynchronizeUsers() error {
 					} else {
 						if m.parent.Auditor != nil {
 							contextData := userInfoToAuditTrailJSON(user, "")
-							m.parent.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionDeleted)
+							m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(UserIdMSAADMerge),
+								"User Profile: "+user.Username, contextData, AuditActionDeleted)
 						}
 					}
 				}
@@ -528,8 +543,9 @@ func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 	return list[:len(list)-1]
 }
 
-func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) error {
+func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) (bool, error) {
 	nameInLogs := aadUser.profile.bestEmail()
+	groupsChanged := false
 	if m.parent.MSAAD.Config.Verbose {
 		m.parent.Log.Infof("MSAAD syncRoles started for %s", nameInLogs)
 	}
@@ -537,7 +553,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	permit, err := m.parent.GetPermit(internalUserID)
 	if err != nil && err != ErrIdentityPermitNotFound {
 		m.parent.Log.Errorf("MSAAD failed to fetch permit for user %v: %v", nameInLogs, err)
-		return err
+		return groupsChanged, err
 	}
 
 	if permit == nil {
@@ -547,10 +563,9 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	// Figure out the existing groups that this user belongs to
 	groupIDs, err := DecodePermit(permit.Roles)
 	if err != nil {
-		return err
+		return groupsChanged, err
 	}
 
-	groupsChanged := false
 	userHasAnyIMQSPermission := false
 
 	// identify unmapped groups
@@ -644,7 +659,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		}
 	}
 
-	// If the feature is enabled in IMQS, attempt to determine whether or not
+	// If the feature is enabled in IMQS, attempt to determine whether
 	// the permission exists in IMQS, and assign it if that is the case
 	if m.Config.AutoDiscoverPermissions {
 		for _, role := range aadUser.roles {
@@ -711,11 +726,11 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		permit.Roles = EncodePermit(groupIDs)
 		if err := m.parent.SetPermit(internalUserID, permit); err != nil {
 			m.parent.Log.Errorf("MSAAD failed to set permit for user %v: %v", nameInLogs, err)
-			return err
+			return false, err
 		}
 	}
 
-	return nil
+	return groupsChanged, nil
 }
 
 func (m *MSAAD) getAADUsers() ([]*msaadUser, error) {

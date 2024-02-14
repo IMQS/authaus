@@ -800,6 +800,25 @@ func userInfoToAuditTrailJSON(user AuthUser, clientIPAddress string) string {
 	return string(contextData)
 }
 
+func msaadUserInfoToAuditTrailJSON(user msaadUser, userID UserId, clientIPAddress string) string {
+	type AuditDetail struct {
+		Service  string `json:"service"`
+		Username string `json:"username"`
+		UserId   int64  `json:"userid"`
+		Email    string `json:"email"`
+		Origin   string `json:"origin"`
+	}
+	auditDetail := AuditDetail{
+		Service:  "auth",
+		Username: user.profile.bestEmail(),
+		UserId:   int64(userID),
+		Email:    user.profile.bestEmail(),
+		Origin:   clientIPAddress,
+	}
+	contextData, _ := json.Marshal(auditDetail)
+	return string(contextData)
+}
+
 func userInfoToJSON(user AuthUser) string {
 	userJSON, _ := json.Marshal(user)
 	return string(userJSON)
