@@ -1,6 +1,8 @@
 # Changelog
 
-## current
+## v1.3.4
+
+* feat : Add MSAAD audit log for user details/group update (ASG-3268)
 
 ## v1.3.3
 
