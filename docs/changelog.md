@@ -2,6 +2,8 @@
 
 ## current
 
+## v1.0.35
+
 * feat: New methods on db package to support token retrieval (ASG-2921)
 * feat: New method to remove group from user permit (ASG-2921)
 
