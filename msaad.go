@@ -349,6 +349,8 @@ func (m *MSAAD) SynchronizeUsers() error {
 	if len(m.Config.RoleToGroup) != 0 || len(m.Config.DefaultRoles) != 0 {
 		err = m.populateAADRoles(aadUsers)
 		if err != nil {
+			// Quit without merging, because we run the risk of archiving users that we did not successfully receive.
+			// See "if !insideAAD" in the code below.
 			return err
 		}
 	}
@@ -412,6 +414,7 @@ func (m *MSAAD) SynchronizeUsers() error {
 				user.ModifiedBy = UserIdMSAADMerge
 				if newUserID, err := m.parent.userStore.CreateIdentity(&user, ""); err != nil {
 					m.parent.Log.Warnf("MSAAD: Create identity %v failed: %v", aadEmail, err)
+					continue
 				} else {
 					internalUserID = newUserID
 				}
@@ -719,7 +722,9 @@ func (m *MSAAD) getAADUsers() ([]*msaadUser, error) {
 	selectURL := "https://graph.microsoft.com/v1.0/users?$select=id,displayName,givenName,surname,mobilePhone,userPrincipalName,mail"
 	aadUsers := []*msaadUser{}
 	for selectURL != "" {
-		// m.parent.Log.Infof("Fetching %v", selectURL)
+		if m.parent.MSAAD.Config.Verbose {
+			m.parent.Log.Infof("Fetching %v\n", selectURL)
+		}
 		j := msaadUsersJSON{}
 		if err := m.fetchJSON(selectURL, &j); err != nil {
 			return nil, err
@@ -751,6 +756,11 @@ func numParallelFetchThreads(nItems int) int {
 // separating this step from the fetching of the AAD users
 func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 	nThreads := numParallelFetchThreads(len(users))
+	if m.parent.MSAAD.Config.Verbose {
+		m.parent.Log.Infof("MSAAD populateAADRoles started...%d\n", len(users))
+		m.parent.Log.Infof("MSAAD populateAADRoles : threads = %d\n", nThreads)
+	}
+
 	// partition 'users' into nThreads groups
 	threadGroups := make([][]*msaadUser, nThreads)
 	for i, u := range users {
@@ -758,25 +768,46 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 		threadGroups[t] = append(threadGroups[t], u)
 	}
 	wg := sync.WaitGroup{}
-	errChan := make(chan error, nThreads)
-
+	var errGlobal error
 	startTime := time.Now()
-	for _, threadGroupOuter := range threadGroups {
+	for i, threadGroupOuter := range threadGroups {
+		if m.parent.MSAAD.Config.Verbose {
+			m.parent.Log.Infof("MSAAD populateAADRoles : threadgroup# = %d\n", i)
+		}
 		wg.Add(1)
-		go func(threadGroup []*msaadUser) {
+		go func(threadGroup []*msaadUser, i int) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					s := GetStack()
+					errGlobal = fmt.Errorf(fmt.Sprintf("%v\n%v\n", r, s))
+				}
+			}()
 			for _, user := range threadGroup {
+				if errGlobal != nil {
+					m.parent.Log.Errorf("(%d) Global error detected in threadGroup-user loop...\n", i)
+					break
+				}
+				if m.parent.IsShuttingDown() {
+					break
+				}
 				// Each of these calls is 0.2 seconds from my home network (South Africa to USA, presumably)... which is to be expected.
 				// But that is the reason why we go to all this trouble to parallelize these fetches. If there are going to be, say, 10000
 				// users on this AAD, then it certainly pays to parallelize these fetches.
 				selectURL := "https://graph.microsoft.com/v1.0/users/" + user.profile.ID + "/appRoleAssignments"
 				for selectURL != "" {
+					if errGlobal != nil {
+						m.parent.Log.Errorf("(%d) Global error detected in threadGroup-user-next loop...\n", i)
+						break
+					}
 					if m.parent.IsShuttingDown() {
 						break
 					}
 					j := msaadRolesJSON{}
-					if err := m.fetchJSON(selectURL, &j); err != nil {
-						errChan <- err
-						break
+					err := m.fetchJSON(selectURL, &j)
+					if err != nil {
+						errGlobal = err
+						return
 					}
 					if m.parent.MSAAD.Config.Verbose {
 						m.parent.Log.Infof("User %v (%v): %v\n", user.profile.bestEmail(), user.profile.ID, j)
@@ -788,16 +819,13 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 					selectURL = j.NextLink
 				}
 			}
-			wg.Done()
-		}(threadGroupOuter)
+		}(threadGroupOuter, i)
 	}
 
 	wg.Wait()
-	var err error
-	if len(errChan) != 0 {
-		err = <-errChan
+	if m.parent.MSAAD.Config.Verbose {
+		m.parent.Log.Infof("MSAAD populateAADRoles waitgroup done...")
 	}
-
 	seconds := time.Now().Sub(startTime).Seconds()
 	if len(users) != 0 {
 		if m.numAADRoleFetches < 3 || m.numAADRoleFetches%20 == 0 || m.Config.Verbose {
@@ -806,7 +834,7 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 		m.numAADRoleFetches++
 	}
 
-	return err
+	return errGlobal
 }
 
 func (m *MSAAD) fetchJSON(fetchURL string, jsonRoot interface{}) error {
@@ -870,7 +898,9 @@ func (m *MSAAD) doHTTP(request *http.Request) (*http.Response, error) {
 
 	request.Header.Set("Authorization", "Bearer "+token)
 
-	return http.DefaultClient.Do(request)
+	client := http.DefaultClient
+	client.Timeout = 10 * time.Second
+	return client.Do(request)
 }
 
 func (m *MSAAD) getBearerToken() (token string, expiresAt time.Time, err error) {
@@ -885,7 +915,9 @@ func (m *MSAAD) getBearerToken() (token string, expiresAt time.Time, err error) 
 		"client_secret": url.QueryEscape(m.Config.ClientSecret),
 		"grant_type":    "client_credentials",
 	}
-	resp, err := http.DefaultClient.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
+	client := http.DefaultClient
+	client.Timeout = 10 * time.Second
+	resp, err := client.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(buildPOSTBodyForm(params)))
 	if err != nil {
 		err = fmt.Errorf("Error acquiring MSAAD bearer token: %w", err)
 		return
@@ -913,6 +945,7 @@ func (m *MSAAD) getBearerToken() (token string, expiresAt time.Time, err error) 
 	}
 
 	token = tokenJSON.AccessToken
+	// can time.Duration(string) not PANIC?
 	expiresAt = time.Now().Add(time.Duration(tokenJSON.ExpiresIn) * time.Second)
 
 	if m.Config.Verbose {
