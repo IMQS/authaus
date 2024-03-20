@@ -733,7 +733,10 @@ func (x *Central) StartMergeTicker() error {
 	}
 	x.syncMergeTickerStopRequest = make(chan bool)
 	x.syncMergeTickerStopResponse = make(chan bool)
+
 	go func() {
+		defer x.Log.Info("Go routine for merge tick is stopping")
+
 		x.MergeTick()
 		for {
 			select {
@@ -750,6 +753,12 @@ func (x *Central) StartMergeTicker() error {
 }
 
 func (x *Central) MergeTick() {
+	defer func() {
+		if r := recover(); r != nil {
+			// LOG
+		}
+	}()
+
 	timeStart := time.Now()
 
 	if x.ldap != nil {
