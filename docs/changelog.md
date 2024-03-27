@@ -2,6 +2,10 @@
 
 ## current
 
+## v1.0.36
+
+* fix: Harden MSAAD sync (ASG-3350)
+
 ## v1.0.35
 
 * feat: New methods on db package to support token retrieval (ASG-2921)
