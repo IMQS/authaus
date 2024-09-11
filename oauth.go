@@ -981,7 +981,6 @@ func createOAuthURL(provider *ConfigOAuthProvider, sessionID, nonce, pkceChallen
 		"redirect_uri":          provider.RedirectURL,
 		"code_challenge":        pkceChallenge,
 		"code_challenge_method": "S256",
-		"client_secret":         url.QueryEscape(provider.ClientSecret),
 		"response_type":         "code",
 		"response_mode":         "query",
 		"state":                 sessionID,
