@@ -265,6 +265,7 @@ const (
 	AuditActionFailedLogin                    = "Failed Login"
 	AuditActionUnlocked                       = "User Account Unlocked"
 	AuditActionLocked                         = "User Account Locked"
+	AuditActionRestored                       = "Restored"
 )
 
 type Auditor interface {
@@ -299,7 +300,7 @@ type Central struct {
 	MaxFailedLoginAttempts  int // only applies if EnableAccountLocking is true
 	EnableAccountLocking    bool
 	OAuth                   OAuth
-	MSAAD                   MSAAD
+	MSAAD                   MSAADInterface
 	DB                      *sql.DB
 
 	ldap                        LDAP
@@ -320,10 +321,13 @@ type Central struct {
 
 // Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
-func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
+func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
-	c.OAuth.Initialize(c)
-	c.MSAAD.Initialize(c)
+
+	if c.OAuth.Config.Providers != nil {
+		c.OAuth.Initialize(c)
+	}
+
 	if ldap != nil {
 		c.ldap = &sanitizingLDAP{
 			backend: ldap,
@@ -345,6 +349,15 @@ func NewCentral(logfile string, ldap LDAP, userStore UserStore, permitDB PermitD
 	// machine. This decision was made to avoid having to bloat the service with
 	// unnecessary config
 	c.Log = log.New(resolveLogfile(logfile), runtime.GOOS != "windows")
+	if msaad != nil {
+		c.MSAAD = msaad
+		err := c.MSAAD.Initialize(c, c.Log)
+		if err != nil {
+			c.Log.Errorf("Error initializing MSAAD: %v", err)
+			msaad = nil
+		}
+	}
+
 	c.Log.Infof("Authaus successfully started up\n")
 
 	return c
@@ -355,6 +368,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	var (
 		db          *sql.DB
 		ldap        LDAP
+		msaad       MSAADInterface
 		userStore   UserStore
 		permitDB    PermitDB
 		sessionDB   SessionDB
@@ -414,6 +428,15 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		ldap = NewAuthenticator_LDAP(&config.LDAP)
 	}
 
+	if msaadUsed {
+		msaad = &MSAAD{}
+		msaadProvider := &MSAADProvider{
+			tokenLock:      sync.Mutex{},
+			tokenExpiresAt: time.Time{},
+		}
+		msaad.SetProvider(msaadProvider)
+	}
+
 	if userStore, err = NewUserStoreDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to UserStoreDB: %v", err))
 	}
@@ -436,7 +459,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize, config.UserStore.UsersExemptFromExpiring)
 
-	c := NewCentral(config.Log.Filename, ldap, userStore, permitDB, sessionDB, roleGroupDB)
+	c := NewCentral(config.Log.Filename, ldap, msaad, userStore, permitDB, sessionDB, roleGroupDB)
 	c.DB = db
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
@@ -486,7 +509,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 
 	c.OAuth.Config = config.OAuth
-	c.MSAAD.Config = config.MSAAD
+	c.MSAAD.SetConfig(config.MSAAD)
 
 	c.loginDelayMS = 500 // add 500 ms per invalid login attempt
 
@@ -769,15 +792,14 @@ func (x *Central) MergeTick() {
 		MergeLDAP(x)
 	}
 	if x.msaadSyncMergeEnabled {
+		x.Log.Infof("Merge process starting...\n")
 		if err := x.MSAAD.SynchronizeUsers(); err != nil {
 			x.Log.Warnf("MSAAD synchronization failed: %v", err)
 		}
 	}
 
 	timeComplete := time.Now()
-	if x.syncMergeCount%60 == 0 {
-		x.Log.Infof("Merge process duration: %.3f seconds", timeComplete.Sub(timeStart).Seconds())
-	}
+	x.Log.Infof("Merge process duration: %.3f seconds", timeComplete.Sub(timeStart).Seconds())
 	x.syncMergeCount++
 }
 
@@ -928,6 +950,20 @@ func (x *Central) ArchiveIdentity(userId UserId) error {
 	e := x.userStore.ArchiveIdentity(userId)
 	if e != nil {
 		x.Log.Warnf("Archive Identity failed: (%v), (%v)", userId, e)
+		return e
+	}
+	e = x.InvalidateSessionsForIdentity(userId)
+	if e != nil {
+		x.Log.Warnf("Archive Identity failed, error invalidating sessions (%v) (%v)", userId, e)
+		return e
+	}
+	return nil
+}
+
+func (x *Central) UnArchiveIdentity(userId UserId) error {
+	e := x.userStore.UnarchiveIdentity(userId)
+	if e != nil {
+		x.Log.Warnf("Unarchive Identity failed: (%v), (%v)", userId, e)
 		return e
 	}
 	e = x.InvalidateSessionsForIdentity(userId)

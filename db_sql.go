@@ -520,6 +520,59 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 	return nil
 }
 
+// UnarchiveIdentity
+func (x *sqlUserStoreDB) UnarchiveIdentity(userId UserId) error {
+	var tx *sql.Tx
+	var err error
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("Could not begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, false, userId)
+	if err != nil {
+		return fmt.Errorf("Could not update auth user: %w", err)
+	}
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		return fmt.Errorf("User could not be updated: %w", ErrIdentityAuthNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("Could not commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// MatchArchivedUserExtUUID MatchArchiveUser
+//
+// Best effort to identify a previously archived user from external sources.
+// In the simple approach we need to match on externaluuid,
+// taking the assumption that, at least in principle, the user must still
+// be the same user if the externaluuid has not changed.
+// For historic reasons, there may be multiple exact matches of archived
+// users, so we will just return the newest id.
+
+func (x *sqlUserStoreDB) MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error) {
+	if externalUUID == "" {
+		return false, NullUserId, fmt.Errorf("ExternalUUID is empty")
+	}
+	var userId sql.NullInt64
+	sqlStr := "SELECT " +
+		"aus.userid" + " FROM authuserstore aus  WHERE aus.externaluuid = $1 AND (aus.archived = true) order by modified desc limit 1"
+	row := x.db.QueryRow(sqlStr, externalUUID)
+	if err := row.Scan(&userId); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, NullUserId, nil
+		} else {
+			return false, NullUserId, err
+		}
+	}
+	if userId.Valid {
+		return true, UserId(userId.Int64), nil
+	} else {
+		return false, NullUserId, fmt.Errorf("Found user, but userId is null")
+	}
+}
+
 func (x *sqlUserStoreDB) RenameIdentity(oldIdent, newIdent string) error {
 	var (
 		tx     *sql.Tx
@@ -808,7 +861,7 @@ func (x *sqlPermitDB) SetPermit(userId UserId, permit *Permit) error {
 		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
 	defer tx.Rollback()
-	update, err := tx.Exec(`UPDATE authuserpwd SET permit = $1 WHERE userid = $2`, encodedPermit, userId)
+	update, err := tx.Exec(`UPDATE authuserpwd SET permit = $1, updated = $2 WHERE userid = $3`, encodedPermit, time.Now().UTC(), userId)
 	if affected, _ := update.RowsAffected(); affected != 1 {
 		if _, err = tx.Exec(`INSERT INTO authuserpwd (userid, permit) VALUES ($1, $2)`, userId, encodedPermit); err != nil {
 			return fmt.Errorf("Could neither update nor insert permit: %v", err)

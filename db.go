@@ -103,6 +103,8 @@ type UserStore interface {
 	CreateIdentity(user *AuthUser, password string) (UserId, error)                                               // Create a new identity. If the identity already exists, then this must return ErrIdentityExists.
 	UpdateIdentity(user *AuthUser) error                                                                          // Update an identity. Change email address or name etc.
 	ArchiveIdentity(userId UserId) error                                                                          // Archive an identity
+	MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error)                                           // Match an archived external user
+	UnarchiveIdentity(userId UserId) error                                                                        // Unarchive an identity
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
 	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetUserFromIdentity(identity string) (*AuthUser, error)                // Gets the user object from the identity supplied
@@ -247,6 +249,14 @@ func (x *sanitizingUserStore) UpdateIdentity(user *AuthUser) error {
 
 func (x *sanitizingUserStore) ArchiveIdentity(userId UserId) error {
 	return x.backend.ArchiveIdentity(userId)
+}
+
+func (x *sanitizingUserStore) MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error) {
+	return x.backend.MatchArchivedUserExtUUID(externalUUID)
+}
+
+func (x *sanitizingUserStore) UnarchiveIdentity(userId UserId) error {
+	return x.backend.UnarchiveIdentity(userId)
 }
 
 func (x *sanitizingUserStore) RenameIdentity(oldIdent, newIdent string) error {

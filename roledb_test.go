@@ -3,6 +3,7 @@ package authaus
 import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
+	"sync"
 	"testing"
 )
 
@@ -66,7 +67,7 @@ func TestAuthRoleDB(t *testing.T) {
 		t.Errorf("groupXandY not correct")
 	}
 
-	fetchAllGroups := func() {
+	fetchAllGroups := func(w *sync.WaitGroup) {
 		for i := 0; i < 1000; i++ {
 			roleGroupDBCache.lockAndReset()
 			if all, err := c.GetRoleGroupDB().GetGroups(); err != nil {
@@ -75,9 +76,13 @@ func TestAuthRoleDB(t *testing.T) {
 				t.Errorf("GetGroups did not return expected number of groups")
 			}
 		}
+		w.Done()
 	}
-	go fetchAllGroups()
-	go fetchAllGroups()
+	w := sync.WaitGroup{}
+	w.Add(2)
+	go fetchAllGroups(&w)
+	go fetchAllGroups(&w)
+	w.Wait()
 }
 
 func TestAuthRoleDB_MissingGroups(t *testing.T) {
