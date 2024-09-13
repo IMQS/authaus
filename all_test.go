@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"strconv"
 	"strings"
 	"testing"
@@ -158,6 +159,10 @@ func connectToDB(conn DBConnection, t *testing.T, userStore *UserStore, sessionD
 			t.Fatalf("Unable to wipe database %v: %v", dbName, err)
 		}
 
+		if err := sqlDeleteAllTriggerFunctions(db); err != nil {
+			t.Fatalf("Unable to delete trigger functions in database %v: %v", dbName, err)
+		}
+
 		if err := RunMigrations(&conn); err != nil {
 			t.Fatalf("Unable to run migrations: %v", err)
 		}
@@ -194,7 +199,7 @@ func getCentral(t *testing.T) *Central {
 		userStore = newDummyUserStore()
 	}
 
-	c := NewCentral(log.Stdout, nil, userStore, permitDB, sessionDB, roleDB)
+	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB)
 	if isBackendPostgresTest() {
 		c.DB = sqlDB
 	}
@@ -356,15 +361,28 @@ func firstError(errors []error) error {
 
 func sqlDeleteAllTables(db *sql.DB) error {
 	statements := []string{
-		"DROP TABLE IF EXISTS authuser",
-		"DROP TABLE IF EXISTS authgroup",
-		"DROP TABLE IF EXISTS authsession",
-		"DROP TABLE IF EXISTS authuserpwd",
-		"DROP TABLE IF EXISTS authpwdarchive",
-		"DROP TABLE IF EXISTS authuserstore",
-		"DROP TABLE IF EXISTS oauthchallenge",
-		"DROP TABLE IF EXISTS oauthsession",
-		"DROP TABLE IF EXISTS migration_version",
+		"DROP TABLE IF EXISTS authuser CASCADE",
+		"DROP TABLE IF EXISTS authgroup CASCADE",
+		"DROP TABLE IF EXISTS authsession CASCADE",
+		"DROP TABLE IF EXISTS authuserpwd CASCADE",
+		"DROP TABLE IF EXISTS authpwdarchive CASCADE",
+		"DROP TABLE IF EXISTS authuserstore CASCADE",
+		"DROP TABLE IF EXISTS oauthchallenge CASCADE",
+		"DROP TABLE IF EXISTS oauthsession CASCADE",
+		"DROP TABLE IF EXISTS migration_version CASCADE",
+	}
+	for _, st := range statements {
+		if _, err := db.Exec(st); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sqlDeleteAllTriggerFunctions(db *sql.DB) error {
+	statements := []string{
+		"DROP FUNCTION IF EXISTS auth_public_authuserstore_bit",
+		"DROP FUNCTION IF EXISTS auth_public_authuserstore_but",
 	}
 	for _, st := range statements {
 		if _, err := db.Exec(st); err != nil {
@@ -1466,6 +1484,18 @@ func TestAuthArchiveIdentity(t *testing.T) {
 	if err := c.RenameIdentity(joeEmail, "newJoe"); err == nil {
 		t.Fatalf("Archived user should not be allowed to be rename identity")
 	}
+
+	// Unarchive Tests
+	// -----
+	errUnarchive := c.UnArchiveIdentity(joeUserId)
+	if errUnarchive != nil {
+		t.Fatalf("Unarchive should not have failed: %v", errUnarchive)
+	}
+
+	unarchiveUser, err := c.GetUserFromUserId(joeUserId)
+	assert.False(t, err != nil, "Unarchive failed: %v", err)
+	assert.NotNil(t, unarchiveUser, "Unarchive failed: User not found")
+	assert.False(t, unarchiveUser.Archived, "Unarchive failed: User should not be archived")
 }
 
 // Implemented in a smilar way to TestAuthUpdateDuplicateIdentity

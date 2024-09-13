@@ -5,6 +5,6 @@ func NewCentralDummy(logfile string) *Central {
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
 	roleGroupDB := newDummyRoleGroupDB()
-	central := NewCentral(logfile, nil, userStore, permitDB, sessionDB, roleGroupDB)
+	central := NewCentral(logfile, nil, nil, userStore, permitDB, sessionDB, roleGroupDB)
 	return central
 }

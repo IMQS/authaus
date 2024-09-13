@@ -34,6 +34,7 @@ type dummyUser struct {
 	passwordModifiedDate time.Time
 	accountLocked        bool
 	internalUUID         string
+	externalUUID         string
 }
 
 func newDummyLdap() *dummyLdap {
@@ -130,7 +131,7 @@ func (x *dummyUserStore) CreateIdentity(user *AuthUser, password string) (UserId
 		}
 		userId := x.generateUserId()
 		x.users[userId] = &dummyUser{userId, user.Email, user.Username, user.Firstname, user.Lastname, user.Mobilenumber, user.Telephonenumber, user.Remarks, user.Created, user.CreatedBy,
-			user.Modified, user.ModifiedBy, password, "", false, user.Type, user.PasswordModifiedDate, user.AccountLocked, user.InternalUUID}
+			user.Modified, user.ModifiedBy, password, "", user.Archived, user.Type, user.PasswordModifiedDate, user.AccountLocked, user.InternalUUID, user.ExternalUUID}
 		return userId, nil
 	} else {
 		return NullUserId, ErrIdentityExists
@@ -168,6 +169,28 @@ func (x *dummyUserStore) ArchiveIdentity(userId UserId) error {
 	return nil
 }
 
+func (x *dummyUserStore) MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error) {
+	x.usersLock.RLock()
+	defer x.usersLock.RUnlock()
+	for _, v := range x.users {
+		if v.archived && v.externalUUID == externalUUID {
+			return true, v.userId, nil
+		}
+	}
+	return false, NullUserId, nil
+}
+
+func (x *dummyUserStore) UnarchiveIdentity(userId UserId) error {
+	x.usersLock.Lock()
+	defer x.usersLock.Unlock()
+	if user, exists := x.users[userId]; exists {
+		user.archived = false
+		return nil
+	} else {
+		return ErrIdentityAuthNotFound
+	}
+}
+
 func (x *dummyUserStore) RenameIdentity(oldEmail, newEmail string) error {
 	x.usersLock.Lock()
 	defer x.usersLock.Unlock()
@@ -198,7 +221,7 @@ func (x *dummyUserStore) GetIdentities(getIdentitiesFlag GetIdentitiesFlag) ([]A
 		if (getIdentitiesFlag&GetIdentitiesFlagDeleted == 0) && v.archived {
 			continue
 		}
-		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, v.internalUUID, "", v.passwordModifiedDate, v.accountLocked})
+		list = append(list, AuthUser{v.userId, v.email, v.username, v.firstname, v.lastname, v.mobilenumber, v.telephonenumber, v.remarks, v.created, v.createdby, v.modified, v.modifiedby, v.authUserType, v.archived, v.internalUUID, v.externalUUID, v.passwordModifiedDate, v.accountLocked})
 	}
 	return list, nil
 }

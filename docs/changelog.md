@@ -2,6 +2,21 @@
 
 ## current
 
+* ASG-3355 : MSAAD Unarchive feature
+* feat : Implement unarchive method (checks "allowarchive")
+* fix : Username not set on msaad user create
+* fix : Fix audit log double entry
+* fix : bug in dummyUserStore.go (ignored fields)
+* fix : db tests (waitgroups)
+* fix : unit tests
+* fix : Refactor Graph calls
+* fix : Remove unused / temp functionality
+* fix : Remove 'Domain' MSAAD config field
+
+## v1.0.37 
+
+* fix: Remove exposed client secret from redirect 
+
 ## v1.0.36
 
 * fix: Harden MSAAD sync (ASG-3350)
