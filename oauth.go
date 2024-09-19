@@ -295,7 +295,10 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 		Profile:        profile,
 	}
 	if provider.AllowCreateUser {
-		result.UserId, err = x.createOrGetUserID(profile)
+		// consider changing MatchArchivedUserExtUUID's signature to accept
+		// uuid instead
+		if x.parent.MSAAD.Config.AllowArchiveUser
+		found, result.UserId, err = x.parent.userStore.MatchArchivedUserExtUUID(result)//x.createOrGetUserID(profile)
 		if err == nil {
 			result.IsNewUser = true
 		} else if err == ErrIdentityExists {
@@ -920,6 +923,12 @@ func (x *OAuth) getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuth
 	}
 
 	ms := msaadUserProfile{}
+
+	// be careful when using /me as below. It will provide a different UPN
+	// than other graph endpoints. For example, /users/{id} will generally provide
+	// the user's home tenant UPN appended with other information, while
+	// /me will provide the user's home tenant UPN only. See similar comments
+	// in msaad.go.
 	req, _ := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
 	req.Header.Set("Content-Type", "application/json")
 	if err := x.makeAuthenticatedRequestForJSON(id, req, &ms); err != nil {
