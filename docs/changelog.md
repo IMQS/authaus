@@ -2,6 +2,8 @@
 
 ## current
 
+## v1.1.0
+
 * ASG-3355 : MSAAD Unarchive feature
 * feat : Implement unarchive method (checks "allowarchive")
 * fix : Username not set on msaad user create
