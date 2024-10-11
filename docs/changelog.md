@@ -2,7 +2,11 @@
 
 ## current
 
-## v1.1.0
+## v1.1.1
+
+* fix : Auth dies when MSAAD config or ClientID in MSAAD config is missing.
+
+## v1.1.0 (retracted)
 
 * ASG-3355 : MSAAD Unarchive feature
 * feat : Implement unarchive method (checks "allowarchive")
