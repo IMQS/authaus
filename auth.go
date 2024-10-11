@@ -452,7 +452,6 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if roleGroupDB, err = NewRoleGroupDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to RoleGroupDB: %v", err))
 	}
-
 	oldPasswordHistorySize := config.UserStore.OldPasswordHistorySize
 	if oldPasswordHistorySize == 0 {
 		oldPasswordHistorySize = defaultOldPasswordHistorySize
@@ -489,7 +488,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if len(config.UserStore.UsersExemptFromExpiring) > 0 {
 		c.UsersExemptFromExpiring = config.UserStore.UsersExemptFromExpiring
 	}
-
+	startupLogger.Infof("Test 2\n")
 	c.msaadSyncMergeEnabled = msaadUsed
 	if ldapUsed || msaadUsed {
 		syncMergeSeconds := defaultSyncMergeTickerSeconds
@@ -509,8 +508,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 
 	c.OAuth.Config = config.OAuth
-	c.MSAAD.SetConfig(config.MSAAD)
-
+	if msaadUsed {
+		c.MSAAD.SetConfig(config.MSAAD)
+	}
 	c.loginDelayMS = 500 // add 500 ms per invalid login attempt
 
 	return c, nil
