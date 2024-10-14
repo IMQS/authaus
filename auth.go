@@ -488,7 +488,6 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	if len(config.UserStore.UsersExemptFromExpiring) > 0 {
 		c.UsersExemptFromExpiring = config.UserStore.UsersExemptFromExpiring
 	}
-	startupLogger.Infof("Test 2\n")
 	c.msaadSyncMergeEnabled = msaadUsed
 	if ldapUsed || msaadUsed {
 		syncMergeSeconds := defaultSyncMergeTickerSeconds
