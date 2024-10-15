@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/IMQS/log"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -15,18 +16,27 @@ import (
 )
 
 type OAuthProviderI interface {
-	getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuthUserProfile, error)
+	//getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuthUserProfile, error)
 	//makeAuthenticatedRequest(id string, r *http.Request) (*http.Response, error)
-	makeAuthenticatedRequestForJSON(id string, r *http.Request, responseObj interface{}) error
+	//makeAuthenticatedRequestForJSON(id string, r *http.Request, responseObj interface{}) error
+	setLogger(logger *log.Logger)
+	entraRefreshHTTP(id string, provider *ConfigOAuthProvider, token oauthToken) (oauthToken, error)
 }
 
 type OAuthDBI interface {
+	Initialize(logger *log.Logger)
+	setLogger(logger *log.Logger)
 	getToken(id string) (string, time.Time, *oauthToken, error)
 	updateToken(utc time.Time, newToken *oauthToken, id string) error
 	getSessions() ([]oauthSession, error)
 	deleteSession(id string) error
 	getOrphanAuthSessions() (sessions []string, err error)
 	purgeUnusedOAuthSessions()
+	purgeExpiredChallenges()
+	insertChallenge(id string, providerName string, created time.Time, nonce string, pckeVerifier string) error
+	getChallenge(id string) (provider, codeVerifier string, err error)
+	upgradeChallengeToSession(id string, token *oauthToken) error
+	getLastSession() (string, error)
 }
 
 const DefaultOAuthLoginExpirySeconds = 5 * 60
@@ -74,7 +84,7 @@ type OAuth struct {
 	Config ConfigOAuth
 
 	parent        *Central
-	OAuthProvider OAuthProvider
+	OAuthProvider OAuthProviderI
 	OAuthDB       OAuthDBI
 	// In order to prevent races at refreshing an OAuth token, we use a hash map
 	// to ensure that only one thread is trying to do that at a time. It IS POSSIBLE
@@ -139,6 +149,9 @@ func (x *OAuth) Initialize(parent *Central) {
 	x.parent = parent
 	x.tokenInUse = map[string]int{}
 	x.tokenRefresh = map[string]bool{}
+	x.OAuthProvider.setLogger(parent.Log)
+	x.OAuthDB.Initialize(nil)
+	x.OAuthDB.setLogger(parent.Log)
 
 	// Run a cleanup loop
 	go func() {
@@ -173,6 +186,11 @@ func (x *OAuth) HttpHandlerOAuthStart(w http.ResponseWriter, r *http.Request) {
 	// This is just some extremely crude rate limiting, but this is an interactive
 	// flow that involves a bunch of user clicks, so I feel it's OK to impose it here.
 	time.Sleep(50 * time.Millisecond)
+
+	if r.Form == nil {
+		HttpSendTxt(w, http.StatusBadRequest, "Invalid request, form is nil")
+		return
+	}
 
 	providerName := r.FormValue("provider")
 	provider := x.Config.Providers[providerName]
@@ -244,7 +262,7 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	id := r.FormValue("state")
 	code := r.FormValue("code")
 
-	providerName, pkceVerifier, err := x.getChallenge(id)
+	providerName, pkceVerifier, err := x.OAuthDB.getChallenge(id)
 	if err != nil {
 		if x.Config.Verbose {
 			x.parent.Log.Infof("OAuth failed to retrieve session '%v': %v", id[:6], err)
@@ -263,12 +281,12 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get access token: '%w'", err)
 	}
-	if err := x.upgradeChallengeToSession(id, token); err != nil {
+	if err := x.OAuthDB.upgradeChallengeToSession(id, token); err != nil {
 		return nil, fmt.Errorf("Failed to commit token to database: '%w'", err)
 	}
 
 	// Ask the OAuth server for the user details, so that we log the user into Authaus
-	profile, err := x.OAuthProvider.getUserProfile(id, provider)
+	profile, err := x.getUserProfile(id, provider)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to fetch user profile for id (%v): '%w'", id, err)
 	}
@@ -317,36 +335,39 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 // to go through a complete login cycle every time. I'm afraid I'm going to burn up some max-logins-per-hour
 // quota or something like that.
 func (x *OAuth) HttpHandlerOAuthTest(w http.ResponseWriter, r *http.Request) {
-	id := ""
-	x.parent.DB.QueryRow("SELECT id FROM oauthsession ORDER BY updated DESC LIMIT 1").Scan(&id)
+	id, err := x.OAuthDB.getLastSession()
 	if id == "" {
 		HttpSendTxt(w, http.StatusOK, "No sessions")
 		return
 	}
 
-	req, err := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
+	err = x.getMe(w, r, id)
 	if err != nil {
-		HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to build request: %v", err))
-		return
+		x.parent.Log.Warnf("Failed to getMe: %v", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := x.OAuthProvider.makeAuthenticatedRequest(id, req)
-	if err != nil {
-		HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to execute authenticated request: %v", err))
-		return
-	}
-
-	// forward the response
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			w.Header().Add(k, vv)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	if resp.Body != nil {
-		io.Copy(w, resp.Body)
-		resp.Body.Close()
-	}
+	//req, err := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
+	//if err != nil {
+	//	HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to build request: %v", err))
+	//	return
+	//}
+	//req.Header.Set("Content-Type", "application/json")
+	//resp, err := x.OAuthProvider.makeAuthenticatedRequest(id, req)
+	//if err != nil {
+	//	HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to execute authenticated request: %v", err))
+	//	return
+	//}
+	//
+	//// forward the response
+	//for k, v := range resp.Header {
+	//	for _, vv := range v {
+	//		w.Header().Add(k, vv)
+	//	}
+	//}
+	//w.WriteHeader(resp.StatusCode)
+	//if resp.Body != nil {
+	//	io.Copy(w, resp.Body)
+	//	resp.Body.Close()
+	//}
 }
 
 // OAuthLoginUsernamePassword
@@ -505,27 +526,6 @@ func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier
 	return &token, nil
 }
 
-func (x *OAuthDB) purgeExpiredChallenges() {
-	expired := time.Now().Add(-x.Config.LoginExpiry())
-	if x.Config.Verbose {
-		// This is racy, because another thread could do the DELETE while we're reading,
-		// but for debugging with a small number of initial users, should be sufficient for our needs.
-		rows, err := x.db.Query("SELECT id FROM oauthchallenge WHERE created < $1", expired)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				id := ""
-				if err = rows.Scan(&id); err != nil {
-					x.log.Errorf("Error reading id from oauthchallenge during verbose readout")
-				} else {
-					x.log.Infof("Purging expired oauth challenge '%v'", id[:6])
-				}
-			}
-		}
-	}
-	x.db.Exec("DELETE FROM oauthchallenge WHERE created < $1", expired)
-}
-
 func (x *OAuth) createChallenge(providerName string, provider *ConfigOAuthProvider, r *http.Request) (id, nonce, pkceChallenge string, err error) {
 	// The MS Azure Active Directory wants a nonce and a state variable, which from our point of view are both just
 	// arbitrary nonces.
@@ -533,58 +533,22 @@ func (x *OAuth) createChallenge(providerName string, provider *ConfigOAuthProvid
 	nonce = generateRandomKey(30)
 	pkceVerifier, pkceChallenge := createPKCE()
 
-	x.purgeExpiredChallenges()
+	x.OAuthDB.purgeExpiredChallenges()
 
 	if x.Config.Verbose {
 		x.parent.Log.Infof("Insert OAuth challenge %v", id[:6])
 	}
 
-	if _, err = x.parent.DB.Exec("INSERT INTO oauthchallenge (id, provider, created, nonce, pkce_verifier) VALUES ($1, $2, $3, $4, $5)",
-		id, providerName, time.Now().UTC(), nonce, pkceVerifier); err != nil {
-		x.parent.Log.Errorf("Failed to insert OAuth challenge %v: %v", id[:6], err)
+	err = x.OAuthDB.insertChallenge(id, providerName, time.Now().UTC(), nonce, pkceVerifier)
+	if err != nil {
 		return
 	}
+	//if _, err = x.parent.DB.Exec("INSERT INTO oauthchallenge (id, provider, created, nonce, pkce_verifier) VALUES ($1, $2, $3, $4, $5)",
+	//	id, providerName, time.Now().UTC(), nonce, pkceVerifier); err != nil {
+	//	x.parent.Log.Errorf("Failed to insert OAuth challenge %v: %v", id[:6], err)
+	//	return
+	//}
 	return
-}
-
-func (x *OAuth) getChallenge(id string) (provider, codeVerifier string, err error) {
-	// Is this a timing attack vector (ie the DB query on the secret 'id')?
-	// Even if we are vulnerable here, we can get around this by verifying the nonce without a timing weakness
-	err = x.parent.DB.QueryRow("SELECT provider, pkce_verifier FROM oauthchallenge WHERE id = $1", id).Scan(&provider, &codeVerifier)
-	return
-}
-
-// Delete an oauthchallenge record, and insert a new record into oauthsession, with the new token details
-func (x *OAuth) upgradeChallengeToSession(id string, token *oauthToken) error {
-	db := x.parent.DB
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if x.Config.Verbose {
-		x.parent.Log.Infof("Upgrading oauth challenge '%v'", id[:6])
-	}
-
-	if x.Config.ForceFastTokenRefresh {
-		x.parent.Log.Infof("During challenge upgrade, decreasing expiry time from %v to %v, for testing", token.ExpiresIn, 120)
-		token.ExpiresIn = 120
-	}
-
-	_, err = tx.Exec("INSERT INTO oauthsession SELECT id,provider,created,$1 FROM oauthchallenge WHERE id = $2", time.Now().UTC(), id)
-	if err != nil {
-		return fmt.Errorf("Error inserting into oauthsession: %w", err)
-	}
-	_, err = tx.Exec("DELETE FROM oauthchallenge WHERE id = $1", id)
-	if err != nil {
-		return fmt.Errorf("Error deleting from oauthchallenge: %w", err)
-	}
-	_, err = tx.Exec("UPDATE oauthsession SET token = $1 WHERE id = $2", token.toJSON(), id)
-	if err != nil {
-		return fmt.Errorf("Error updating oauthsession with initial token: %w", err)
-	}
-	return tx.Commit()
 }
 
 // If this function returns successfully, then tokenInUse[id] has been incremented,
@@ -698,6 +662,22 @@ func (x *OAuth) innerRefresh(id string, provider *ConfigOAuthProvider, token oau
 		x.tokenLock.Unlock()
 	}()
 
+	newToken, err3 := x.OAuthProvider.entraRefreshHTTP(id, provider, token)
+	if err3 != nil {
+		return err3
+	}
+
+	err2 := x.OAuthDB.updateToken(time.Now().UTC(), &newToken, id)
+	if err2 != nil {
+		return err2
+	}
+	return nil
+}
+
+func (x *OAuthProvider) setLogger(logger *log.Logger) {
+	x.Log = logger
+}
+func (x *OAuthProvider) entraRefreshHTTP(id string, provider *ConfigOAuthProvider, token oauthToken) (oauthToken, error) {
 	// Refresh the token
 	params := map[string]string{
 		"client_id":     provider.ClientID,
@@ -708,12 +688,12 @@ func (x *OAuth) innerRefresh(id string, provider *ConfigOAuthProvider, token oau
 	}
 	refresh, err := http.NewRequest("POST", provider.TokenURL, strings.NewReader(buildPOSTBodyForm(params)))
 	if err != nil {
-		return err
+		return oauthToken{}, err
 	}
 	refresh.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(refresh)
 	if err != nil {
-		return fmt.Errorf("Error refreshing token %v (connection): %w", id[:6], err)
+		return oauthToken{}, fmt.Errorf("Error refreshing token %v (connection): %w", id[:6], err)
 	}
 	respBody := []byte{}
 	if resp.Body != nil {
@@ -721,33 +701,24 @@ func (x *OAuth) innerRefresh(id string, provider *ConfigOAuthProvider, token oau
 		resp.Body.Close()
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("Error refreshing token %v: %v, %v", id[:6], resp.Status, string(respBody))
+		return oauthToken{}, fmt.Errorf("Error refreshing token %v: %v, %v", id[:6], resp.Status, string(respBody))
 	}
 
 	// x.parent.Log.Infof("Refresh token body: %v", string(respBody))
 
 	newToken := oauthToken{}
 	if err := json.Unmarshal(respBody, &newToken); err != nil {
-		return fmt.Errorf("Error unmarshalling refresh token %v response: %w", id[:6], err)
+		return oauthToken{}, fmt.Errorf("Error unmarshalling refresh token %v response: %w", id[:6], err)
 	}
 	if newToken.Error != "" {
-		return fmt.Errorf("Error acquiring refresh token %v: %v, %v", id[:6], newToken.Error, newToken.ErrorDescription)
+		return oauthToken{}, fmt.Errorf("Error acquiring refresh token %v: %v, %v", id[:6], newToken.Error, newToken.ErrorDescription)
 	}
 
 	if x.Config.ForceFastTokenRefresh {
-		x.parent.Log.Infof("After refresh, decreasing expiry time of refresh token from %v to %v, for testing", newToken.ExpiresIn, 120)
+		x.Log.Infof("After refresh, decreasing expiry time of refresh token from %v to %v, for testing", newToken.ExpiresIn, 120)
 		newToken.ExpiresIn = 120
 	}
-
-	err2 := x.OAuthDB.updateToken(time.Now().UTC(), &newToken, id)
-	if err2 != nil {
-		return err2
-	}
-	//if _, err := x.parent.DB.Exec("UPDATE oauthsession SET updated = $1, token = $2 WHERE id = $3", time.Now().UTC(), newToken.toJSON(), id); err != nil {
-	//	return fmt.Errorf("Error updating database with new refresh token %v: %w", id[:6], err)
-	//}
-
-	return nil
+	return newToken, nil
 }
 
 type oauthSession struct {
@@ -806,7 +777,7 @@ func (x *OAuth) validateTokens() {
 		} else {
 			// Simply making this call will ensure that the oauthsession record is deleted, if it has become invalid.
 			// You can see this behaviour in makeAuthenticatedRequest().
-			if _, err := x.OAuthProvider.getUserProfile(session.id, prov); err != nil {
+			if _, err := x.getUserProfile(session.id, prov); err != nil {
 				x.parent.Log.Infof("During OAuth validation, getUserProfile failed on session %v...: %v", session.id[:4], err)
 			}
 		}
@@ -936,4 +907,149 @@ func buildPOSTBodyForm(params map[string]string) string {
 		s = s[0 : len(s)-1]
 	}
 	return s
+}
+
+type OAuthProvider struct {
+	Config ConfigOAuth
+	Log    *log.Logger
+}
+
+func (x *OAuth) getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuthUserProfile, error) {
+	// Microsoft Azure Active Directory is the only provider we've needed to implement so far
+	if provider.Type != OAuthProviderMSAAD {
+		return nil, fmt.Errorf("Unsupported OAuth provider '%v'", provider.Type)
+	}
+
+	ms := msaadUserProfile{}
+
+	// be careful when using /me as below. It will provide a different UPN
+	// than other graph endpoints. For example, /users/{id} will generally provide
+	// the user's home tenant UPN appended with other information, while
+	// /me will provide the user's home tenant UPN only. See similar comments
+	// in msaad.go.
+	profile, err := x.getUserProfileHTTP(id, ms)
+	if err != nil {
+		return profile, err
+	}
+
+	email := ms.Mail
+	if email == "" {
+		email = ms.UserPrincipalName
+	}
+
+	prof := OAuthUserProfile{
+		FirstName:   ms.GivenName,
+		LastName:    ms.Surname,
+		DisplayName: ms.DisplayName,
+		Email:       email,
+		UUID:        ms.ID,
+	}
+
+	return &prof, nil
+}
+
+func (x *OAuth) getUserProfileHTTP(id string, ms msaadUserProfile) (*OAuthUserProfile, error) {
+	req, _ := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
+	req.Header.Set("Content-Type", "application/json")
+	if err := x.makeAuthenticatedRequestForJSON(id, req, &ms); err != nil {
+		return nil, fmt.Errorf("Failed to fetch user profile (%v): %w", id, err)
+	}
+	return nil, nil
+}
+
+// Perform an HTTP request, using the token associated with the given ID to authenticate the request.
+// If the session token needs to be refreshed, then this function will automatically refresh
+// the token.
+func (x *OAuth) makeAuthenticatedRequest(id string, r *http.Request) (*http.Response, error) {
+	token, err := x.getOrRefreshToken(id)
+	if err != nil {
+		x.parent.Log.Infof("Failed to refresh OAuth token %v: %v", id[:6], err)
+
+		// In any failure case, ensure that this record no longer exists in the DB.
+		// If there are cases that can be retried then that retry logic should be
+		// built into getOrRefreshToken()
+
+		if err := x.OAuthDB.deleteSession(id); err != nil {
+			//if _, err := x.parent.DB.Exec("DELETE FROM oauthsession WHERE id = $1", id); err != nil {
+			x.parent.Log.Errorf("Failed to delete OAuth session for %v, after failed token refresh: %v", id[:6], err)
+		}
+
+		// In addition, work around any bugs that we may have in this code, where we forgot to
+		// release locks on this token.
+		x.tokenLock.Lock()
+		delete(x.tokenInUse, id)
+		delete(x.tokenRefresh, id)
+		x.tokenLock.Unlock()
+
+		return nil, err
+	}
+	defer func() {
+		// Release our usage counter, so that if necessary, another thread can refresh the token
+		x.tokenLock.Lock()
+		if _, ok := x.tokenInUse[id]; !ok {
+			// The fact that this token is no longer in the tokenInUse block, tells us that this
+			// token has been destroyed by the above error-handling code block.
+		} else {
+			x.tokenInUse[id]--
+			if x.tokenInUse[id] < 0 {
+				// The above check to see if 'id' is present in the map, should catch any legitimate
+				// conditions. So if the value really is less than zero, we have a bug.
+				x.parent.Log.Errorf("tokenInUse[%v] less than zero", id[:6])
+			}
+			if x.tokenInUse[id] <= 0 {
+				delete(x.tokenInUse, id)
+			}
+		}
+		x.tokenLock.Unlock()
+	}()
+	r.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	resp, err := http.DefaultClient.Do(r)
+	return resp, err
+}
+
+// Wrap makeAuthenticatedRequest, and unmarshal the response into JSON
+func (x *OAuth) makeAuthenticatedRequestForJSON(id string, r *http.Request, responseObj interface{}) error {
+	resp, err := x.makeAuthenticatedRequest(id, r)
+	if err != nil {
+		return fmt.Errorf("Failed to execute authenticated request: %w", err)
+	}
+	respBody := []byte{}
+	if resp.Body != nil {
+		respBody, err = ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("Failed to read body of authenticated request: %w", err)
+		}
+	}
+	if err := json.Unmarshal(respBody, responseObj); err != nil {
+		return fmt.Errorf("Failed to unmarshal JSON of response body: %w", err)
+	}
+	return nil
+}
+
+func (x *OAuth) getMe(w http.ResponseWriter, r *http.Request, id string) error {
+	req, err := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
+	if err != nil {
+		HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to build request: %v", err))
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := x.makeAuthenticatedRequest(id, req)
+	if err != nil {
+		HttpSendTxt(w, http.StatusBadRequest, fmt.Sprintf("Failed to execute authenticated request: %v", err))
+		return err
+	}
+
+	// forward the response
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			w.Header().Add(k, vv)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	if resp.Body != nil {
+		io.Copy(w, resp.Body)
+		resp.Body.Close()
+	}
+	return nil
 }

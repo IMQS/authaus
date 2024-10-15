@@ -199,7 +199,7 @@ func getCentral(t *testing.T) *Central {
 		userStore = newDummyUserStore()
 	}
 
-	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB)
+	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB, nil)
 	if isBackendPostgresTest() {
 		c.DB = sqlDB
 	}
