@@ -324,9 +324,7 @@ type Central struct {
 func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
 	c := &Central{}
 
-	if c.OAuth.Config.Providers != nil {
-		c.OAuth.Initialize(c)
-	}
+	c.OAuth.Initialize(c)
 
 	if ldap != nil {
 		c.ldap = &sanitizingLDAP{
