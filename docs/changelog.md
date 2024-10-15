@@ -2,6 +2,10 @@
 
 ## current
 
+## v1.1.2
+
+* fix : Fix oauth initialization bug
+
 ## v1.1.1
 
 * fix : Auth dies when MSAAD config or ClientID in MSAAD config is missing.
