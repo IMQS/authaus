@@ -321,10 +321,16 @@ type Central struct {
 
 // Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
-func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
+func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB, oauth *OAuth) *Central {
 	c := &Central{}
 
-	c.OAuth.Initialize(c)
+	c.OAuth = *oauth
+	if c.OAuth.Config.Providers != nil {
+		c.OAuth.Initialize(c)
+	} else {
+		// TODO: Implement
+	}
+
 
 	if ldap != nil {
 		c.ldap = &sanitizingLDAP{
@@ -373,6 +379,8 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		roleGroupDB RoleGroupDB
 	)
 	msaadUsed := config.MSAAD.ClientID != ""
+	oauthUsed := config.OAuth.DefaultProvider != ""
+
 	ldapUsed := len(config.LDAP.LdapHost) > 0
 
 	// We don't want logging to stdout when the service is running on a windows machine
@@ -434,6 +442,18 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		}
 		msaad.SetProvider(msaadProvider)
 	}
+	var oauth *OAuth
+	if oauthUsed {
+		oauth = &OAuth{
+			Config:        config.OAuth,
+			parent:        nil,
+			OAuthProvider: nil,
+			OAuthDB:       nil,
+			tokenLock:     sync.Mutex{},
+			tokenInUse:    nil,
+			tokenRefresh:  nil,
+		}
+	}
 
 	if userStore, err = NewUserStoreDB_SQL(db); err != nil {
 		panic(fmt.Errorf("Error connecting to UserStoreDB: %v", err))
@@ -456,7 +476,7 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	}
 	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize, config.UserStore.UsersExemptFromExpiring)
 
-	c := NewCentral(config.Log.Filename, ldap, msaad, userStore, permitDB, sessionDB, roleGroupDB)
+	c := NewCentral(config.Log.Filename, ldap, msaad, userStore, permitDB, sessionDB, roleGroupDB, oauth)
 	c.DB = db
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {

@@ -26,6 +26,7 @@ func getCentralMSAAD(t *testing.T) *Central {
 	var permitDB PermitDB
 	var roleDB RoleGroupDB
 	var msaad MSAAD
+	//var oauthDB OAuthDB
 	msaad.SetConfig(ConfigMSAAD{
 		Verbose:              true,
 		DryRun:               false,
@@ -178,11 +179,38 @@ func getCentralMSAAD(t *testing.T) *Central {
 	p.Roles = EncodePermit(groupIds)
 	permitDB.SetPermit(user.UserId, &p)
 
-	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB)
+	oauthConfig := ConfigOAuth{
+		Providers: map[string]*ConfigOAuthProvider{
+			"test": {
+				Type:            "msaad",
+				Title:           "test",
+				ClientID:        "testclientid",
+				LoginURL:        "http://test.com/login",
+				TokenURL:        "http://test.com/token",
+				RedirectURL:     "http://test.com/redirect",
+				Scope:           "testscope",
+				ClientSecret:    "testclientsecret",
+				AllowCreateUser: true,
+			},
+		},
+		Verbose:                   false,
+		ForceFastTokenRefresh:     false,
+		LoginExpirySeconds:        5,
+		TokenCheckIntervalSeconds: 1,
+		DefaultProvider:           "test",
+	}
+
+	oauth := OAuth{
+		Config:        oauthConfig,
+		OAuthProvider: &dummyOAuthProvider{},
+		OAuthDB:       &dummyOAuthDB{SessionDB: sessionDB},
+	}
+	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB, &oauth)
 	da := &dummyAuditor{}
 	da.messages = []string{}
 	da.testing = t
 	c.Auditor = da
+
 	return c
 }
 
