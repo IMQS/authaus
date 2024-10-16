@@ -73,7 +73,7 @@ func (d *dummyOAuthDB) updateToken(utc time.Time, newToken *oauthToken, id strin
 func (d *dummyOAuthDB) getSessions() ([]oauthSession, error) {
 	sessions := make([]oauthSession, 0)
 	d.sessionLock.Lock()
-	defer d.sessionLock.Lock()
+	defer d.sessionLock.Unlock()
 	for _, s := range d.sessions {
 		sessions = append(sessions, oauthSession{
 			id:       s.id,
@@ -111,8 +111,6 @@ func (d *dummyOAuthDB) getOrphanAuthSessions() (sessions []string, err error) {
 func (d *dummyOAuthDB) purgeUnusedOAuthSessions() {
 	//DELETE FROM oauthsession WHERE id NOT IN (SELECT oauthid FROM authsession WHERE oauthid IS NOT NULL) AND created < $1
 	//Delete OAuth sessions which has no link to an Authaus session, after some grace period (grace period is 1 minute)
-	d.sessionLock.Lock()
-	defer d.sessionLock.Lock()
 	tokens, err := d.SessionDB.GetAllTokens(true)
 	if err != nil {
 		d.Log.Errorf("Failed to get all tokens: %v", err)
@@ -121,6 +119,8 @@ func (d *dummyOAuthDB) purgeUnusedOAuthSessions() {
 	var toDelete []string
 	// TODO : This is obviously super inefficient. We should replace with a map.
 	// But then again it is test code...
+	d.sessionLock.Lock()
+	defer d.sessionLock.Unlock()
 	for id, s := range d.sessions {
 		found := false
 		for _, t := range tokens {
@@ -150,7 +150,7 @@ func (d *dummyOAuthDB) purgeExpiredChallenges() {
 
 func (d *dummyOAuthDB) insertChallenge(id string, providerName string, created time.Time, nonce string, pckeVerifier string) error {
 	d.challengeLock.Lock()
-	d.challengeLock.Unlock()
+	defer d.challengeLock.Unlock()
 	d.challenges[id] = &challenge{
 		id:           id,
 		providerName: providerName,
@@ -168,7 +168,7 @@ func (d *dummyOAuthDB) getChallenge(id string) (provider, codeVerifier string, e
 	if c, ok := d.challenges[id]; ok {
 		return c.providerName, c.pckeVerifier, nil
 	} else {
-		return "", "", nil
+		return "", "", fmt.Errorf("Challenge %v not found", id)
 	}
 }
 
@@ -178,7 +178,7 @@ func (d *dummyOAuthDB) upgradeChallengeToSession(id string, token *oauthToken) e
 	d.sessionLock.Lock()
 	defer d.sessionLock.Unlock()
 	if c, ok := d.challenges[id]; ok {
-		d.SessionDB.Read(c.id)
+		//d.SessionDB.Read(c.id)
 		d.sessions[id] = &oauthSessionRecord{
 			id:       c.id,
 			provider: c.providerName,
