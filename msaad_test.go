@@ -156,6 +156,25 @@ func getCentralMSAAD(t *testing.T) *Central {
 		PasswordModifiedDate: time.Time{},
 		AccountLocked:        false,
 	}, "password")
+	userStore.CreateIdentity(&AuthUser{
+		Email:                "Stay.Archived@example.com",
+		Username:             "Stay.Archived@example.com",
+		Firstname:            "Stay",
+		Lastname:             "Archived",
+		Mobilenumber:         "",
+		Telephonenumber:      "",
+		Remarks:              "",
+		Created:              time.Time{},
+		CreatedBy:            0,
+		Modified:             time.Time{},
+		ModifiedBy:           0,
+		Type:                 UserTypeMSAAD,
+		Archived:             true,
+		InternalUUID:         irrelevantUUID,
+		ExternalUUID:         "d1969c4b-b667-4bb5-9f9a-6fc0d0ec5083",
+		PasswordModifiedDate: time.Time{},
+		AccountLocked:        false,
+	}, "password")
 	groupIds := GroupIDU32s{}
 	gi, _ := roleDB.GetByName("IMQS Group 1")
 	groupIds = append(groupIds, gi.ID)

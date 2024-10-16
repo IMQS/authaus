@@ -354,6 +354,7 @@ func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserS
 		}
 	}
 
+	// TODO : This is a bit of a hack. We should probably have a better way of initializing the OAuth
 	c.OAuth = *oauth
 	if c.OAuth.Config.Providers != nil {
 		c.OAuth.Initialize(c)

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/IMQS/log"
 	"io"
@@ -21,6 +22,8 @@ type OAuthProviderI interface {
 	//makeAuthenticatedRequestForJSON(id string, r *http.Request, responseObj interface{}) error
 	setLogger(logger *log.Logger)
 	entraRefreshHTTP(id string, provider *ConfigOAuthProvider, token oauthToken) (oauthToken, error)
+	getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier string) (*oauthToken, error)
+	bareHTTP(r *http.Request, token *oauthToken) (*http.Response, error)
 }
 
 type OAuthDBI interface {
@@ -150,8 +153,7 @@ func (x *OAuth) Initialize(parent *Central) {
 	x.tokenInUse = map[string]int{}
 	x.tokenRefresh = map[string]bool{}
 	x.OAuthProvider.setLogger(parent.Log)
-	x.OAuthDB.Initialize(nil)
-	x.OAuthDB.setLogger(parent.Log)
+	x.OAuthDB.Initialize(parent.Log)
 
 	// Run a cleanup loop
 	go func() {
@@ -277,7 +279,7 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	if provider.Type != OAuthProviderMSAAD {
 		return nil, fmt.Errorf("Unsupported OAuth provider '%v'", provider.Type)
 	}
-	token, err := x.getAccessToken(provider, code, pkceVerifier)
+	token, err := x.OAuthProvider.getAccessToken(provider, code, pkceVerifier)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get access token: '%w'", err)
 	}
@@ -299,16 +301,23 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 		OAuthSessionID: id,
 		Profile:        profile,
 	}
+	found, userid, errArchiveMatch := x.parent.userStore.MatchArchivedUserExtUUID(profile.UUID)
+	if errArchiveMatch != nil {
+		return nil, fmt.Errorf("Could not check user status: '%w'", errArchiveMatch)
+	}
+	if found {
+		result.UserId = userid
+		return &result, fmt.Errorf("User exists, but is archived.")
+	}
+
 	if provider.AllowCreateUser {
-		// consider changing MatchArchivedUserExtUUID's signature to accept
-		// uuid instead
-		//if x.parent.MSAAD.Config.AllowArchiveUser
-		//found, result.UserId, err = x.parent.userStore.MatchArchivedUserExtUUID(result)
-		x.createOrGetUserID(profile)
+		userId, err := x.createOrGetUserID(profile)
 		if err == nil {
 			result.IsNewUser = true
-		} else if err == ErrIdentityExists {
+			result.UserId = userId
+		} else if errors.Is(err, ErrIdentityExists) {
 			result.IsNewUser = false
+			result.UserId = userId
 		} else if err != nil {
 			return nil, fmt.Errorf("Failed to create internal user profile for '%v': '%w'", profile.DisplayName, err)
 		}
@@ -473,7 +482,7 @@ func (x *OAuth) OAuthLoginUsernamePassword(username string, password string) (er
 	return tx.Commit(), key
 }
 
-func (x *OAuth) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier string) (*oauthToken, error) {
+func (x *OAuthProvider) getAccessToken(provider *ConfigOAuthProvider, code, pkceVerifier string) (*oauthToken, error) {
 	// Microsoft Azure Active Directory is the only provider we've needed to implement so far
 	if provider.Type != OAuthProviderMSAAD {
 		return nil, fmt.Errorf("Unsupported OAuth provider '%v'", provider.Type)
@@ -721,6 +730,12 @@ func (x *OAuthProvider) entraRefreshHTTP(id string, provider *ConfigOAuthProvide
 	return newToken, nil
 }
 
+func (x *OAuthProvider) bareHTTP(r *http.Request, token *oauthToken) (*http.Response, error) {
+	r.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	resp, err := http.DefaultClient.Do(r)
+	return resp, err
+}
+
 type oauthSession struct {
 	id       string
 	provider string
@@ -920,16 +935,16 @@ func (x *OAuth) getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuth
 		return nil, fmt.Errorf("Unsupported OAuth provider '%v'", provider.Type)
 	}
 
-	ms := msaadUserProfile{}
+	ms := &msaadUserProfile{}
 
 	// be careful when using /me as below. It will provide a different UPN
 	// than other graph endpoints. For example, /users/{id} will generally provide
 	// the user's home tenant UPN appended with other information, while
 	// /me will provide the user's home tenant UPN only. See similar comments
 	// in msaad.go.
-	profile, err := x.getUserProfileHTTP(id, ms)
+	err := x.getUserProfileHTTP(id, ms)
 	if err != nil {
-		return profile, err
+		return nil, err
 	}
 
 	email := ms.Mail
@@ -948,13 +963,16 @@ func (x *OAuth) getUserProfile(id string, provider *ConfigOAuthProvider) (*OAuth
 	return &prof, nil
 }
 
-func (x *OAuth) getUserProfileHTTP(id string, ms msaadUserProfile) (*OAuthUserProfile, error) {
+func (x *OAuth) getUserProfileHTTP(id string, ms *msaadUserProfile) error {
 	req, _ := http.NewRequest("GET", "https://graph.microsoft.com/v1.0/me", nil)
 	req.Header.Set("Content-Type", "application/json")
 	if err := x.makeAuthenticatedRequestForJSON(id, req, &ms); err != nil {
-		return nil, fmt.Errorf("Failed to fetch user profile (%v): %w", id, err)
+		return fmt.Errorf("Failed to fetch user profile (%v): %w", id, err)
 	}
-	return nil, nil
+	if ms.ID == "" {
+		return fmt.Errorf("Failed to fetch user profile (%v): no ID", id)
+	}
+	return nil
 }
 
 // Perform an HTTP request, using the token associated with the given ID to authenticate the request.
@@ -969,9 +987,9 @@ func (x *OAuth) makeAuthenticatedRequest(id string, r *http.Request) (*http.Resp
 		// If there are cases that can be retried then that retry logic should be
 		// built into getOrRefreshToken()
 
-		if err := x.OAuthDB.deleteSession(id); err != nil {
+		if err2 := x.OAuthDB.deleteSession(id); err2 != nil {
 			//if _, err := x.parent.DB.Exec("DELETE FROM oauthsession WHERE id = $1", id); err != nil {
-			x.parent.Log.Errorf("Failed to delete OAuth session for %v, after failed token refresh: %v", id[:6], err)
+			x.parent.Log.Errorf("Failed to delete OAuth session for %v, after failed token refresh: %v", id[:6], err2)
 		}
 
 		// In addition, work around any bugs that we may have in this code, where we forgot to
@@ -1002,8 +1020,7 @@ func (x *OAuth) makeAuthenticatedRequest(id string, r *http.Request) (*http.Resp
 		}
 		x.tokenLock.Unlock()
 	}()
-	r.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	resp, err := http.DefaultClient.Do(r)
+	resp, err := x.OAuthProvider.bareHTTP(r, token)
 	return resp, err
 }
 

@@ -394,12 +394,24 @@ func (x *dummySessionDB) Read(sessionkey string) (*Token, error) {
 }
 
 func (x *dummySessionDB) GetAllTokens(includeExpired bool) ([]*Token, error) {
-	//TODO implement me
-	panic("implement me")
+	x.sessionsLock.RLock()
+	defer x.sessionsLock.RLock()
+	tokens := make([]*Token, 0, len(x.sessions))
+	for _, token := range x.sessions {
+		if includeExpired || token.Expires.After(time.Now()) {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens, nil
 }
 func (x *dummySessionDB) GetAllOAuthTokenIDs() ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+	x.sessionsLock.RLock()
+	defer x.sessionsLock.RLock()
+	tokens := make([]string, 0, len(x.sessions))
+	for k := range x.sessions {
+		tokens = append(tokens, k)
+	}
+	return tokens, nil
 }
 
 func (x *dummySessionDB) Delete(sessionkey string) error {
