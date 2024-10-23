@@ -314,7 +314,12 @@ func (m *MSAAD) SynchronizeUsers() error {
 					existingUsers[ix].Modified = time.Now()
 					existingUsers[ix].ModifiedBy = UserIdMSAADMerge
 					if err := m.parent.userStore.UpdateIdentity(&existingUsers[ix]); err != nil {
-						m.log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
+						if errors.Is(ErrIdentityExists, err) {
+							m.log.Warnf("MSAAD: Update user %v failed due to duplicate username or email. "+
+								"UUID may not attached to the wrong user. (%v)", aadUser.profile.ID, err)
+						} else {
+							m.log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
+						}
 					}
 				}
 			}
