@@ -336,12 +336,34 @@ func createSQLSet(userIDs []UserId) string {
 	return b.String()
 }
 
-// findUser searches for given email address or username, but ignores any users specified in excludeUsers
-// tx is optional. If nil, then we query against the DB.
-// If email AND username are provided, then we find the first record that matches EITHER of them (we don't specify which!)
-// If the user does not exist, returns (0, nil)
-// If the user exists, returns (UserID, nil)
-// Anything else returns (0, Error)
+/*
+findUser searches for given email address or username, but ignores any users
+specified in excludeUsers.
+
+It thus operates in two modes:
+
+* Excludeusers _empty_ : Can be used to find users normally by email or username.
+
+* Excludeusers _not empty_ : Typically used to determine if _other_ records exist
+that have the same username or email as the specified users (userIds).
+
+tx is optional. If nil, then we query against the DB.
+
+Order of precedence:
+
+1. email, username nonzero
+
+2. email nonzero
+
+3. username nonzero
+
+If email AND username are provided, then we find the first record that matches
+EITHER of them (we don't specify which!)
+
+If the user does not exist, returns (0, nil).
+If the user exists, returns (UserID, nil).
+Anything else returns (0, Error).
+*/
 func (x *sqlUserStoreDB) findUser(tx *sql.Tx, email string, username string, excludeUsers []UserId) (UserId, error) {
 	s := ""
 	params := []interface{}{}
@@ -463,6 +485,11 @@ func (x *sqlUserStoreDB) CreateIdentity(user *AuthUser, password string) (UserId
 	}
 }
 
+/*
+UpdateIdentity updates the user record in the database matching UserId, provided
+there are
+no conflicts with other users (email OR username)
+*/
 func (x *sqlUserStoreDB) UpdateIdentity(user *AuthUser) error {
 	existingUserID, err := x.findUser(nil, user.Email, user.Username, []UserId{user.UserId})
 	if existingUserID != 0 {

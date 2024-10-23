@@ -296,7 +296,53 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	if x.Config.Verbose {
 		x.parent.Log.Infof("Got OAuth user profile displayName:%v, email:%v, uuid:%v", profile.DisplayName, profile.Email, profile.UUID)
 	}
+	/*
+		There are a couple of issues here that need to be resolved:
+		1. !AllowCreateUser can log in a user that does not have an external uuid.
+		In principle this is fine, since the user had provided the correct credentials,
+		which should match what is retrieved from the provider and recorded in auth.
 
+		However, the question becomes how permissions are managed. Two options:
+		- (A) The user's permissions are managed in the service (by a user admin), or
+		- (B) The user's permissions are managed by the provider via mapped security groups.
+		This requires an external uuid (at least for MSAAD), because it happens
+		in a thread which is not connected to the current session (user).
+
+		One _could_ do the sync based on the email address, but that is not a good idea
+		because that can change.
+
+		The auth system assigns a user type to the user, which, in steady state,
+		should indicate how a user's identity (and permissions are managed).
+
+		However, we've implemented a "merge" or "upgrade" function in MSAAD so
+		that a native user can be upgraded to a provider managed user.
+
+		* PROBLEM STATEMENT *
+		The main issue lies with the upgrade mechanism.
+		For !AllowCreateUser, the user is not created, and the user is not upgraded.
+		This means that even though the user login clearly depends on a provider,
+		this never gets recorded and the user is never upgraded. This may prevent
+		other logic pertaining to the provider from ever executing against the user.
+
+		Use case. When both OAuth and MSAAD are configured, it is possible to
+		have a native user in the database (no ext-UUID), as well as a MSAAD user
+		with the native users' old email address.
+		(1) When syncing, MSAAD finds the MSAAD user and updates permissions. It errors
+			when trying to update the email address, because the native user exists.
+		(2) When the user logs in, the OAuth redirect works, but the user is matched
+		against the native user and thus permissions are not correct.
+
+		The MSAAD sync does not identify the user correctly during the sync,
+		because it first checks the ext-uuid.
+		OAuth does not link the user to the correct UserId, because it searches
+		on the new email address.
+
+		Although somewhat artificial, we've seen this happen in practice, and it is
+		difficult to troubleshoot and requires manual intervention to correct.
+
+		In addition, the situation may be compounded by having allowcreateuser=true
+		as well as MSAAD sync active.
+	*/
 	result := OAuthCompletedResult{
 		OAuthSessionID: id,
 		Profile:        profile,
@@ -311,20 +357,27 @@ func (x *OAuth) OAuthFinish(r *http.Request) (*OAuthCompletedResult, error) {
 	}
 
 	if provider.AllowCreateUser {
+		// If MSAAD is enabled for the provider, we should not allow users to be created
+		// Also, we should modify createOrGetUserID to find the user by external UUID
 		userId, err := x.createOrGetUserID(profile)
 		if err == nil {
 			result.IsNewUser = true
 			result.UserId = userId
 		} else if errors.Is(err, ErrIdentityExists) {
+			// We've already checked for archived users, so this is a normal user
+			// and we need
 			result.IsNewUser = false
 			result.UserId = userId
 		} else if err != nil {
 			return nil, fmt.Errorf("Failed to create internal user profile for '%v': '%w'", profile.DisplayName, err)
 		}
 	} else {
+		// We have to prevent the user from logging in if
+		// MSAAD is enabled and the found user does not have an external UUID.
 		user, err := x.parent.GetUserFromIdentity(profile.Email)
 		if err == nil {
 			result.UserId = user.UserId
+			// NB : It is not possible for the error checked below to be returned!!!
 		} else if err == ErrIdentityAuthNotFound {
 			// As documented for this function, we don't consider this an error, and the
 			// caller is responsible for checking result.UserId
