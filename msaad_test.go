@@ -19,30 +19,16 @@ how the user's "Username" is treated.
 */
 
 var testProvider *dummyMSAADProvider
+var msaad MSAAD
 
-func getCentralMSAAD(t *testing.T) *Central {
+func getCentralMSAAD(t *testing.T, oauthconfig ConfigOAuth, msaadconfig ConfigMSAAD) *Central {
 	var userStore UserStore
 	var sessionDB SessionDB
 	var permitDB PermitDB
 	var roleDB RoleGroupDB
-	var msaad MSAAD
+
 	//var oauthDB OAuthDB
-	msaad.SetConfig(ConfigMSAAD{
-		Verbose:              true,
-		DryRun:               false,
-		TenantID:             irrelevantUUID,
-		ClientID:             irrelevantUUID,
-		ClientSecret:         "abcdef",
-		MergeIntervalSeconds: 30,
-		DefaultRoles:         []string{"enabled"},
-		RoleToGroup: map[string]string{
-			"AZ_ROLE_1": "IMQS Group 1",
-			"AZ_ROLE_2": "IMQS Group 2",
-			"AZ_ROLE_3": "IMQS Group 3",
-		},
-		AllowArchiveUser:     true,
-		PassthroughClientIDs: []string{irrelevantUUID},
-	})
+	msaad.SetConfig(msaadconfig)
 	testProvider = &dummyMSAADProvider{
 		testUsers: buildTestUsers(),
 	}
@@ -189,6 +175,7 @@ func getCentralMSAAD(t *testing.T) *Central {
 	permitDB.SetPermit(user.UserId, &p)
 
 	user, _ = userStore.GetUserFromIdentity("Jane.Doe@example.com")
+	t.Logf("User: %v", user)
 	p.Roles = EncodePermit(groupIds)
 	permitDB.SetPermit(user.UserId, &p)
 
@@ -198,7 +185,43 @@ func getCentralMSAAD(t *testing.T) *Central {
 	p.Roles = EncodePermit(groupIds)
 	permitDB.SetPermit(user.UserId, &p)
 
-	oauthConfig := ConfigOAuth{
+	oauthConfig := oauthconfig
+
+	oauth := OAuth{
+		Config:        oauthConfig,
+		OAuthProvider: &dummyOAuthProvider{},
+		OAuthDB:       &dummyOAuthDB{SessionDB: sessionDB},
+	}
+	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB, &oauth)
+	da := &dummyAuditor{}
+	da.messages = []string{}
+	da.testing = t
+	c.Auditor = da
+
+	return c
+}
+
+func defaultMsaad() ConfigMSAAD {
+	return ConfigMSAAD{
+		Verbose:              true,
+		DryRun:               false,
+		TenantID:             irrelevantUUID,
+		ClientID:             irrelevantUUID,
+		ClientSecret:         "abcdef",
+		MergeIntervalSeconds: 30,
+		DefaultRoles:         []string{"enabled"},
+		RoleToGroup: map[string]string{
+			"AZ_ROLE_1": "IMQS Group 1",
+			"AZ_ROLE_2": "IMQS Group 2",
+			"AZ_ROLE_3": "IMQS Group 3",
+		},
+		AllowArchiveUser:     true,
+		PassthroughClientIDs: []string{irrelevantUUID},
+	}
+}
+
+func defaultOauth() ConfigOAuth {
+	return ConfigOAuth{
 		Providers: map[string]*ConfigOAuthProvider{
 			"test": {
 				Type:            "msaad",
@@ -218,19 +241,6 @@ func getCentralMSAAD(t *testing.T) *Central {
 		TokenCheckIntervalSeconds: 1,
 		DefaultProvider:           "test",
 	}
-
-	oauth := OAuth{
-		Config:        oauthConfig,
-		OAuthProvider: &dummyOAuthProvider{},
-		OAuthDB:       &dummyOAuthDB{SessionDB: sessionDB},
-	}
-	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB, &oauth)
-	da := &dummyAuditor{}
-	da.messages = []string{}
-	da.testing = t
-	c.Auditor = da
-
-	return c
 }
 
 func Test_Match(t *testing.T) {
@@ -558,7 +568,7 @@ func groupsFromPermit(c *Central, user *AuthUser) GroupIDU32s {
 
 func Test_SynchronizeUsers(t *testing.T) {
 	allIdentities := map[string]void{}
-	c := getCentralMSAAD(t)
+	c := getCentralMSAAD(t, defaultOauth(), defaultMsaad())
 
 	// all msaad emails
 	aadIdentities, _ := testProvider.GetAADUsers()

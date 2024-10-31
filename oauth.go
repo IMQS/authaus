@@ -616,6 +616,7 @@ func (x *OAuth) createChallenge(providerName string, provider *ConfigOAuthProvid
 // If this function returns successfully, then tokenInUse[id] has been incremented,
 // and needs to be decremented once you are done using it to make your API request.
 func (x *OAuth) getOrRefreshToken(id string) (*oauthToken, error) {
+	fmt.Println("getOrRefreshToken")
 	//db := x.parent.DB
 	for sessionWait := 0; true; sessionWait++ {
 		if sessionWait == 120 {

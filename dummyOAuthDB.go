@@ -45,6 +45,7 @@ func (d *dummyOAuthDB) setLogger(logger *log.Logger) {
 
 func (d *dummyOAuthDB) getToken(id string) (string, time.Time, *oauthToken, error) {
 	//x.db.QueryRow("SELECT provider, updated, token FROM oauthsession WHERE id = $1", id).Scan(&providerStr, &timeVal, &tokenStr)
+	fmt.Println("getToken")
 	d.sessionLock.Lock()
 	defer d.sessionLock.Unlock()
 	session := d.sessions[id]
@@ -173,6 +174,9 @@ func (d *dummyOAuthDB) getChallenge(id string) (provider, codeVerifier string, e
 }
 
 func (d *dummyOAuthDB) upgradeChallengeToSession(id string, token *oauthToken) error {
+	fmt.Println("upgradeChallengeToSession")
+	fmt.Printf("id: %s\n", id)
+	fmt.Printf("upgradeChallenge...token: %s\n", token.AccessToken)
 	d.challengeLock.Lock()
 	defer d.challengeLock.Unlock()
 	d.sessionLock.Lock()
