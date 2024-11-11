@@ -1,7 +1,7 @@
 github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335 h1:n8o916boOorBHMGywZ+ucvUZRLIvjt2CaY/694CgMfU=
 github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335/go.mod h1:eVEKGm5N/F2XPdHocE3gP//Ab+rb/54WJ7XXtFGxwaQ=
-github.com/IMQS/log v1.1.0 h1:qrIqTxl9L8b19OwCGpAVKiaCwGx7MIzTBcOo1bJdgIs=
-github.com/IMQS/log v1.1.0/go.mod h1:EVm4FzOIBh22Ucdy4n01j725B85Z7We3LaRKCVozvy8=
+github.com/IMQS/log v1.2.0 h1:I//lb7o5UMbaVhl1NmuQUBA+3JFTrNrJvM7pmKwljdU=
+github.com/IMQS/log v1.2.0/go.mod h1:lhDFayH4IGud7fBofv5J96mv4kUdImx64hbk1U9sBrE=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=

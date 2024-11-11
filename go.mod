@@ -1,10 +1,10 @@
 module github.com/IMQS/authaus
 
-go 1.22.7
+go 1.22
 
 require (
 	github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335
-	github.com/IMQS/log v1.1.0
+	github.com/IMQS/log v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43
