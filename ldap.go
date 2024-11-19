@@ -177,6 +177,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 		user.Mobilenumber = ldapUser.Mobilenumber
 		user.Type = UserTypeLDAP
 		if !foundWithUsername && !foundWithEmail {
+			x.Log.Infof("Creating new user %v:%v", user.Username, user.Email)
 			user.Created = time.Now().UTC()
 			user.CreatedBy = UserIdLDAPMerge
 			user.Modified = time.Now().UTC()
@@ -206,6 +207,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 			// This space mysteriously disappears when the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
+				x.Log.Warnf("          : %v", userInfoToJSON(user))
 			} else {
 				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
 				x.Log.Infof("old: %v", userInfoToJSON(imqsUser))
