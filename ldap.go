@@ -206,7 +206,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 			// We have found that a certain ldap user (WilburGS) has an email that ends with a space.
 			// This space mysteriously disappears when the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
-				x.Log.Warnf("LDAP merge: Update identity failed with (%v)", err)
+				x.Log.Warnf("LDAP merge: Update identity (%v) failed with (%v)", user.UserId, err)
 				x.Log.Warnf("          : %v", userInfoToJSON(user))
 			} else {
 				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
