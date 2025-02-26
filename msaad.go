@@ -315,6 +315,13 @@ func (m *MSAAD) SynchronizeUsers() error {
 					existingUsers[ix].ModifiedBy = UserIdMSAADMerge
 					if err := m.parent.userStore.UpdateIdentity(&existingUsers[ix]); err != nil {
 						m.log.Warnf("MSAAD: Update user %v failed: %v", aadUser.profile.ID, err)
+					} else {
+						if m.parent.Auditor != nil {
+							contextData := userInfoToAuditTrailJSON(existingUsers[ix], "")
+							m.parent.Auditor.AuditUserAction(
+								m.parent.GetUserNameFromUserId(existingUsers[ix].ModifiedBy),
+								"User Profile: "+existingUsers[ix].Username+" (user details)", contextData, AuditActionUpdated)
+						}
 					}
 				}
 			}
@@ -329,8 +336,14 @@ func (m *MSAAD) SynchronizeUsers() error {
 
 		if internalUserID != UserId(0) {
 			// update groups of user
-			if err := m.syncRoles(cachedRoleGroups, aadUser, internalUserID); err != nil {
+			if changed, err := m.syncRoles(cachedRoleGroups, aadUser, internalUserID); err != nil {
 				m.log.Errorf("MSAAD failed to synchronize roles for user %v: %v", aadUser.profile.DisplayName, err)
+			} else {
+				if changed && m.parent.Auditor != nil {
+					contextData := msaadUserInfoToAuditTrailJSON(*aadUser, internalUserID, "")
+					m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(UserIdMSAADMerge),
+						"User Profile: "+aadUser.profile.bestEmail()+" (groups updated)", contextData, AuditActionUpdated)
+				}
 			}
 		}
 	}
@@ -360,7 +373,8 @@ func (m *MSAAD) SynchronizeUsers() error {
 					} else {
 						if m.parent.Auditor != nil {
 							contextData := userInfoToAuditTrailJSON(user, "")
-							m.parent.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionDeleted)
+							m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(UserIdMSAADMerge),
+								"User Profile: "+user.Username, contextData, AuditActionDeleted)
 						}
 						// clear the permit
 						permit := &Permit{}
@@ -414,7 +428,8 @@ func (m *MSAAD) CreateOrUnarchiveUser(aadUser *msaadUser) UserId {
 			m.log.Infof("MSAAD: Successfully unarchived identity: %v", user.Email)
 			if m.parent.Auditor != nil {
 				contextData := userInfoToAuditTrailJSON(user, "")
-				m.parent.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionRestored)
+				m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(user.CreatedBy),
+					"User Profile: "+user.Username, contextData, AuditActionCreated)
 			}
 			return archivedUserId
 		}
@@ -465,8 +480,9 @@ func (m *MSAAD) buildCachedRoleGroups() (*cachedRoleGroups, error) {
 	return cache, nil
 }
 
-func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) error {
+func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, internalUserID UserId) (changed bool, err error) {
 	nameInLogs := aadUser.profile.bestEmail()
+
 	if m.config.Verbose {
 		m.log.Infof("MSAAD syncRoles started for %s", nameInLogs)
 	}
@@ -474,7 +490,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	permit, err := m.parent.GetPermit(internalUserID)
 	if err != nil && !errors.Is(err, ErrIdentityPermitNotFound) {
 		m.log.Errorf("MSAAD failed to fetch permit for user %v: %v", nameInLogs, err)
-		return err
+		return false, err
 	}
 
 	if permit == nil {
@@ -484,7 +500,7 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 	// Figure out the existing groups that this user belongs to
 	userGroupIDs, err := DecodePermit(permit.Roles)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	groupsChanged := false
@@ -630,11 +646,11 @@ func (m *MSAAD) syncRoles(roleGroups *cachedRoleGroups, aadUser *msaadUser, inte
 		permit.Roles = EncodePermit(userGroupIDs)
 		if err := m.parent.SetPermit(internalUserID, permit); err != nil {
 			m.log.Errorf("MSAAD failed to set permit for user %v: %v", nameInLogs, err)
-			return err
+			return false, err
 		}
 	}
 
-	return nil
+	return groupsChanged, nil
 }
 
 // populateAADRoles fetches the users roles and then appends the result to the users
