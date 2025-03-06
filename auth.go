@@ -263,6 +263,8 @@ const (
 	AuditActionDeleted                        = "Deleted"
 	AuditActionResetPassword                  = "Reset Password"
 	AuditActionFailedLogin                    = "Failed Login"
+	AuditActionEnabled                        = "Enabled"
+	AuditActionDisabled                       = "Disabled"
 	AuditActionUnlocked                       = "User Account Unlocked"
 	AuditActionLocked                         = "User Account Locked"
 	AuditActionRestored                       = "Restored"
