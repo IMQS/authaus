@@ -2,6 +2,10 @@
 
 ## current
 
+## v1.3.3
+
+* feat : Add enabled and disabled audit user types (NEXUS-4244)
+
 ## v1.1.2
 
 * fix : Fix oauth initialization bug
