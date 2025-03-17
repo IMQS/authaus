@@ -1,7 +1,10 @@
 # Changelog
 
-## current
+## v1.0.38
 
+* feat : Add enabled and disabled audit user types (NEXUS-4244)
+* fix : Fix oauth initialization bug
+* fix : Auth dies when MSAAD config or ClientID in MSAAD config is missing
 * ASG-3355 : MSAAD Unarchive feature
 * feat : Implement unarchive method (checks "allowarchive")
 * fix : Username not set on msaad user create
