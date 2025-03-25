@@ -1,7 +1,6 @@
 package authaus
 
 import (
-	//"github.com/mmitton/ldap"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -169,6 +168,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 		if !foundWithUsername {
 			imqsUser, foundWithEmail = imqsUserEmailMap[CanonicalizeIdentity(ldapUser.Email)]
 		}
+
 		user := imqsUser
 		user.Email = ldapUser.Email
 		user.Username = ldapUser.Username
@@ -193,7 +193,8 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 			// Log to audit trail user created
 			if x.Auditor != nil {
 				contextData := userInfoToAuditTrailJSON(user, "")
-				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
+				x.Auditor.AuditUserAction(x.GetUserNameFromUserId(user.CreatedBy),
+					"User Profile: "+user.Username, contextData, AuditActionCreated)
 			}
 		} else if foundWithEmail || !equalsForLDAPMerge(user, imqsUser) {
 			if imqsUser.Type == UserTypeDefault {
@@ -217,7 +218,16 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 			// Log to audit trail user updated
 			if x.Auditor != nil {
 				contextData := userInfoToAuditTrailJSON(user, "")
-				x.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionUpdated)
+				userChanges, e := userInfoDiff(imqsUser, user)
+				if e != nil {
+					x.Log.Warnf("LDAP merge: Could not diff user %v (%v)", user.UserId, e)
+				}
+				logMessage := "User Profile: " +
+					user.Username +
+					" Fields changed: " +
+					userChanges + "."
+				x.Auditor.AuditUserAction(x.GetUserNameFromUserId(user.ModifiedBy),
+					logMessage, contextData, AuditActionUpdated)
 			}
 		}
 	}
@@ -235,7 +245,7 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 				// Log to audit trail user deleted
 				if x.Auditor != nil {
 					contextData := userInfoToAuditTrailJSON(imqsUser, "")
-					x.Auditor.AuditUserAction(imqsUser.Username, "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
+					x.Auditor.AuditUserAction(x.GetUserNameFromUserId(UserIdLDAPMerge), "User Profile: "+imqsUser.Username, contextData, AuditActionDeleted)
 				}
 			}
 		}

@@ -9,7 +9,8 @@ require (
 	github.com/lib/pq v1.2.0
 	github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43
 	github.com/stretchr/testify v1.8.1
-	golang.org/x/crypto v0.0.0-20220314234716-a5774263c1e0
+	github.com/wI2L/jsondiff v0.6.1
+	golang.org/x/crypto v0.31.0
 )
 
 require (
