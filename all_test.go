@@ -200,6 +200,7 @@ func getCentral(t *testing.T) *Central {
 	}
 
 	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB)
+	c.Auditor = &dummyAuditor{}
 	if isBackendPostgresTest() {
 		c.DB = sqlDB
 	}

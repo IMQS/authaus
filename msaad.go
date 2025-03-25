@@ -4,7 +4,7 @@ package authaus
 // via the Microsoft Graph API.
 // See https://docs.microsoft.com/en-us/graph/use-the-api
 // Once this is configured, the Authaus user database is periodically synchronized from
-// the Azure Active Directory. This has the advantage that an administrator can setup
+// the Azure Active Directory. This has the advantage that an administrator can set up
 // a user's permissions before that user logs in for the first time.
 //
 // Sync Considerations
@@ -441,7 +441,8 @@ func (m *MSAAD) CreateOrUnarchiveUser(aadUser *msaadUser) UserId {
 	} else {
 		if m.parent.Auditor != nil {
 			contextData := userInfoToAuditTrailJSON(user, "")
-			m.parent.Auditor.AuditUserAction(user.Username, "User Profile: "+user.Username, contextData, AuditActionCreated)
+			m.parent.Auditor.AuditUserAction(m.parent.GetUserNameFromUserId(user.CreatedBy),
+				"User Profile: "+user.Username, contextData, AuditActionCreated)
 		}
 		return newUserID
 	}
