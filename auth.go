@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/IMQS/log"
+	"github.com/wI2L/jsondiff"
 )
 
 const (
@@ -283,6 +284,8 @@ type LockingPolicy interface {
 }
 
 /*
+Central
+
 For lack of a better name, this is the single hub of authentication that you interact with.
 All public methods of Central are callable from multiple threads.
 */
@@ -845,6 +848,22 @@ func userInfoToJSON(user AuthUser) string {
 	return string(userJSON)
 }
 
+func userInfoDiff(userOld AuthUser, userNew AuthUser) (string, error) {
+	opt := []jsondiff.Option{
+		jsondiff.Ignores("/created", "/createdBy", "/modified", "/modifiedBy", "/passwordModifiedDate"),
+	}
+	diff, e := jsondiff.Compare(userOld, userNew, opt...)
+	if e != nil {
+		return "comparison error", e
+	}
+	var sb []string
+	for _, d := range diff {
+		path := strings.Replace(d.Path, "/", "", -1)
+		sb = append(sb, fmt.Sprintf("%v: %v -> %v", path, d.OldValue, d.Value))
+	}
+	return strings.Join(sb, ", "), nil
+}
+
 // Logout, which erases the session key
 func (x *Central) Logout(sessionkey string) error {
 	x.Stats.IncrementLogout(x.Log)
@@ -1066,13 +1085,6 @@ func (x *Central) RenameIdentity(oldIdent, newIdent string) error {
 	eInvalidate := x.InvalidateSessionsForIdentity(user.UserId)
 	x.Log.Infof("RenameIdentity (%v -> %v), session invalidation result (%v) for (%v)", oldIdent, newIdent, eInvalidate, user.UserId)
 	return nil
-}
-
-type dataSlice []*data
-
-type data struct {
-	count int64
-	size  int64
 }
 
 // GetAuthenticatorIdentities retrieves all identities known to the Authenticator.

@@ -9,13 +9,18 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43
 	github.com/stretchr/testify v1.9.0
-	golang.org/x/crypto v0.29.0
+	github.com/wI2L/jsondiff v0.6.1
+	golang.org/x/crypto v0.31.0
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/mavricknz/asn1-ber v0.0.0-20151103223136-b9df1c2f4213 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
