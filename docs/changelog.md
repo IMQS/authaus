@@ -1,5 +1,14 @@
 # Changelog
 
+## Current
+
+## v1.3.5
+
+* feat : Add LDAP user change diff to audit trail (NEXUS-4248)
+* fix : Incorrect username recorded for LDAP sync changes
+* fix : Incorrect username recorded for MSAAD sync changes
+* fix : Bumped vulnerable version of crypto
+
 ## v1.3.4
 
 * feat : Add MSAAD audit log for user details/group update (ASG-3268)
