@@ -2,6 +2,12 @@
 
 ## Current
 
+## v1.3.6
+
+* feat : Make UserInfoDiff public (NEXUS-4317)
+* feat : New function UserDiffLogMessage
+* feat : Make UserInfoToJSON public
+
 ## v1.3.5
 
 * feat : Add LDAP user change diff to audit trail (NEXUS-4248)

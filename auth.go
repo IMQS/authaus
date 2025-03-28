@@ -843,12 +843,12 @@ func msaadUserInfoToAuditTrailJSON(user msaadUser, userID UserId, clientIPAddres
 	return string(contextData)
 }
 
-func userInfoToJSON(user AuthUser) string {
+func UserInfoToJSON(user AuthUser) string {
 	userJSON, _ := json.Marshal(user)
 	return string(userJSON)
 }
 
-func userInfoDiff(userOld AuthUser, userNew AuthUser) (string, error) {
+func UserInfoDiff(userOld AuthUser, userNew AuthUser) (string, error) {
 	opt := []jsondiff.Option{
 		jsondiff.Ignores("/created", "/createdBy", "/modified", "/modifiedBy", "/passwordModifiedDate"),
 	}
@@ -862,6 +862,10 @@ func userInfoDiff(userOld AuthUser, userNew AuthUser) (string, error) {
 		sb = append(sb, fmt.Sprintf("%v: %v -> %v", path, d.OldValue, d.Value))
 	}
 	return strings.Join(sb, ", "), nil
+}
+
+func UserDiffLogMessage(changes string, user AuthUser) string {
+	return fmt.Sprintf("User Profile: %v Fields changed: %v.", user.Username, changes)
 }
 
 // Logout, which erases the session key
