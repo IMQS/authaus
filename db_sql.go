@@ -507,7 +507,7 @@ func (x *sqlUserStoreDB) ArchiveIdentity(userId UserId) error {
 		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
 	defer tx.Rollback()
-	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, true, userId)
+	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1, archive_date = NOW() WHERE userid = $2`, true, userId)
 	if err != nil {
 		return fmt.Errorf("Could not update auth user: %w", err)
 	}
@@ -528,7 +528,7 @@ func (x *sqlUserStoreDB) UnarchiveIdentity(userId UserId) error {
 		return fmt.Errorf("Could not begin transaction: %v", err)
 	}
 	defer tx.Rollback()
-	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1 WHERE userid = $2`, false, userId)
+	update, err := tx.Exec(`UPDATE authuserstore SET archived = $1, archive_date = NULL WHERE userid = $2`, false, userId)
 	if err != nil {
 		return fmt.Errorf("Could not update auth user: %w", err)
 	}
@@ -540,6 +540,64 @@ func (x *sqlUserStoreDB) UnarchiveIdentity(userId UserId) error {
 	}
 
 	return nil
+}
+
+func (x *sqlUserStoreDB) SetUserStats(userId UserId, action string) error {
+	var tx *sql.Tx
+	var err error
+	var update sql.Result
+
+	if tx, err = x.db.Begin(); err != nil {
+		return fmt.Errorf("could not begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	if action == UserStatActionLogin {
+		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, last_login_date)
+							   VALUES ($1, NOW())
+							   ON CONFLICT (user_id) 
+							   DO UPDATE SET last_login_date = NOW()`, userId)
+	}
+	if action == UserStatActionEnable {
+		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, enabled_date, disabled_date)
+							   VALUES ($1, NOW(), NULL)
+							   ON CONFLICT (user_id) 
+							   DO UPDATE SET enabled_date = NOW(), disabled_date = NULL`, userId)
+	}
+	if action == UserStatActionDisable {
+		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, enabled_date, disabled_date)
+							   VALUES ($1, NULL, NOW())
+							   ON CONFLICT (user_id)
+							   DO UPDATE SET enabled_date = NULL, disabled_date = NOW()`, userId)
+	}
+	if err != nil {
+		return fmt.Errorf("could not update auth user stats: %v", err)
+	}
+	if affected, _ := update.RowsAffected(); affected != 1 {
+		return fmt.Errorf("user stats could not be updated: %v", ErrIdentityAuthNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("could not commit transaction: %v", err)
+	}
+	return nil
+}
+
+func (x *sqlUserStoreDB) GetUserStats(userId UserId) (userStats, error) {
+	var stats userStats
+
+	// enabled_date disabled_date ast_login_date
+
+	row := x.db.QueryRow(`SELECT user_id, enabled_date, disabled_date, last_login_date FROM authuserstats WHERE user_id = $1`, userId)
+	err := row.Scan(&stats.UserId, &stats.EnabledDate, &stats.DisabledDate, &stats.LastLoginDate)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// No record found, return empty stats without error
+			return stats, nil
+		}
+		return stats, fmt.Errorf("could not scan user stats: %v", err)
+	}
+
+	return stats, nil
 }
 
 // MatchArchivedUserExtUUID MatchArchiveUser

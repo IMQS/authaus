@@ -1,6 +1,7 @@
 package authaus
 
 import (
+	"database/sql"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +28,12 @@ var AuthUserTypeStrings = map[AuthUserType]string{
 	UserTypeOAuth:   "OAUTH",
 	UserTypeMSAAD:   "MSAAD",
 }
+
+const (
+	UserStatActionLogin   = "login"
+	UserStatActionDisable = "disable"
+	UserStatActionEnable  = "enable"
+)
 
 var (
 	veryFarFuture = time.Date(3000, 1, 1, 1, 1, 1, 1, time.UTC)
@@ -73,6 +80,13 @@ const (
 
 type AuthUserType int
 
+type userStats struct {
+	UserId        sql.NullInt64
+	LastLoginDate sql.NullTime
+	EnabledDate   sql.NullTime
+	DisabledDate  sql.NullTime
+}
+
 func (u AuthUserType) CanSetPassword() bool {
 	switch u {
 	case UserTypeDefault:
@@ -105,6 +119,8 @@ type UserStore interface {
 	ArchiveIdentity(userId UserId) error                                                                          // Archive an identity
 	MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error)                                           // Match an archived external user
 	UnarchiveIdentity(userId UserId) error                                                                        // Unarchive an identity
+	SetUserStats(userId UserId, action string) error                                                              // Set the user stats
+	GetUserStats(userId UserId) (userStats, error)                                                                // Get the user stats
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
 	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetUserFromIdentity(identity string) (*AuthUser, error)                // Gets the user object from the identity supplied
@@ -257,6 +273,14 @@ func (x *sanitizingUserStore) MatchArchivedUserExtUUID(externalUUID string) (boo
 
 func (x *sanitizingUserStore) UnarchiveIdentity(userId UserId) error {
 	return x.backend.UnarchiveIdentity(userId)
+}
+
+func (x *sanitizingUserStore) SetUserStats(userId UserId, action string) error {
+	return x.backend.SetUserStats(userId, action)
+}
+
+func (x *sanitizingUserStore) GetUserStats(userId UserId) (userStats, error) {
+	return x.backend.GetUserStats(userId)
 }
 
 func (x *sanitizingUserStore) RenameIdentity(oldIdent, newIdent string) error {
