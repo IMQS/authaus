@@ -208,24 +208,21 @@ func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUser
 			// This space mysteriously disappears when the address of `user` is taken.
 			if err := x.userStore.UpdateIdentity(&user); err != nil {
 				x.Log.Warnf("LDAP merge: Update identity (%v) failed with (%v)", user.UserId, err)
-				x.Log.Warnf("          : %v", userInfoToJSON(user))
+				x.Log.Warnf("          : %v", UserInfoToJSON(user))
 			} else {
 				x.Log.Infof("LDAP merge: Updated user %v", user.Username)
-				x.Log.Infof("old: %v", userInfoToJSON(imqsUser))
-				x.Log.Infof("new: %v", userInfoToJSON(user))
+				x.Log.Infof("old: %v", UserInfoToJSON(imqsUser))
+				x.Log.Infof("new: %v", UserInfoToJSON(user))
 			}
 
 			// Log to audit trail user updated
 			if x.Auditor != nil {
 				contextData := userInfoToAuditTrailJSON(user, "")
-				userChanges, e := userInfoDiff(imqsUser, user)
+				userChanges, e := UserInfoDiff(imqsUser, user)
 				if e != nil {
 					x.Log.Warnf("LDAP merge: Could not diff user %v (%v)", user.UserId, e)
 				}
-				logMessage := "User Profile: " +
-					user.Username +
-					" Fields changed: " +
-					userChanges + "."
+				logMessage := UserDiffLogMessage(userChanges, user)
 				x.Auditor.AuditUserAction(x.GetUserNameFromUserId(user.ModifiedBy),
 					logMessage, contextData, AuditActionUpdated)
 			}

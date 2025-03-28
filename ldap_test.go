@@ -47,7 +47,7 @@ func TestLDAPUserDiffSame(t *testing.T) {
 		PasswordModifiedDate: now,
 		AccountLocked:        false,
 	}
-	diff, e := userInfoDiff(userBefore, userAfter)
+	diff, e := UserInfoDiff(userBefore, userAfter)
 	assert.Nil(t, e, "Error should be nil")
 	assert.Empty(t, diff, "Diff should be empty")
 }
@@ -93,7 +93,7 @@ func TestLDAPUserDiffDiff(t *testing.T) {
 		AccountLocked:        true,
 	}
 	excludeFields := []string{"created", "createdBy", "modified", "modifiedBy", "passwordModifiedDate"}
-	diff, e := userInfoDiff(userBefore, userAfter)
+	diff, e := UserInfoDiff(userBefore, userAfter)
 	assert.Nil(t, e, "Error should be nil")
 	assert.NotEmpty(t, diff)
 	for _, field := range excludeFields {

@@ -1,5 +1,21 @@
 # Changelog
 
+## Current
+
+## v1.0.40
+
+* feat : Make UserInfoDiff public (NEXUS-4317)
+* feat : New function UserDiffLogMessage
+* feat : Make UserInfoToJSON public
+
+## v1.0.39
+
+* feat : Add LDAP user change diff to audit trail (NEXUS-4248)
+* fix : Incorrect username recorded for LDAP sync changes
+* fix : Incorrect username recorded for MSAAD sync changes
+* fix : Bumped vulnerable version of crypto
+
+
 ## v1.0.38
 
 * feat : Add enabled and disabled audit user types (NEXUS-4244)
