@@ -552,29 +552,31 @@ func (x *sqlUserStoreDB) SetUserStats(userId UserId, action string) error {
 	}
 	defer tx.Rollback()
 
-	if action == UserStatActionLogin {
+	switch action {
+	case UserStatActionLogin:
 		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, last_login_date)
 							   VALUES ($1, NOW())
 							   ON CONFLICT (user_id) 
 							   DO UPDATE SET last_login_date = NOW()`, userId)
-	}
-	if action == UserStatActionEnable {
+	case UserStatActionEnable:
 		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, enabled_date, disabled_date)
 							   VALUES ($1, NOW(), NULL)
 							   ON CONFLICT (user_id) 
 							   DO UPDATE SET enabled_date = NOW(), disabled_date = NULL`, userId)
-	}
-	if action == UserStatActionDisable {
+
+	case UserStatActionDisable:
 		update, err = tx.Exec(`INSERT INTO authuserstats (user_id, enabled_date, disabled_date)
 							   VALUES ($1, NULL, NOW())
 							   ON CONFLICT (user_id)
 							   DO UPDATE SET enabled_date = NULL, disabled_date = NOW()`, userId)
+	default:
+		return fmt.Errorf("invalid UserStatAction: %v", action)
 	}
 	if err != nil {
 		return fmt.Errorf("could not update auth user stats: %v", err)
 	}
 	if affected, _ := update.RowsAffected(); affected != 1 {
-		return fmt.Errorf("user stats could not be updated: %v", ErrIdentityAuthNotFound)
+		return fmt.Errorf("user stats could not be updated, more then one row was returned")
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("could not commit transaction: %v", err)

@@ -1012,10 +1012,8 @@ func (x *Central) UnArchiveIdentity(userId UserId) error {
 }
 
 func (x *Central) SetUserStats(userId UserId, action string) error {
-	e := x.userStore.SetUserStats(userId, action)
-	if e != nil {
-		x.Log.Warnf("SetUserStats failed: (%v), (%v)", userId, e)
-		return e
+	if err := x.userStore.SetUserStats(userId, action); err != nil {
+		return fmt.Errorf("SetUserStats failed for user %v: %w", userId, err)
 	}
 	return nil
 }
