@@ -576,7 +576,7 @@ func (x *sqlUserStoreDB) SetUserStats(userId UserId, action string) error {
 		return fmt.Errorf("could not update auth user stats: %v", err)
 	}
 	if affected, _ := update.RowsAffected(); affected != 1 {
-		return fmt.Errorf("user stats could not be updated, more then one row was returned")
+		return fmt.Errorf("user stats could not be updated, affected rows: %d", affected)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("could not commit transaction: %v", err)
