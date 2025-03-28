@@ -276,6 +276,12 @@ func createMigrations() []migration.Migrator {
 				ON public.authuserstore
 				FOR EACH ROW EXECUTE PROCEDURE auth_public_authuserstore_but();
 		`),
+
+		// 15. Add archive_date to authuserstore
+		simple(`ALTER TABLE authuserstore ADD COLUMN archive_date TIMESTAMP;`),
+
+		// 16. Add authuserstats table that will record user_id, enabled_date, disabled_date, last_login_date
+		simple(`CREATE TABLE authuserstats (user_id BIGINT PRIMARY KEY, enabled_date TIMESTAMP, disabled_date TIMESTAMP, last_login_date TIMESTAMP);`),
 	}
 }
 
