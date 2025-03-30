@@ -1,6 +1,7 @@
 package authaus
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -189,6 +190,14 @@ func (x *dummyUserStore) UnarchiveIdentity(userId UserId) error {
 	} else {
 		return ErrIdentityAuthNotFound
 	}
+}
+
+func (x *dummyUserStore) SetUserStats(userId UserId, action string) error {
+	return errors.New("not implemented")
+}
+
+func (x *dummyUserStore) GetUserStats(userId UserId) (userStats, error) {
+	return userStats{}, errors.New("not implemented")
 }
 
 func (x *dummyUserStore) RenameIdentity(oldEmail, newEmail string) error {

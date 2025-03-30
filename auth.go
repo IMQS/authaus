@@ -996,6 +996,17 @@ func (x *Central) UnArchiveIdentity(userId UserId) error {
 	return nil
 }
 
+func (x *Central) SetUserStats(userId UserId, action string) error {
+	if err := x.userStore.SetUserStats(userId, action); err != nil {
+		return fmt.Errorf("SetUserStats failed for user %v: %w", userId, err)
+	}
+	return nil
+}
+
+func (x *Central) GetUserStats(userId UserId) (userStats, error) {
+	return x.userStore.GetUserStats(userId)
+}
+
 // GetUserFromIdentity gets AuthUser object from either an email address or a username.
 func (x *Central) GetUserFromIdentity(identity string) (AuthUser, error) {
 	user, e := x.userStore.GetUserFromIdentity(identity)
