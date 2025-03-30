@@ -2,6 +2,10 @@
 
 ## Current
 
+## v1.3.7
+
+* feat : Add the Termination date, Last Login date, Disabled date and Enabled date to the "User List" export (NEXUS-4245)
+
 ## v1.3.6
 
 * feat : Make UserInfoDiff public (NEXUS-4317)
