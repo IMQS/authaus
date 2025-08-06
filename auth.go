@@ -313,6 +313,7 @@ type Central struct {
 	permitDB                    PermitDB
 	sessionDB                   SessionDB
 	roleGroupDB                 RoleGroupDB
+	UsageTracker                *CheckUsageTracker
 	renameLock                  sync.Mutex
 	loginDelayMS                uint64 // Number of milliseconds by which we increase the delay login every time the user enters invalid credentials
 	shuttingDown                uint32
@@ -326,7 +327,7 @@ type Central struct {
 
 // Create a new Central object from the specified pieces.
 // roleGroupDB may be nil
-func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB) *Central {
+func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserStore, permitDB PermitDB, sessionDB SessionDB, roleGroupDB RoleGroupDB, usageTracker *CheckUsageTracker) *Central {
 	c := &Central{}
 
 	c.OAuth.Initialize(c)
@@ -361,6 +362,10 @@ func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserS
 		}
 	}
 
+	if usageTracker != nil {
+		c.UsageTracker = usageTracker
+		c.UsageTracker.Initialize(c.Log)
+	}
 	c.Log.Infof("Authaus successfully started up\n")
 
 	return c
@@ -369,13 +374,14 @@ func NewCentral(logfile string, ldap LDAP, msaad MSAADInterface, userStore UserS
 // Create a new 'Central' object from a Config.
 func NewCentralFromConfig(config *Config) (central *Central, err error) {
 	var (
-		db          *sql.DB
-		ldap        LDAP
-		msaad       MSAADInterface
-		userStore   UserStore
-		permitDB    PermitDB
-		sessionDB   SessionDB
-		roleGroupDB RoleGroupDB
+		db                *sql.DB
+		ldap              LDAP
+		msaad             MSAADInterface
+		userStore         UserStore
+		permitDB          PermitDB
+		sessionDB         SessionDB
+		roleGroupDB       RoleGroupDB
+		checkUsageTracker *CheckUsageTracker
 	)
 	msaadUsed := config.MSAAD.ClientID != ""
 	ldapUsed := len(config.LDAP.LdapHost) > 0
@@ -460,8 +466,9 @@ func NewCentralFromConfig(config *Config) (central *Central, err error) {
 		oldPasswordHistorySize = defaultOldPasswordHistorySize
 	}
 	userStore.SetConfig(time.Duration(config.UserStore.PasswordExpirySeconds)*time.Second, oldPasswordHistorySize, config.UserStore.UsersExemptFromExpiring)
+	checkUsageTracker = NewCheckUsageTracker(config.UsageTracking, nil, db)
 
-	c := NewCentral(config.Log.Filename, ldap, msaad, userStore, permitDB, sessionDB, roleGroupDB)
+	c := NewCentral(config.Log.Filename, ldap, msaad, userStore, permitDB, sessionDB, roleGroupDB, checkUsageTracker)
 	c.DB = db
 	c.MaxActiveSessions = config.SessionDB.MaxActiveSessions
 	if config.SessionDB.SessionExpirySeconds != 0 {
@@ -1196,6 +1203,10 @@ func (x *Central) Close() {
 	if x.roleGroupDB != nil {
 		x.roleGroupDB.Close()
 		x.roleGroupDB = nil
+	}
+	if x.UsageTracker != nil {
+		x.UsageTracker.Stop()
+		x.UsageTracker = nil
 	}
 	if x.DB != nil {
 		x.DB.Close()

@@ -178,7 +178,7 @@ func getCentralMSAAD(t *testing.T) *Central {
 	p.Roles = EncodePermit(groupIds)
 	permitDB.SetPermit(user.UserId, &p)
 
-	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB)
+	c := NewCentral(log.Stdout, nil, &msaad, userStore, permitDB, sessionDB, roleDB, nil)
 	da := &dummyAuditor{}
 	da.messages = []string{}
 	da.testing = t

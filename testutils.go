@@ -5,6 +5,11 @@ func NewCentralDummy(logfile string) *Central {
 	sessionDB := newDummySessionDB()
 	permitDB := newDummyPermitDB()
 	roleGroupDB := newDummyRoleGroupDB()
-	central := NewCentral(logfile, nil, nil, userStore, permitDB, sessionDB, roleGroupDB)
+	usageTracker := NewCheckUsageTracker(ConfigUsageTracking{
+		Enabled:       false,
+		FlushInterval: 10,
+	}, nil, nil)
+	central := NewCentral(logfile, nil, nil, userStore, permitDB, sessionDB, roleGroupDB, usageTracker)
+
 	return central
 }

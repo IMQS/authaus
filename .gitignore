@@ -1,4 +1,10 @@
 .idea/
-test-out/
-/testconf/
+/authaus.out
 /log/
+/testconf/
+test-out/
+/out
+/test.log
+/test-2025-08-07T06-17-16.613.log
+/test-2025-08-07T06-18-32.789.log
+/TestAuthRoleDB_MissingGroups_in_github_com_IMQS_authaus.test.exe
