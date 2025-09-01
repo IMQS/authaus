@@ -1022,8 +1022,12 @@ func (x *Central) SetUserStats(userId UserId, action string) error {
 	return nil
 }
 
-func (x *Central) GetUserStats(userId UserId) (userStats, error) {
+func (x *Central) GetUserStats(userId UserId) (UserStats, error) {
 	return x.userStore.GetUserStats(userId)
+}
+
+func (x *Central) GetUserStatsAll() (map[UserId]UserStats, error) {
+	return x.userStore.GetUserStatsAll()
 }
 
 // GetUserFromIdentity gets AuthUser object from either an email address or a username.

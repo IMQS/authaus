@@ -584,8 +584,8 @@ func (x *sqlUserStoreDB) SetUserStats(userId UserId, action string) error {
 	return nil
 }
 
-func (x *sqlUserStoreDB) GetUserStats(userId UserId) (userStats, error) {
-	var stats userStats
+func (x *sqlUserStoreDB) GetUserStats(userId UserId) (UserStats, error) {
+	var stats UserStats
 
 	// enabled_date disabled_date ast_login_date
 
@@ -599,6 +599,34 @@ func (x *sqlUserStoreDB) GetUserStats(userId UserId) (userStats, error) {
 		return stats, fmt.Errorf("could not scan user stats: %v", err)
 	}
 
+	return stats, nil
+}
+
+func (x *sqlUserStoreDB) GetUserStatsAll() (map[UserId]UserStats, error) {
+	stats := make(map[UserId]UserStats)
+
+	// enabled_date disabled_date ast_login_date
+
+	row, err := x.db.Query(`SELECT user_id, enabled_date, disabled_date, last_login_date FROM authuserstats`)
+	if err != nil {
+		return stats, fmt.Errorf("could not query user stats: %v", err)
+	}
+	defer row.Close()
+
+	for row.Next() {
+		var stat UserStats
+		err := row.Scan(&stat.UserId, &stat.EnabledDate, &stat.DisabledDate, &stat.LastLoginDate)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// No record found, return empty stats without error
+				return stats, nil
+			}
+			return stats, fmt.Errorf("could not scan user stats: %v", err)
+		}
+		if stat.UserId.Valid {
+			stats[UserId(stat.UserId.Int64)] = stat
+		}
+	}
 	return stats, nil
 }
 
