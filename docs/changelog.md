@@ -2,6 +2,8 @@
 
 ## Current
 
+* fix : Add fetch-all for UserStats to combat performance issues 
+
 ## v1.3.7
 
 * feat : Add the Termination date, Last Login date, Disabled date and Enabled date to the "User List" export (NEXUS-4245)

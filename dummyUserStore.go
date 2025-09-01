@@ -196,8 +196,12 @@ func (x *dummyUserStore) SetUserStats(userId UserId, action string) error {
 	return errors.New("not implemented")
 }
 
-func (x *dummyUserStore) GetUserStats(userId UserId) (userStats, error) {
-	return userStats{}, errors.New("not implemented")
+func (x *dummyUserStore) GetUserStats(userId UserId) (UserStats, error) {
+	return UserStats{}, errors.New("not implemented")
+}
+
+func (x *dummyUserStore) GetUserStatsAll() (map[UserId]UserStats, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (x *dummyUserStore) RenameIdentity(oldEmail, newEmail string) error {

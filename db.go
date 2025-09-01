@@ -80,7 +80,7 @@ const (
 
 type AuthUserType int
 
-type userStats struct {
+type UserStats struct {
 	UserId        sql.NullInt64
 	LastLoginDate sql.NullTime
 	EnabledDate   sql.NullTime
@@ -120,7 +120,8 @@ type UserStore interface {
 	MatchArchivedUserExtUUID(externalUUID string) (bool, UserId, error)                                           // Match an archived external user
 	UnarchiveIdentity(userId UserId) error                                                                        // Unarchive an identity
 	SetUserStats(userId UserId, action string) error                                                              // Set the user stats
-	GetUserStats(userId UserId) (userStats, error)                                                                // Get the user stats
+	GetUserStats(userId UserId) (UserStats, error)                                                                // Get the user stats
+	GetUserStatsAll() (map[UserId]UserStats, error)                                                               // Get all user stats
 	// TODO RenameIdentity was deprecated in May 2016, replaced by UpdateIdentity. We need to remove this once PCS team has made the necessary updates
 	RenameIdentity(oldIdent, newIdent string) error                        // Rename an identity. Returns ErrIdentityAuthNotFound if oldIdent does not exist. Returns ErrIdentityExists if newIdent already exists.
 	GetUserFromIdentity(identity string) (*AuthUser, error)                // Gets the user object from the identity supplied
@@ -279,8 +280,11 @@ func (x *sanitizingUserStore) SetUserStats(userId UserId, action string) error {
 	return x.backend.SetUserStats(userId, action)
 }
 
-func (x *sanitizingUserStore) GetUserStats(userId UserId) (userStats, error) {
+func (x *sanitizingUserStore) GetUserStats(userId UserId) (UserStats, error) {
 	return x.backend.GetUserStats(userId)
+}
+func (x *sanitizingUserStore) GetUserStatsAll() (map[UserId]UserStats, error) {
+	return x.backend.GetUserStatsAll()
 }
 
 func (x *sanitizingUserStore) RenameIdentity(oldIdent, newIdent string) error {
