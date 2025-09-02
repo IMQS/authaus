@@ -603,7 +603,7 @@ func (x *sqlUserStoreDB) GetUserStats(userId UserId) (UserStats, error) {
 }
 
 func (x *sqlUserStoreDB) GetUserStatsAll() (map[UserId]UserStats, error) {
-	stats := make(map[UserId]UserStats)
+	stats := make(map[UserId]UserStats, 100)
 
 	// enabled_date disabled_date ast_login_date
 

@@ -2,6 +2,8 @@
 
 ## Current
 
+## v1.3.8
+
 * fix : Add fetch-all for UserStats to combat performance issues 
 
 ## v1.3.7
