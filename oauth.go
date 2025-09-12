@@ -23,24 +23,28 @@ const (
 )
 
 type ConfigOAuthProvider struct {
-	Type            string // See OAuthProvider___ constants for legal values
-	Title           string // Name of provider that user sees (probably need an image too)
-	ClientID        string // For MSAAD
-	LoginURL        string // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/authorize
-	TokenURL        string // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/token
-	RedirectURL     string // eg https://stellenbosch.imqs.co.za/auth2/oauth/finish. URL must be listed in IMQS app in Azure. Can be http://localhost/auth2/oauth/finish for testing.
-	Scope           string
-	ClientSecret    string
-	AllowCreateUser bool // If true, then automatically create an Authaus user for an OAuth user, if the user succeeds in logging in
+	Type                   string     // See OAuthProvider___ constants for legal values
+	Title                  string     // Name of provider that user sees (probably need an image too)
+	ClientID               string     // For MSAAD
+	LoginURL               string     // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/authorize
+	TokenURL               string     // eg https://login.microsoftonline.com/e1ff61b3-a3da-4639-ae31-c6dff3ce7bfb/oauth2/v2.0/token
+	RedirectURL            string     // eg https://stellenbosch.imqs.co.za/auth2/oauth/finish. URL must be listed in IMQS app in Azure. Can be http://localhost/auth2/oauth/finish for testing.
+	Scope                  string
+	ClientSecret           string
+	ClientSecretExpiryDate *time.Time // Optional expiry date for the client secret (RFC3339 format)
+	AllowCreateUser        bool       // If true, then automatically create an Authaus user for an OAuth user, if the user succeeds in logging in
 }
 
 type ConfigOAuth struct {
-	Providers                 map[string]*ConfigOAuthProvider
-	Verbose                   bool   // If true, then print a lot of debugging information
-	ForceFastTokenRefresh     bool   // If true, then force a token refresh every 120 seconds. This is for testing the token refresh code.
-	LoginExpirySeconds        int64  // A session that starts must be completed within this time period (eg 5 minutes)
-	TokenCheckIntervalSeconds int    // Override interval at which we check that OAuth tokens are still valid, and if not, invalidate the Authaus session. Set to -1 to disable this check.
-	DefaultProvider           string // Can be set to the name of one of the Providers. This was created for the login JS front-end, to act as though the user has pressed the "Sign-in with XYZ" button as soon as the page is loaded.
+	Providers                        map[string]*ConfigOAuthProvider
+	Verbose                          bool   // If true, then print a lot of debugging information
+	ForceFastTokenRefresh            bool   // If true, then force a token refresh every 120 seconds. This is for testing the token refresh code.
+	LoginExpirySeconds               int64  // A session that starts must be completed within this time period (eg 5 minutes)
+	TokenCheckIntervalSeconds        int    // Override interval at which we check that OAuth tokens are still valid, and if not, invalidate the Authaus session. Set to -1 to disable this check.
+	DefaultProvider                  string // Can be set to the name of one of the Providers. This was created for the login JS front-end, to act as though the user has pressed the "Sign-in with XYZ" button as soon as the page is loaded.
+	SecretExpiryNotificationDays     int    // Number of days before expiry to trigger notification (default: 14)
+	SecretExpiryCheckIntervalHours   int    // Hours between secret expiry checks (default: 1)
+	SecretExpiryNotificationCallback ClientSecretExpiryNotificationFunc // Callback function for secret expiry notifications
 }
 
 type OAuthCompletedResult struct {
@@ -179,6 +183,20 @@ func (x *OAuth) Initialize(parent *Central) {
 			}
 		}()
 	}
+
+	// Run a loop that checks for client secret expiry and triggers notifications
+	go func() {
+		interval := x.Config.SecretExpiryCheckIntervalHours
+		if interval == 0 {
+			interval = 1 // Default to 1 hour
+		}
+		// Startup grace
+		time.Sleep(10 * time.Second)
+		for !x.parent.IsShuttingDown() {
+			x.checkSecretExpiry()
+			time.Sleep(time.Duration(interval) * time.Hour)
+		}
+	}()
 }
 
 // HttpHandlerOAuthStart This is a GET or POST request that the frontend calls, in order to start an OAuth login sequence
@@ -1038,4 +1056,39 @@ func buildPOSTBodyForm(params map[string]string) string {
 		s = s[0 : len(s)-1]
 	}
 	return s
+}
+
+// checkSecretExpiry checks all OAuth provider client secrets for upcoming expiry
+// and triggers notifications if they expire within the configured threshold.
+func (x *OAuth) checkSecretExpiry() {
+	if x.Config.SecretExpiryNotificationCallback == nil {
+		return // No callback configured
+	}
+
+	notificationDays := x.Config.SecretExpiryNotificationDays
+	if notificationDays == 0 {
+		notificationDays = 14 // Default to 2 weeks
+	}
+
+	now := time.Now()
+	threshold := now.Add(time.Duration(notificationDays) * 24 * time.Hour)
+
+	// Check OAuth providers
+	for providerName, provider := range x.Config.Providers {
+		if provider.ClientSecretExpiryDate != nil {
+			if provider.ClientSecretExpiryDate.Before(threshold) && provider.ClientSecretExpiryDate.After(now) {
+				// Calculate days based on date difference, not time difference
+				nowDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+				expiryDate := time.Date(provider.ClientSecretExpiryDate.Year(), provider.ClientSecretExpiryDate.Month(), provider.ClientSecretExpiryDate.Day(), 0, 0, 0, 0, provider.ClientSecretExpiryDate.Location())
+				daysUntilExpiry := int(expiryDate.Sub(nowDate).Hours() / 24)
+				
+				x.Config.SecretExpiryNotificationCallback(providerName, daysUntilExpiry, *provider.ClientSecretExpiryDate)
+				
+				if x.Config.Verbose {
+					x.parent.Log.Warnf("OAuth provider '%s' client secret expires in %d days (%s)", 
+						providerName, daysUntilExpiry, provider.ClientSecretExpiryDate.Format(time.RFC3339))
+				}
+			}
+		}
+	}
 }
