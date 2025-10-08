@@ -15,7 +15,7 @@ func TestConfigUsageTracking_SetDefaults(t *testing.T) {
 	config := &ConfigUsageTracking{}
 	config.SetDefaults()
 
-	assert.Equal(t, 60, config.FlushInterval, "FlushInterval should be 60 after SetDefaults")
+	assert.Equal(t, 60, config.FlushIntervalSeconds, "FlushIntervalSeconds should be 60 after SetDefaults")
 	assert.Equal(t, 10000, config.MaxEntries, "MaxEntries should be 10000 after SetDefaults")
 }
 
@@ -44,7 +44,7 @@ func TestCheckUsageTracker_LogCheck_Disabled(t *testing.T) {
 
 func TestCheckUsageTracker_LogCheck_Enabled(t *testing.T) {
 	// Test that when usage tracking is enabled, LogCheck stores entries
-	config := ConfigUsageTracking{Enabled: true, FlushInterval: 60}
+	config := ConfigUsageTracking{Enabled: true, FlushIntervalSeconds: 60}
 	tracker := NewCheckUsageTracker(config, testLogStdOut(), nil)
 	defer tracker.Stop()
 
@@ -74,7 +74,7 @@ func TestCheckUsageTracker_LogCheck_Enabled(t *testing.T) {
 
 func TestCheckUsageTracker_FlushBehavior(t *testing.T) {
 	// Test that flush handles persistence failures correctly
-	config := ConfigUsageTracking{Enabled: true, FlushInterval: 1}
+	config := ConfigUsageTracking{Enabled: true, FlushIntervalSeconds: 1}
 	tracker := NewCheckUsageTracker(config, testLogStdOut(), nil)
 	defer tracker.Stop()
 
@@ -115,10 +115,10 @@ func TestCheckUsageTracker_FlushBehavior(t *testing.T) {
 
 func TestCheckUsageTracker_Overload(t *testing.T) {
 	config := ConfigUsageTracking{
-		Enabled:       true,
-		FlushInterval: 10,
-		MaxEntries:    1000,
-		Test_MemDump:  true,
+		Enabled:              true,
+		FlushIntervalSeconds: 10,
+		MaxEntries:           1000,
+		Test_MemDump:         true,
 	}
 	l := testLogStdOut()
 	tracker := NewCheckUsageTracker(config, l, nil)
@@ -151,10 +151,10 @@ func TestCheckUsageTracker_Overload(t *testing.T) {
 // TODO : Find a more comprehensive way to test performance
 func TestCheckUsageTracker_Perf(t *testing.T) {
 	config := ConfigUsageTracking{
-		Enabled:       true,
-		FlushInterval: 1,
-		MaxEntries:    300000,
-		Test_MemDump:  true,
+		Enabled:              true,
+		FlushIntervalSeconds: 1,
+		MaxEntries:           300000,
+		Test_MemDump:         true,
 	}
 	l := testLogStdOut()
 	tracker := NewCheckUsageTracker(config, l, nil)
@@ -215,10 +215,10 @@ func TestCheckUsageTracker_Perf(t *testing.T) {
 
 func TestCheckUsageTracker_NormalFlush(t *testing.T) {
 	config := ConfigUsageTracking{
-		Enabled:       true,
-		FlushInterval: 1,
-		MaxEntries:    100000,
-		Test_MemDump:  true,
+		Enabled:              true,
+		FlushIntervalSeconds: 1,
+		MaxEntries:           100000,
+		Test_MemDump:         true,
 	}
 
 	token := &Token{
@@ -268,10 +268,10 @@ func TestCheckUsageTracker_NormalFlush(t *testing.T) {
 
 func TestCheckUsageTracker_FinalFlush(t *testing.T) {
 	config := ConfigUsageTracking{
-		Enabled:       true,
-		FlushInterval: 1,
-		MaxEntries:    100000,
-		Test_MemDump:  true,
+		Enabled:              true,
+		FlushIntervalSeconds: 1,
+		MaxEntries:           100000,
+		Test_MemDump:         true,
 	}
 
 	token := &Token{

@@ -90,7 +90,7 @@ func (t *CheckUsageTracker) LogCheck(sessionToken string, token *Token) {
 
 // start begins the periodic flush process
 func (t *CheckUsageTracker) start() {
-	flushInterval := time.Duration(t.config.FlushInterval) * time.Second
+	flushInterval := time.Duration(t.config.FlushIntervalSeconds) * time.Second
 	if flushInterval <= 0 {
 		flushInterval = 60 * time.Second // Default to 1 minute
 	}
