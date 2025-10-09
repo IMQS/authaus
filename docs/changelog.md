@@ -2,6 +2,8 @@
 
 ## Current
 
+* feat : Auth-check logger (ASG-4837)
+
 ## v1.3.8
 
 * fix : Add fetch-all for UserStats to combat performance issues 
