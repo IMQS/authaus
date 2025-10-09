@@ -149,3 +149,7 @@ func (d *dummyMSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlob
 	}
 	return nil, false
 }
+
+func (d *dummyMSAADProvider) GetAppRoles() (rolesList []string, errGlobal error, quit bool) {
+	return []string{"AZ_ROLE_1", "AZ_ROLE_2"}, nil, false
+}

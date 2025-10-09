@@ -2,3 +2,7 @@
 test-out/
 /testconf/
 /log/
+/out
+*.log
+/authaus.out
+/*.exe

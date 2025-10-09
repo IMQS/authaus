@@ -64,6 +64,7 @@ type MSAADInterface interface {
 type MSAADProviderI interface {
 	GetAADUsers() ([]*msaadUser, error)
 	GetUserAssignments(user *msaadUser, threadGroupID int) (errGlobal error, quit bool)
+	GetAppRoles() (rolesList []string, errGlobal error, quit bool)
 	Initialize(parent MSAADInterface, log *log.Logger) error
 	Parent() MSAADInterface
 	IsShuttingDown() bool

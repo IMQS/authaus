@@ -2,6 +2,8 @@
 
 ## Current
 
+* feat : Add provider function to retrieve visible Entra groups (ASG-4959)
+
 ## v1.3.8
 
 * fix : Add fetch-all for UserStats to combat performance issues 

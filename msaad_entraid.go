@@ -117,29 +117,53 @@ func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal e
 	//var errGlobal error
 	selectURL := "https://graph.microsoft.com/v1.0/users/" + user.profile.ID + "/appRoleAssignments"
 	for selectURL != "" {
-		if errGlobal != nil {
-			mp.log.Errorf("(%d) Global error detected in threadGroup-user-next loop...\n", i)
-			break
-		}
 		if mp.IsShuttingDown() {
+			quit = true
 			break
 		}
 		j := msaadRolesJSON{}
 		err := mp.fetchJSON(selectURL, &j)
 		if err != nil {
 			errGlobal = err
-			return errGlobal, true
+			quit = true
+			break
 		}
 		if mp.parent.Config().Verbose {
-			mp.log.Infof("User %v (%v): %v\n", user.profile.bestEmail(), user.profile.ID, j)
+			mp.log.Infof("(Thread %v) User: %v, ID: %v\n", i, user.profile.bestEmail(), user.profile.ID)
 			for _, u := range j.Value {
-				mp.log.Infof("%v MSAAD User Permission: (%v)", user.profile.bestEmail(), u)
+				mp.log.Infof("(Thread %v) %v, MSAAD User Permission: %v (%v)", i, user.profile.bestEmail(), u.PrincipalDisplayName, u.ID)
 			}
 		}
 		user.roles = append(user.roles, j.Value...)
 		selectURL = j.NextLink
 	}
-	return errGlobal, false
+	return errGlobal, quit
+}
+
+// GetAppRoles fetches all app role assignments for the application itself
+// and returns a list of role names.
+// If an error occurs, errGlobal is set and quit is true.
+// If the operation was interrupted due to shutdown, quit is also true.
+func (mp *MSAADProvider) GetAppRoles() (rolesList []string, errGlobal error, quit bool) {
+	selectURL := "https://graph.microsoft.com/v1.0/servicePrincipals(appId='" + mp.parent.Config().ClientID + "')/appRoleAssignedTo"
+	for selectURL != "" {
+		if mp.IsShuttingDown() {
+			quit = true
+			break
+		}
+		j := msaadRolesJSON{}
+		err := mp.fetchJSON(selectURL, &j)
+		if err != nil {
+			errGlobal = err
+			quit = true
+			break
+		}
+		for _, v := range j.Value {
+			rolesList = append(rolesList, v.PrincipalDisplayName)
+		}
+		selectURL = j.NextLink
+	}
+	return rolesList, errGlobal, quit
 }
 
 func (mp *MSAADProvider) GetAADUsers() ([]*msaadUser, error) {
