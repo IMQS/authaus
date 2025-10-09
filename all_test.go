@@ -199,7 +199,7 @@ func getCentral(t *testing.T) *Central {
 		userStore = newDummyUserStore()
 	}
 
-	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB)
+	c := NewCentral(log.Stdout, nil, nil, userStore, permitDB, sessionDB, roleDB, nil)
 	c.Auditor = &dummyAuditor{}
 	if isBackendPostgresTest() {
 		c.DB = sqlDB
@@ -371,6 +371,8 @@ func sqlDeleteAllTables(db *sql.DB) error {
 		"DROP TABLE IF EXISTS oauthchallenge CASCADE",
 		"DROP TABLE IF EXISTS oauthsession CASCADE",
 		"DROP TABLE IF EXISTS migration_version CASCADE",
+		"DROP TABLE IF EXISTS authuserstats CASCADE",
+		"DROP TABLE IF EXISTS session_check_logs CASCADE",
 	}
 	for _, st := range statements {
 		if _, err := db.Exec(st); err != nil {

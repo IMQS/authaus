@@ -11,6 +11,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/wI2L/jsondiff v0.6.1
 	golang.org/x/crypto v0.31.0
+	golang.org/x/text v0.21.0
 )
 
 require (

@@ -282,6 +282,9 @@ func createMigrations() []migration.Migrator {
 
 		// 16. Add authuserstats table that will record user_id, enabled_date, disabled_date, last_login_date
 		simple(`CREATE TABLE authuserstats (user_id BIGINT PRIMARY KEY, enabled_date TIMESTAMP, disabled_date TIMESTAMP, last_login_date TIMESTAMP);`),
+
+		// 17. Add: session_check_logs
+		simple(`CREATE TABLE session_check_logs (id bigserial PRIMARY KEY, ts TIMESTAMP WITH TIME ZONE NOT NULL, session_token VARCHAR NOT NULL, user_id BIGINT NOT NULL);`),
 	}
 }
 

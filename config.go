@@ -166,6 +166,23 @@ type ConfigUserStoreDB struct {
 	UsersExemptFromExpiring []string // List of users that are not subject to password expiry. Username will be used for comparison.
 }
 
+// UsageTrackingConfig controls session check usage tracking
+type ConfigUsageTracking struct {
+	Enabled              bool `json:"enabled"`                // Enable/disable usage tracking
+	FlushIntervalSeconds int  `json:"flush_interval_seconds"` // Flush interval in seconds (default: 60)
+	MaxEntries           int  `json:"max_entries"`            // Maximum number of entries to keep in memory before flushing (default: 1000)
+	Test_MemDump         bool `json:"test___mem_dump"`        // If true, dump memory usage statistics to log on flush
+}
+
+func (x *ConfigUsageTracking) SetDefaults() {
+	if x.FlushIntervalSeconds <= 0 {
+		x.FlushIntervalSeconds = 60 // Default to 1 minute
+	}
+	if x.MaxEntries <= 0 {
+		x.MaxEntries = 10000 // Default to 10000 entries
+	}
+}
+
 /*
 Configuration information. This is typically loaded from a .json config file.
 */
@@ -178,6 +195,7 @@ type Config struct {
 	UserStore              ConfigUserStoreDB
 	OAuth                  ConfigOAuth
 	MSAAD                  ConfigMSAAD
+	UsageTracking          ConfigUsageTracking
 	AuditServiceUrl        string
 	EnableAccountLocking   bool
 	MaxFailedLoginAttempts int
