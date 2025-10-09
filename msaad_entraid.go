@@ -142,6 +142,26 @@ func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal e
 	return errGlobal, false
 }
 
+func (mp *MSAADProvider) GetAppRoles() (rolesList []string, errGlobal error, quit bool) {
+	selectURL := "https://graph.microsoft.com/v1.0/servicePrincipals(appId='" + mp.parent.Config().ClientID + "')/appRoleAssignedTo"
+	for selectURL != "" {
+		if mp.IsShuttingDown() {
+			break
+		}
+		j := msaadRolesJSON{}
+		err := mp.fetchJSON(selectURL, &j)
+		if err != nil {
+			errGlobal = err
+			return rolesList, errGlobal, true
+		}
+		for _, v := range j.Value {
+			rolesList = append(rolesList, v.PrincipalDisplayName)
+		}
+		selectURL = j.NextLink
+	}
+	return rolesList, errGlobal, false
+}
+
 func (mp *MSAADProvider) GetAADUsers() ([]*msaadUser, error) {
 	selectURL := "https://graph.microsoft.com/v1.0/users?$select=id,displayName,givenName,surname,mobilePhone,userPrincipalName,mail"
 	aadUsers := []*msaadUser{}

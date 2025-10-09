@@ -599,3 +599,15 @@ func Test_SynchronizeUsers(t *testing.T) {
 	assert.Equal(t, 1, foundUnarchived, "User not unarchived after synchronization")
 	assert.Equal(t, 1, foundCreate, "User not created after synchronization")
 }
+
+func Test_GetAppRoles(t *testing.T) {
+	c := getCentralMSAAD(t)
+
+	roles, err, _ := c.MSAAD.Provider().GetAppRoles()
+	if err != nil {
+		t.Errorf("Failed to get app roles: %v", err)
+	}
+	assert.Equal(t, 2, len(roles), "Wrong number of roles returned")
+	assert.Contains(t, roles, "AZ_ROLE_1", "Missing role AZ_ROLE_1")
+	assert.Contains(t, roles, "AZ_ROLE_2", "Missing role AZ_ROLE_2")
+}
