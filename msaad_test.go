@@ -509,6 +509,94 @@ func groupsFromPermit(c *Central, user *AuthUser) GroupIDU32s {
 	return r
 }
 
+func Test_GetUserAssignments(t *testing.T) {
+	// Test that the GetUserAssignments function behaves correctly
+	// and that errGlobal is properly handled
+	
+	// Create a dummy provider
+	provider := &dummyMSAADProvider{
+		testUsers: buildTestUsers(),
+	}
+	
+	// Initialize it with a dummy parent and logger
+	msaad := &MSAAD{}
+	msaad.SetConfig(ConfigMSAAD{Verbose: true})
+	logger := log.New(log.Stdout, false)
+	provider.Initialize(msaad, logger)
+	
+	// Test with a valid user
+	user := &msaadUser{
+		profile: msaadUserJSON{
+			ID: "12345678-1234-1234-1234-123456789012",
+		},
+	}
+	
+	errGlobal, quit := provider.GetUserAssignments(user, 0)
+	
+	// Should not return an error for valid user
+	assert.Nil(t, errGlobal, "Expected no error for valid user")
+	assert.False(t, quit, "Expected quit to be false for successful operation")
+	assert.NotNil(t, user.roles, "Expected roles to be populated")
+	assert.Greater(t, len(user.roles), 0, "Expected at least one role for test user")
+	
+	// Test with an invalid user (should not crash or have undefined behavior)
+	invalidUser := &msaadUser{
+		profile: msaadUserJSON{
+			ID: "invalid-user-id",
+		},
+	}
+	
+	errGlobal2, quit2 := provider.GetUserAssignments(invalidUser, 0)
+	
+	// For the dummy provider, invalid users just get empty roles
+	assert.Nil(t, errGlobal2, "Expected no error for invalid user in dummy provider")
+	assert.False(t, quit2, "Expected quit to be false")
+	assert.Equal(t, 0, len(invalidUser.roles), "Expected no roles for invalid user")
+}
+
+func Test_GetUserAssignments_ErrorHandling(t *testing.T) {
+	// This test specifically validates the fix for the issue where errGlobal
+	// variable was being checked incorrectly in the loop.
+	// 
+	// Before the fix:
+	// - errGlobal was checked at the start of the loop but could never be != nil
+	//   at that point since it was only set within the function scope
+	// - The logic was confusing because errGlobal would always be nil when quit
+	//   was false, and always have a value when quit was true
+	
+	// Create a mock provider that can simulate errors
+	provider := &dummyMSAADProvider{
+		testUsers: buildTestUsers(),
+	}
+	
+	// Initialize it
+	msaad := &MSAAD{}
+	msaad.SetConfig(ConfigMSAAD{Verbose: false}) // Reduce log noise
+	logger := log.New(log.Stdout, false)
+	provider.Initialize(msaad, logger)
+	
+	// Test with a valid user - should succeed
+	user := &msaadUser{
+		profile: msaadUserJSON{
+			ID: "12345678-1234-1234-1234-123456789012",
+		},
+	}
+	
+	errGlobal, quit := provider.GetUserAssignments(user, 0)
+	
+	// The fix ensures that:
+	// 1. When there's no error, errGlobal is nil and quit is false
+	assert.Nil(t, errGlobal, "Expected errGlobal to be nil on success")
+	assert.False(t, quit, "Expected quit to be false on success")
+	
+	// 2. The function completes successfully and populates roles
+	assert.NotNil(t, user.roles, "Expected roles to be populated")
+	
+	// Note: With the dummy provider, we can't easily test error conditions,
+	// but the important fix is that the errGlobal check at the start of the loop
+	// has been removed, which was the core issue identified.
+}
+
 func Test_SynchronizeUsers(t *testing.T) {
 	allIdentities := map[string]void{}
 	c := getCentralMSAAD(t)

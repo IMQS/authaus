@@ -114,21 +114,15 @@ func (mp *MSAADProvider) Parent() MSAADInterface {
 }
 
 func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal error, quit bool) {
-	//var errGlobal error
 	selectURL := "https://graph.microsoft.com/v1.0/users/" + user.profile.ID + "/appRoleAssignments"
 	for selectURL != "" {
-		if errGlobal != nil {
-			mp.log.Errorf("(%d) Global error detected in threadGroup-user-next loop...\n", i)
-			break
-		}
 		if mp.IsShuttingDown() {
-			break
+			return nil, false
 		}
 		j := msaadRolesJSON{}
 		err := mp.fetchJSON(selectURL, &j)
 		if err != nil {
-			errGlobal = err
-			return errGlobal, true
+			return err, true
 		}
 		if mp.parent.Config().Verbose {
 			mp.log.Infof("User %v (%v): %v\n", user.profile.bestEmail(), user.profile.ID, j)
@@ -139,7 +133,7 @@ func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal e
 		user.roles = append(user.roles, j.Value...)
 		selectURL = j.NextLink
 	}
-	return errGlobal, false
+	return nil, false
 }
 
 func (mp *MSAADProvider) GetAADUsers() ([]*msaadUser, error) {
