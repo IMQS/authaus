@@ -129,9 +129,9 @@ func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal e
 			break
 		}
 		if mp.parent.Config().Verbose {
-			mp.log.Infof("(Thread %v) User %v , ID %v\n", j, user.profile.bestEmail(), user.profile.ID)
+			mp.log.Infof("(Thread %v) User: %v, ID: %v\n", i, user.profile.bestEmail(), user.profile.ID)
 			for _, u := range j.Value {
-				mp.log.Infof("(Thread %v) %v MSAAD User Permission: %v", j, user.profile.bestEmail(), u)
+				mp.log.Infof("(Thread %v) %v, MSAAD User Permission: %v (%v)", i, user.profile.bestEmail(), u.PrincipalDisplayName, u.ID)
 			}
 		}
 		user.roles = append(user.roles, j.Value...)
