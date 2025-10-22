@@ -521,7 +521,7 @@ func Test_GetUserAssignments(t *testing.T) {
 	// Initialize it with a dummy parent and logger
 	msaad := &MSAAD{}
 	msaad.SetConfig(ConfigMSAAD{Verbose: true})
-	logger := log.New(log.Stdout, false)
+	logger := log.New("", false) // Use empty string to discard logs in tests
 	provider.Initialize(msaad, logger)
 	
 	// Test with a valid user
@@ -572,7 +572,7 @@ func Test_GetUserAssignments_ErrorHandling(t *testing.T) {
 	// Initialize it
 	msaad := &MSAAD{}
 	msaad.SetConfig(ConfigMSAAD{Verbose: false}) // Reduce log noise
-	logger := log.New(log.Stdout, false)
+	logger := log.New("", false) // Use empty string to discard logs in tests
 	provider.Initialize(msaad, logger)
 	
 	// Test with a valid user - should succeed

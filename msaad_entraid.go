@@ -117,7 +117,7 @@ func (mp *MSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlobal e
 	selectURL := "https://graph.microsoft.com/v1.0/users/" + user.profile.ID + "/appRoleAssignments"
 	for selectURL != "" {
 		if mp.IsShuttingDown() {
-			return nil, false
+			return nil, true
 		}
 		j := msaadRolesJSON{}
 		err := mp.fetchJSON(selectURL, &j)
