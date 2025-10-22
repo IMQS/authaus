@@ -3,6 +3,6 @@ test-out/
 /testconf/
 /log/
 /out
-/test*.log
+*.log
 /authaus.out
 /*.exe
