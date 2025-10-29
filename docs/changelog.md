@@ -2,6 +2,8 @@
 
 ## Current
 
+## v1.3.9
+
 * feat : Add provider function to retrieve visible Entra groups (ASG-4959)
 
 ## v1.3.8
