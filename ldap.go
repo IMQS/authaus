@@ -88,8 +88,10 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		}
 		return values[0]
 	}
+
 	if x.config.DebugUserPull {
-		fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", "username", "name", "surname", "email", "mobile")
+		fmt.Printf("LDAP source data:\n")
+		fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName")
 	}
 	ldapUsers := make([]AuthUser, len(sr.Entries))
 	for i, value := range sr.Entries {
@@ -102,6 +104,10 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		email := strings.TrimSpace(getAttributeValue(*value, "mail"))
 		mobile := strings.TrimSpace(getAttributeValue(*value, "mobile"))
 		userPrincipalName := strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
+		if x.config.DebugUserPull {
+			fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n",
+				username, givenName, name, surname, email, mobile, userPrincipalName)
+		}
 		if email == "" && strings.Count(userPrincipalName, "@") == 1 {
 			// This was first seen in Azure, when integrating with DTPW (Department of Transport and Public Works)
 			email = userPrincipalName
@@ -115,10 +121,15 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 				surname = name[firstSpace+1:]
 			}
 		}
-		if x.config.DebugUserPull {
-			fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", username, firstName, surname, email, mobile)
-		}
 		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: firstName, Lastname: surname, Mobilenumber: mobile}
+	}
+	if x.config.DebugUserPull {
+		fmt.Println()
+		fmt.Printf("Mapped to Auth users:\n")
+		fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", "username", "firstname", "lastname", "email", "mobile")
+		for _, user := range ldapUsers {
+			fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", user.Username, user.Firstname, user.Lastname, user.Email, user.Mobilenumber)
+		}
 	}
 	return ldapUsers, nil
 }

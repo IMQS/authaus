@@ -1,13 +1,19 @@
 package authaus
 
-import "github.com/IMQS/log"
+import (
+	"time"
+
+	"github.com/IMQS/log"
+)
 
 const irrelevantUUID = "99999999-9999-9999-9999-999999999999"
 
 type dummyMSAADProvider struct {
-	parent    MSAADInterface
-	log       *log.Logger
-	testUsers map[string]*testUser
+	parent                  MSAADInterface
+	log                     *log.Logger
+	testUsers               map[string]*testUser
+	clientSecretExpiryDate  *time.Time
+	clientSecretExpiryError error
 }
 
 type testUser struct {
@@ -152,4 +158,8 @@ func (d *dummyMSAADProvider) GetUserAssignments(user *msaadUser, i int) (errGlob
 
 func (d *dummyMSAADProvider) GetAppRoles() (rolesList []string, errGlobal error, quit bool) {
 	return []string{"AZ_ROLE_1", "AZ_ROLE_2"}, nil, false
+}
+
+func (d *dummyMSAADProvider) GetClientSecretExpiryDate() (*time.Time, error) {
+	return d.clientSecretExpiryDate, d.clientSecretExpiryError
 }
