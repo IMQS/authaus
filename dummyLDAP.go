@@ -1,6 +1,7 @@
 package authaus
 
 import (
+	"github.com/IMQS/log"
 	"sync"
 )
 
@@ -35,7 +36,7 @@ func (x *dummyLdap) Authenticate(identity, password string) (er error) {
 	return
 }
 
-func (x *dummyLdap) GetLdapUsers() ([]AuthUser, error) {
+func (x *dummyLdap) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	x.usersLock.RLock()
 	defer x.usersLock.RUnlock()
 	//Now we build up and return the list of ldap users ([]AuthUsers)

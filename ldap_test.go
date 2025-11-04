@@ -101,3 +101,37 @@ func TestLDAPUserDiffDiff(t *testing.T) {
 	}
 	t.Logf("User diff: \n%v", diff)
 }
+
+func Test_printTrunc(t *testing.T) {
+	type args struct {
+		name         string
+		maxLength    int
+		abbrevString string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Short string no trunc",
+			args: args{"This is a test string", 25, "..."},
+			want: "This is a test string",
+		},
+		{
+			name: "Short string limit",
+			args: args{"This is a test string xxx", 25, "..."},
+			want: "This is a test string xxx",
+		},
+		{
+			name: "Over by 1",
+			args: args{"This is a test string x y z", 25, "..."},
+			want: "This is a test string ...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, printTrunc(tt.args.name, tt.args.maxLength, tt.args.abbrevString), "printTrunc(%v, %v, %v)", tt.args.name, tt.args.maxLength, tt.args.abbrevString)
+		})
+	}
+}
