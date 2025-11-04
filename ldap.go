@@ -19,7 +19,17 @@ const (
 )
 
 type LdapImpl struct {
-	config *ConfigLDAP
+	Config *ConfigLDAP
+}
+
+type ldapEntry struct {
+	UserName          string
+	GivenName         string
+	Name              string
+	Surname           string
+	Email             string
+	Mobile            string
+	UserPrincipalName string
 }
 
 func (x *LdapImpl) Authenticate(identity, password string) error {
@@ -29,14 +39,15 @@ func (x *LdapImpl) Authenticate(identity, password string) error {
 		return ErrInvalidPassword
 	}
 
-	con, err := NewLDAPConnect(x.config)
+	con, err := NewLDAPConnect(x.Config)
 	if err != nil {
 		return err
 	}
 	defer con.Close()
-	// We need to know whether or not we must add the domain to the identity by checking if it contains '@'
+	// We need to know whether we must add the domain to the identity by checking
+	// if it contains '@'
 	if !strings.Contains(identity, "@") {
-		identity = fmt.Sprintf(`%v@%v`, identity, x.config.LdapDomain)
+		identity = fmt.Sprintf(`%v@%v`, identity, x.Config.LdapDomain)
 	}
 	err = con.Bind(identity, password)
 	if err != nil {
@@ -54,7 +65,7 @@ func (x *LdapImpl) Close() {
 }
 
 func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
-	var attributes []string = []string{
+	var attributes = []string{
 		"sAMAccountName",
 		"givenName",
 		"name",
@@ -65,13 +76,13 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	}
 
 	searchRequest := ldap.NewSearchRequest(
-		x.config.BaseDN,
+		x.Config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.DerefAlways, 0, 0, false,
-		x.config.LdapSearchFilter,
+		x.Config.LdapSearchFilter,
 		attributes,
 		nil)
 
-	con, err := NewLDAPConnectAndBind(x.config)
+	con, err := NewLDAPConnectAndBind(x.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -89,41 +100,45 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		return values[0]
 	}
 
-	if x.config.DebugUserPull {
-		fmt.Printf("LDAP source data:\n")
-		fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName")
-	}
+	ldapSource := make([]ldapEntry, len(sr.Entries))
 	ldapUsers := make([]AuthUser, len(sr.Entries))
 	for i, value := range sr.Entries {
 		// We trim the spaces as we have found that a certain ldap user
 		// (WilburGS) has an email that ends with a space.
-		username := strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
-		givenName := strings.TrimSpace(getAttributeValue(*value, "givenName"))
-		name := strings.TrimSpace(getAttributeValue(*value, "name"))
-		surname := strings.TrimSpace(getAttributeValue(*value, "sn"))
-		email := strings.TrimSpace(getAttributeValue(*value, "mail"))
-		mobile := strings.TrimSpace(getAttributeValue(*value, "mobile"))
-		userPrincipalName := strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
-		if x.config.DebugUserPull {
-			fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n",
-				username, givenName, name, surname, email, mobile, userPrincipalName)
-		}
-		if email == "" && strings.Count(userPrincipalName, "@") == 1 {
+		newEntry := ldapEntry{}
+		newEntry.UserName = strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
+		newEntry.GivenName = strings.TrimSpace(getAttributeValue(*value, "givenName"))
+		newEntry.Name = strings.TrimSpace(getAttributeValue(*value, "name"))
+		newEntry.Surname = strings.TrimSpace(getAttributeValue(*value, "sn"))
+		newEntry.Email = strings.TrimSpace(getAttributeValue(*value, "mail"))
+		newEntry.Mobile = strings.TrimSpace(getAttributeValue(*value, "mobile"))
+		newEntry.UserPrincipalName = strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
+		if newEntry.Email == "" && strings.Count(newEntry.UserPrincipalName, "@") == 1 {
 			// This was first seen in Azure, when integrating with DTPW (Department of Transport and Public Works)
-			email = userPrincipalName
+			newEntry.Email = newEntry.UserPrincipalName
 		}
-		firstName := givenName
-		if firstName == "" && surname == "" && name != "" {
+		firstName := newEntry.GivenName
+		if firstName == "" && newEntry.Surname == "" && newEntry.Name != "" {
 			// We're in dubious best-guess-for-common-english territory here
-			firstSpace := strings.Index(name, " ")
+			firstSpace := strings.Index(newEntry.Name, " ")
 			if firstSpace != -1 {
-				firstName = name[:firstSpace]
-				surname = name[firstSpace+1:]
+				firstName = newEntry.Name[:firstSpace]
+				newEntry.Surname = newEntry.Name[firstSpace+1:]
 			}
 		}
-		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: firstName, Lastname: surname, Mobilenumber: mobile}
+		ldapSource[i] = newEntry
+		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: newEntry.Email, Username: newEntry.UserName, Firstname: firstName, Lastname: newEntry.Surname, Mobilenumber: newEntry.Mobile}
 	}
-	if x.config.DebugUserPull {
+
+	// print
+	if x.Config.DebugUserPull {
+		fmt.Printf("LDAP source data:\n")
+		fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName")
+		for _, entry := range ldapSource {
+			fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n",
+				entry.UserName, entry.GivenName, entry.Name, entry.Surname, entry.Email, entry.Mobile, entry.UserPrincipalName)
+		}
+
 		fmt.Println()
 		fmt.Printf("Mapped to Auth users:\n")
 		fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", "username", "firstname", "lastname", "email", "mobile")
@@ -148,7 +163,9 @@ func MergeLDAP(c *Central) {
 	MergeLdapUsersIntoLocalUserStore(c, ldapUsers, imqsUsers)
 }
 
-// We are reading users from LDAP/AD and merging them into the IMQS userstore
+// MergeLdapUsersIntoLocalUserStore
+//
+// Reads users from LDAP/AD and merges them into the IMQS user store
 func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
 	imqsUserUsernameMap := make(map[string]AuthUser)
@@ -273,7 +290,7 @@ func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := con.Bind(config.LdapUsername, config.LdapPassword); err != nil {
+	if err = con.Bind(config.LdapUsername, config.LdapPassword); err != nil {
 		return nil, err
 	}
 	return con, nil
@@ -299,7 +316,10 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 		con.TlsConfig.InsecureSkipVerify = config.InsecureSkipVerify
 	}
 	if err := con.Connect(); err != nil {
-		con.Close()
+		e := con.Close()
+		if e != nil {
+			return nil, errors.Join(err, e)
+		}
 		return nil, err
 	}
 	return con, nil
@@ -307,6 +327,6 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
 
 func NewAuthenticator_LDAP(config *ConfigLDAP) *LdapImpl {
 	return &LdapImpl{
-		config: config,
+		Config: config,
 	}
 }
