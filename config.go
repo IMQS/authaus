@@ -7,9 +7,18 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
+	"time"
 
 	_ "github.com/lib/pq"
 )
+
+// ClientSecretExpiryNotificationFunc is a callback function type for client secret expiry notifications.
+// It's called when a client secret is about to expire within the configured threshold.
+// Parameters:
+//   - providerName: Name of the OAuth provider or "MSAAD" for MSAAD configuration
+//   - daysUntilExpiry: Number of days until the secret expires
+//   - expiryDate: The actual expiry date of the secret
+type ClientSecretExpiryNotificationFunc func(providerName string, daysUntilExpiry int, expiryDate time.Time)
 
 /*
 
@@ -57,13 +66,17 @@ Full populated config:
 				"RedirectURL": "https://mysite.example.com/auth/oauth/finish",
 				"ClientID": "your client UUID here",
 				"Scope": "openid email offline_access",
-				"ClientSecret": "your secret here"
+				"ClientSecret": "your secret here",
+				"ClientSecretExpiryDate": "2024-12-31T23:59:59Z"
 			}
-		}
+		},
+		"SecretExpiryNotificationDays": 14,
+		"SecretExpiryCheckIntervalHours": 1
 	},
 	"MSAAD": {
 		"ClientID": "your client UUID",
-		"ClientSecret": "your secret"
+		"ClientSecret": "your secret",
+		"ClientSecretExpiryDate": "2024-12-31T23:59:59Z"
 	},
 	"SessionDB": {
 		"MaxActiveSessions": 0,

@@ -28,16 +28,20 @@ import (
 
 // ConfigMSAAD is the JSON definition for the Microsoft Azure Active Directory synchronization settings
 type ConfigMSAAD struct {
-	Verbose              bool              // If true, then emit verbose logging
-	DryRun               bool              // If true, don't actually take any action, just log the intended actions
-	TenantID             string            // Your tenant UUID (ie ID of your AAD instance)
-	ClientID             string            // Your client UUID (ie ID of your application)
-	ClientSecret         string            // Secrets used for authenticating Azure AD requests
-	MergeIntervalSeconds int               // If non-zero, then overrides the merge interval
-	DefaultRoles         []string          // Roles that are activated by default if a user has any one of the AAD roles
-	RoleToGroup          map[string]string // Map from principleName of AAD role, to Authaus group.
-	AllowArchiveUser     bool              // If true, then archive users who no longer have the relevant roles in the AAD
-	PassthroughClientIDs []string          // Client IDs of trusted IMQS apps utilising app-to-app passthrough auth
+	Verbose                              bool                                // If true, then emit verbose logging
+	DryRun                               bool                                // If true, don't actually take any action, just log the intended actions
+	TenantID                             string                              // Your tenant UUID (ie ID of your AAD instance)
+	ClientID                             string                              // Your client UUID (ie ID of your application)
+	ClientSecret                         string                              // Secrets used for authenticating Azure AD requests
+	ClientSecretExpiryDate               *time.Time                          // Optional expiry date for the client secret (RFC3339 format)
+	MergeIntervalSeconds                 int                                 // If non-zero, then overrides the merge interval
+	DefaultRoles                         []string                            // Roles that are activated by default if a user has any one of the AAD roles
+	RoleToGroup                          map[string]string                   // Map from principleName of AAD role, to Authaus group.
+	AllowArchiveUser                     bool                                // If true, then archive users who no longer have the relevant roles in the AAD
+	PassthroughClientIDs                 []string                            // Client IDs of trusted IMQS apps utilising app-to-app passthrough auth
+	SecretExpiryNotificationDays         int                                 // Number of days before expiry to trigger notification (default: 14)
+	SecretExpiryCheckIntervalHours       int                                 // Hours between secret expiry checks (default: 1)
+	SecretExpiryNotificationCallback     ClientSecretExpiryNotificationFunc  // Callback function for secret expiry notifications
 }
 
 // MSAADInterface
@@ -222,6 +226,20 @@ func (m *MSAAD) Initialize(parent *Central, log *log.Logger) error {
 	} else {
 		return fmt.Errorf("MSAAD provider is null")
 	}
+
+	// Run a loop that checks for MSAAD client secret expiry and triggers notifications
+	go func() {
+		interval := m.config.SecretExpiryCheckIntervalHours
+		if interval == 0 {
+			interval = 1 // Default to 1 hour
+		}
+		// Startup grace
+		time.Sleep(15 * time.Second)
+		for !m.IsShuttingDown() {
+			m.checkSecretExpiry()
+			time.Sleep(time.Duration(interval) * time.Hour)
+		}
+	}()
 
 	return nil
 }
@@ -756,4 +774,38 @@ func removeFromGroupList(list []GroupIDU32, i int) []GroupIDU32 {
 	// off the final element from the slice, which is much faster than creating a new slice every time.
 	list[i] = list[len(list)-1]
 	return list[:len(list)-1]
+}
+
+// checkSecretExpiry checks the MSAAD client secret for upcoming expiry
+// and triggers notifications if it expires within the configured threshold.
+func (m *MSAAD) checkSecretExpiry() {
+	if m.config.SecretExpiryNotificationCallback == nil {
+		return // No callback configured
+	}
+
+	if m.config.ClientSecretExpiryDate == nil {
+		return // No expiry date configured
+	}
+
+	notificationDays := m.config.SecretExpiryNotificationDays
+	if notificationDays == 0 {
+		notificationDays = 14 // Default to 2 weeks
+	}
+
+	now := time.Now()
+	threshold := now.Add(time.Duration(notificationDays) * 24 * time.Hour)
+
+	if m.config.ClientSecretExpiryDate.Before(threshold) && m.config.ClientSecretExpiryDate.After(now) {
+		// Calculate days based on date difference, not time difference
+		nowDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		expiryDate := time.Date(m.config.ClientSecretExpiryDate.Year(), m.config.ClientSecretExpiryDate.Month(), m.config.ClientSecretExpiryDate.Day(), 0, 0, 0, 0, m.config.ClientSecretExpiryDate.Location())
+		daysUntilExpiry := int(expiryDate.Sub(nowDate).Hours() / 24)
+		
+		m.config.SecretExpiryNotificationCallback("MSAAD", daysUntilExpiry, *m.config.ClientSecretExpiryDate)
+		
+		if m.config.Verbose {
+			m.log.Warnf("MSAAD client secret expires in %d days (%s)", 
+				daysUntilExpiry, m.config.ClientSecretExpiryDate.Format(time.RFC3339))
+		}
+	}
 }
