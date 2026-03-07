@@ -20,7 +20,11 @@ const (
 )
 
 type LdapImpl struct {
-	Config *ConfigLDAP
+	config *ConfigLDAP
+}
+
+func (x *LdapImpl) GetConfig() *ConfigLDAP {
+	return x.config
 }
 
 type ldapEntry struct {
@@ -40,7 +44,7 @@ func (x *LdapImpl) Authenticate(identity, password string) error {
 		return ErrInvalidPassword
 	}
 
-	con, err := NewLDAPConnect(x.Config)
+	con, err := NewLDAPConnect(x.config)
 	if err != nil {
 		return err
 	}
@@ -50,7 +54,7 @@ func (x *LdapImpl) Authenticate(identity, password string) error {
 	// We need to know whether we must add the domain to the identity by checking
 	// if it contains '@'
 	if !strings.Contains(identity, "@") {
-		identity = fmt.Sprintf(`%v@%v`, identity, x.Config.LdapDomain)
+		identity = fmt.Sprintf(`%v@%v`, identity, x.config.LdapDomain)
 	}
 	err = con.Bind(identity, password)
 	if err != nil {
@@ -79,13 +83,13 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	}
 
 	searchRequest := ldap.NewSearchRequest(
-		x.Config.BaseDN,
+		x.config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.DerefAlways, 0, 0, false,
-		x.Config.LdapSearchFilter,
+		x.config.LdapSearchFilter,
 		attributes,
 		nil)
 
-	con, err := NewLDAPConnectAndBind(x.Config)
+	con, err := NewLDAPConnectAndBind(x.config)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +102,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		return nil, err
 	}
 
-	if x.Config.DebugUserPull {
+	if x.config.DebugUserPull {
 		// print hierarchy by iterating over the tree, depth first
 		log.Infof("LDAP hierarchy:\n")
 		printHierarchy(extractHierarchy(sr), "", true, log)
@@ -114,14 +118,14 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 
 	ldapSource := make([]ldapEntry, len(sr.Entries))
 	ldapUsers := make([]AuthUser, len(sr.Entries))
-	if x.Config.DebugUserPull {
+	if x.config.DebugUserPull {
 		log.Infof("%d records retrieved from LDAP server...\n", len(sr.Entries))
 	}
 	allAttributes := make(map[string]struct{})
 	for i, value := range sr.Entries {
 		// We trim the spaces as we have found that a certain ldap user
 		// (WilburGS) has an email that ends with a space.
-		if x.Config.DebugUserPull {
+		if x.config.DebugUserPull {
 			log.Infof("LDAP raw entry: %+v\n", *value)
 		}
 
@@ -154,7 +158,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	}
 
 	// print
-	if x.Config.DebugUserPull {
+	if x.config.DebugUserPull {
 		log.Infof("All LDAP attributes seen:\n")
 		attributeNames := make([]string, 0, len(allAttributes))
 		for attrName := range allAttributes {
@@ -477,6 +481,6 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.Conn, error) {
 
 func NewAuthenticator_LDAP(config *ConfigLDAP) *LdapImpl {
 	return &LdapImpl{
-		Config: config,
+		config: config,
 	}
 }
