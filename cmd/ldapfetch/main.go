@@ -34,9 +34,7 @@ func main() {
 			"you may not get extra user info from LDAP")
 	}
 
-	ldapImpl := authaus.LdapImpl{
-		Config: ldapConf,
-	}
+	ldapImpl := authaus.NewAuthenticator_LDAP(ldapConf)
 	logger := log.New(log.Stdout, true)
 	users, e := ldapImpl.GetLdapUsers(logger)
 	if e != nil {
