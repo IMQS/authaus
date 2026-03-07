@@ -44,7 +44,9 @@ func (x *LdapImpl) Authenticate(identity, password string) error {
 	if err != nil {
 		return err
 	}
-	defer con.Close()
+	defer func() {
+		_ = con.Close()
+	}()
 	// We need to know whether we must add the domain to the identity by checking
 	// if it contains '@'
 	if !strings.Contains(identity, "@") {
@@ -87,17 +89,19 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer con.Close()
+	defer func() {
+		_ = con.Close()
+	}()
 	sr, err := con.SearchWithPaging(searchRequest, 100)
+	if err != nil {
+		fmt.Println("LDAP search failed: ", err)
+		return nil, err
+	}
 
 	if x.Config.DebugUserPull {
 		// print hierarchy by iterating over the tree, depth first
 		log.Infof("LDAP hierarchy:\n")
 		printHierarchy(extractHierarchy(sr), "", true, log)
-	}
-
-	if err != nil {
-		return nil, err
 	}
 
 	getAttributeValue := func(entry ldap.Entry, attribute string) string {
@@ -113,7 +117,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	if x.Config.DebugUserPull {
 		log.Infof("%d records retrieved from LDAP server...\n", len(sr.Entries))
 	}
-	allAtrributes := make(map[string]struct{})
+	allAttributes := make(map[string]struct{})
 	for i, value := range sr.Entries {
 		// We trim the spaces as we have found that a certain ldap user
 		// (WilburGS) has an email that ends with a space.
@@ -122,7 +126,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		}
 
 		for _, attr := range value.Attributes {
-			allAtrributes[attr.Name] = struct{}{}
+			allAttributes[attr.Name] = struct{}{}
 		}
 		newEntry := ldapEntry{}
 		newEntry.UserName = strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
@@ -152,8 +156,8 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	// print
 	if x.Config.DebugUserPull {
 		log.Infof("All LDAP attributes seen:\n")
-		attributeNames := make([]string, 0, len(allAtrributes))
-		for attrName := range allAtrributes {
+		attributeNames := make([]string, 0, len(allAttributes))
+		for attrName := range allAttributes {
 			attributeNames = append(attributeNames, attrName)
 		}
 		log.Infof("%v\n", strings.Join(attributeNames, ", "))
@@ -211,7 +215,7 @@ func printHierarchy(hierarchy *hierarchyNode, pathPrefix string, printNodesIfCN 
 // printTrunc produces an output such that len(output) <= maxLength
 //
 // If len(str) > maxLength, it will truncate str and append abbrevString such
-// that the output is still of length l.
+// that the output is still of length maxLength.
 func printTrunc(str string, maxLength int, abbrevString string) string {
 	if len(str) > maxLength {
 		return str[:maxLength-len(abbrevString)] + abbrevString
@@ -227,23 +231,22 @@ func extractHierarchy(sr *ldap.SearchResult) *hierarchyNode {
 		children: make(map[string]*hierarchyNode),
 	}
 
+	currentNode := tree
 	for _, a := range sr.Entries {
+		currentNode = tree
+		// New code
 		pathElements := extractPath(a.DN)
-		for p := range pathElements {
-			currentNode := tree
-			for i := 0; i <= p; i++ {
-				part := pathElements[i]
-				childNode, found := currentNode.children[part.name]
-				if !found {
-					childNode = &hierarchyNode{
-						name:     part.name,
-						nodeType: part.nodeType,
-						children: make(map[string]*hierarchyNode),
-					}
-					currentNode.children[part.name] = childNode
+		for _, part := range pathElements {
+			childNode, found := currentNode.children[part.name]
+			if !found {
+				childNode = &hierarchyNode{
+					name:     part.name,
+					nodeType: part.nodeType,
+					children: make(map[string]*hierarchyNode),
 				}
-				currentNode = childNode
+				currentNode.children[part.name] = childNode
 			}
+			currentNode = childNode
 		}
 	}
 	return tree
@@ -413,6 +416,7 @@ func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.Conn, error) {
 // NewLDAPConnect creates a new LDAP connection based on the configuration
 // provided
 //
+// If the ldapPort is not specified, it defaults to 389.
 // If connection is not-null, the calling function is required to close the
 // connection when done with it.
 func NewLDAPConnect(config *ConfigLDAP) (*ldap.Conn, error) {
@@ -440,9 +444,21 @@ func NewLDAPConnect(config *ConfigLDAP) (*ldap.Conn, error) {
 		}
 		c.SetTimeout(10 * time.Second)
 		return c, e
-	//// DEPRECATED
-	//case LdapConnectionModeSSL:
-	//	con.IsSSL = true
+	// DEPRECATED
+	case LdapConnectionModeSSL:
+		// Use ldaps:// protocol and default port 636 if not specified
+		sslPort := config.LdapPort
+		if sslPort == 0 || sslPort == 389 {
+			sslPort = 636
+		}
+		ldapsAddr := "ldaps://" + config.LdapHost + fmt.Sprintf(":%d", sslPort)
+		tlsConfig := &tls.Config{InsecureSkipVerify: config.InsecureSkipVerify}
+		c, e := ldap.DialURL(ldapsAddr, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
+		if e != nil {
+			return nil, e
+		}
+		c.SetTimeout(10 * time.Second)
+		return c, e
 	case LdapConnectionModeTLS:
 		tlsConfig := &tls.Config{}
 		if config.InsecureSkipVerify {

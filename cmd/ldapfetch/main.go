@@ -14,18 +14,20 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: ldapfetch <path to ldapauth.json>")
-		return
+		fmt.Println("Usage: ldapfetch <path to config>")
+		os.Exit(1)
 	}
 	s, e := os.ReadFile(os.Args[1])
 	if e != nil {
-		panic(e)
+		fmt.Println("Error reading config file:", e)
+		os.Exit(1)
 	}
 	var ldapConf *authaus.ConfigLDAP
 	e = json.Unmarshal(s, &ldapConf)
 
 	if e != nil {
-		panic(fmt.Errorf("error unmarshalling config: %w", e))
+		fmt.Println("Error parsing config file:", e)
+		os.Exit(1)
 	}
 	if !ldapConf.DebugUserPull {
 		fmt.Println("Warning: DebugUserPull is not enabled in the config - " +
@@ -38,7 +40,8 @@ func main() {
 	logger := log.New(log.Stdout, true)
 	users, e := ldapImpl.GetLdapUsers(logger)
 	if e != nil {
-		panic(fmt.Errorf("error: %v", e))
+		fmt.Println("Error getting ldap users:", e)
+		os.Exit(1)
 	}
 	fmt.Printf("%d Auth users mapped\n", len(users))
 	fmt.Printf("%25v | %25v | %40v\n",
