@@ -197,17 +197,22 @@ type pathElement struct {
 	nodeType string
 }
 
+// formatHierarchyPath returns the formatted path string for a node.
+// If nodeType is "CN" and printNodesIfCN is true, uses colon separator.
+func formatHierarchyPath(pathPrefix, nodeName, nodeType string, printNodesIfCN bool) string {
+	if nodeType == "CN" && printNodesIfCN {
+		return printTrunc(pathPrefix+" : "+nodeName, 120, "...")
+	}
+	return printTrunc(pathPrefix+"/"+nodeName, 120, "...")
+}
+
 func printHierarchy(hierarchy *hierarchyNode, pathPrefix string, printNodesIfCN bool, log *log.Logger) {
 	if hierarchy == nil {
 		return
 	}
 	currentNode := hierarchy
 	// print current node
-	if currentNode.nodeType == "CN" && printNodesIfCN {
-		log.Infof("Node: %s\n", printTrunc(pathPrefix+" : "+currentNode.name, 120, "..."))
-	} else {
-		log.Infof("Node: %s\n", printTrunc(pathPrefix+"/"+currentNode.name, 120, "..."))
-	}
+	log.Infof("Node: %s\n", formatHierarchyPath(pathPrefix, currentNode.name, currentNode.nodeType, printNodesIfCN))
 
 	// iterate through children
 	pathPrefix = pathPrefix + "/" + currentNode.name
