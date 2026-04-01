@@ -7,6 +7,7 @@ import (
 	"github.com/IMQS/log"
 	"github.com/go-ldap/ldap/v3"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,6 +36,7 @@ type ldapEntry struct {
 	Email             string
 	Mobile            string
 	UserPrincipalName string
+	ExpiryValue       string
 }
 
 func (x *LdapImpl) Authenticate(identity, password string) error {
@@ -80,6 +82,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		"mail",
 		"mobile",
 		"userPrincipalName",
+		"msDS-UserPasswordExpiryTimeComputed",
 	}
 
 	searchRequest := ldap.NewSearchRequest(
@@ -132,7 +135,9 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		for _, attr := range value.Attributes {
 			allAttributes[attr.Name] = struct{}{}
 		}
+
 		newEntry := ldapEntry{}
+		fmt.Printf(getAttributeValue(*value, "msDS-UserPasswordExpiryTimeComputed"))
 		newEntry.UserName = strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
 		newEntry.GivenName = strings.TrimSpace(getAttributeValue(*value, "givenName"))
 		newEntry.Name = strings.TrimSpace(getAttributeValue(*value, "name"))
@@ -140,6 +145,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		newEntry.Email = strings.TrimSpace(getAttributeValue(*value, "mail"))
 		newEntry.Mobile = strings.TrimSpace(getAttributeValue(*value, "mobile"))
 		newEntry.UserPrincipalName = strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
+		newEntry.ExpiryValue = strings.TrimSpace(getAttributeValue(*value, "msDS-UserPasswordExpiryTimeComputed"))
 		if newEntry.Email == "" && strings.Count(newEntry.UserPrincipalName, "@") == 1 {
 			// This was first seen in Azure, when integrating with DTPW (Department of Transport and Public Works)
 			newEntry.Email = newEntry.UserPrincipalName
@@ -164,15 +170,15 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		for attrName := range allAttributes {
 			attributeNames = append(attributeNames, attrName)
 		}
-		log.Infof("%v\n", strings.Join(attributeNames, ", "))
+		log.Infof("all attributes: %v\n", strings.Join(attributeNames, ", "))
 
 		log.Infof("---\n")
 		log.Infof("LDAP source data:\n")
-		log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName")
+		log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v | %20v | %20v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName", "msDS-UserPasswordExpiryTimeComputed", "Expired (calc)")
 		log.Infof("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
 		for _, entry := range ldapSource {
-			log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n",
-				entry.UserName, entry.GivenName, entry.Name, entry.Surname, entry.Email, entry.Mobile, entry.UserPrincipalName)
+			log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v | %20v |%20v\n",
+				entry.UserName, entry.GivenName, entry.Name, entry.Surname, entry.Email, entry.Mobile, entry.UserPrincipalName, entry.ExpiryValue, calcExpiryDate(entry.ExpiryValue))
 		}
 
 		log.Infof("\n")
@@ -184,6 +190,27 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		}
 	}
 	return ldapUsers, nil
+}
+
+func calcExpiryDate(value string) string {
+	// msDS-UserPasswordExpiryTimeComputed is a Windows FileTime, which is the number of 100-nanosecond intervals since January 1, 1601 (UTC).
+	// To convert it to a Go time.Time, we can use the following calculation:
+	const windowsFileTimeOffset = 116444736000000000 // Number of 100-nanosecond intervals between 1601 and 1970
+	fileTimeInt, err := strconv.ParseInt(value, 10, 64)
+	if fileTimeInt == 9223372036854775807 {
+		// This value indicates that the password never expires
+		return "never" // Return zero time to indicate no expiry
+	}
+	if fileTimeInt == 0 {
+		return "exired"
+	}
+	if err != nil {
+		return "error"
+	}
+
+	unixTime := (fileTimeInt - windowsFileTimeOffset) / 10000000 // Convert to seconds
+
+	return fmt.Sprintf("%v", time.Unix(unixTime, 0).UTC())
 }
 
 type hierarchyNode struct {
