@@ -4,10 +4,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/IMQS/log"
+	"github.com/go-ldap/ldap/v3"
+	"net"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mavricknz/ldap"
 )
 
 type LdapConnectionMode int
@@ -22,6 +24,21 @@ type LdapImpl struct {
 	config *ConfigLDAP
 }
 
+func (x *LdapImpl) GetConfig() *ConfigLDAP {
+	return x.config
+}
+
+type ldapEntry struct {
+	UserName          string
+	GivenName         string
+	Name              string
+	Surname           string
+	Email             string
+	Mobile            string
+	UserPrincipalName string
+	ExpiryValue       string
+}
+
 func (x *LdapImpl) Authenticate(identity, password string) error {
 	if len(password) == 0 {
 		// Many LDAP servers (or AD) will allow an anonymous BIND.
@@ -33,8 +50,11 @@ func (x *LdapImpl) Authenticate(identity, password string) error {
 	if err != nil {
 		return err
 	}
-	defer con.Close()
-	// We need to know whether or not we must add the domain to the identity by checking if it contains '@'
+	defer func() {
+		_ = con.Close()
+	}()
+	// We need to know whether we must add the domain to the identity by checking
+	// if it contains '@'
 	if !strings.Contains(identity, "@") {
 		identity = fmt.Sprintf(`%v@%v`, identity, x.config.LdapDomain)
 	}
@@ -53,8 +73,8 @@ func (x *LdapImpl) Close() {
 
 }
 
-func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
-	var attributes []string = []string{
+func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
+	var attributes = []string{
 		"sAMAccountName",
 		"givenName",
 		"name",
@@ -62,6 +82,7 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		"mail",
 		"mobile",
 		"userPrincipalName",
+		"msDS-UserPasswordExpiryTimeComputed",
 	}
 
 	searchRequest := ldap.NewSearchRequest(
@@ -75,10 +96,19 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer con.Close()
+	defer func() {
+		_ = con.Close()
+	}()
 	sr, err := con.SearchWithPaging(searchRequest, 100)
 	if err != nil {
+		fmt.Println("LDAP search failed: ", err)
 		return nil, err
+	}
+
+	if x.config.DebugUserPull {
+		// print hierarchy by iterating over the tree, depth first
+		log.Infof("LDAP hierarchy:\n")
+		printHierarchy(extractHierarchy(sr), "", true, log)
 	}
 
 	getAttributeValue := func(entry ldap.Entry, attribute string) string {
@@ -89,53 +119,191 @@ func (x *LdapImpl) GetLdapUsers() ([]AuthUser, error) {
 		return values[0]
 	}
 
-	if x.config.DebugUserPull {
-		fmt.Printf("LDAP source data:\n")
-		fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName")
-	}
+	ldapSource := make([]ldapEntry, len(sr.Entries))
 	ldapUsers := make([]AuthUser, len(sr.Entries))
+	if x.config.DebugUserPull {
+		log.Infof("%d records retrieved from LDAP server...\n", len(sr.Entries))
+	}
+	allAttributes := make(map[string]struct{})
 	for i, value := range sr.Entries {
 		// We trim the spaces as we have found that a certain ldap user
 		// (WilburGS) has an email that ends with a space.
-		username := strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
-		givenName := strings.TrimSpace(getAttributeValue(*value, "givenName"))
-		name := strings.TrimSpace(getAttributeValue(*value, "name"))
-		surname := strings.TrimSpace(getAttributeValue(*value, "sn"))
-		email := strings.TrimSpace(getAttributeValue(*value, "mail"))
-		mobile := strings.TrimSpace(getAttributeValue(*value, "mobile"))
-		userPrincipalName := strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
 		if x.config.DebugUserPull {
-			fmt.Printf("%23v | %20v | %26v | %25v | %45v | %15v | %45v\n",
-				username, givenName, name, surname, email, mobile, userPrincipalName)
+			log.Infof("LDAP raw entry: %+v\n", *value)
 		}
-		if email == "" && strings.Count(userPrincipalName, "@") == 1 {
+
+		for _, attr := range value.Attributes {
+			allAttributes[attr.Name] = struct{}{}
+		}
+
+		newEntry := ldapEntry{}
+		fmt.Printf(getAttributeValue(*value, "msDS-UserPasswordExpiryTimeComputed"))
+		newEntry.UserName = strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
+		newEntry.GivenName = strings.TrimSpace(getAttributeValue(*value, "givenName"))
+		newEntry.Name = strings.TrimSpace(getAttributeValue(*value, "name"))
+		newEntry.Surname = strings.TrimSpace(getAttributeValue(*value, "sn"))
+		newEntry.Email = strings.TrimSpace(getAttributeValue(*value, "mail"))
+		newEntry.Mobile = strings.TrimSpace(getAttributeValue(*value, "mobile"))
+		newEntry.UserPrincipalName = strings.TrimSpace(getAttributeValue(*value, "userPrincipalName"))
+		newEntry.ExpiryValue = strings.TrimSpace(getAttributeValue(*value, "msDS-UserPasswordExpiryTimeComputed"))
+		if newEntry.Email == "" && strings.Count(newEntry.UserPrincipalName, "@") == 1 {
 			// This was first seen in Azure, when integrating with DTPW (Department of Transport and Public Works)
-			email = userPrincipalName
+			newEntry.Email = newEntry.UserPrincipalName
 		}
-		firstName := givenName
-		if firstName == "" && surname == "" && name != "" {
+		firstName := newEntry.GivenName
+		if firstName == "" && newEntry.Surname == "" && newEntry.Name != "" {
 			// We're in dubious best-guess-for-common-english territory here
-			firstSpace := strings.Index(name, " ")
+			firstSpace := strings.Index(newEntry.Name, " ")
 			if firstSpace != -1 {
-				firstName = name[:firstSpace]
-				surname = name[firstSpace+1:]
+				firstName = newEntry.Name[:firstSpace]
+				newEntry.Surname = newEntry.Name[firstSpace+1:]
 			}
 		}
-		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: email, Username: username, Firstname: firstName, Lastname: surname, Mobilenumber: mobile}
+		ldapSource[i] = newEntry
+		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: newEntry.Email, Username: newEntry.UserName, Firstname: firstName, Lastname: newEntry.Surname, Mobilenumber: newEntry.Mobile}
 	}
+
+	// print
 	if x.config.DebugUserPull {
-		fmt.Println()
-		fmt.Printf("Mapped to Auth users:\n")
-		fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", "username", "firstname", "lastname", "email", "mobile")
+		log.Infof("All LDAP attributes seen:\n")
+		attributeNames := make([]string, 0, len(allAttributes))
+		for attrName := range allAttributes {
+			attributeNames = append(attributeNames, attrName)
+		}
+		log.Infof("all attributes: %v\n", strings.Join(attributeNames, ", "))
+
+		log.Infof("---\n")
+		log.Infof("LDAP source data:\n")
+		log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v | %20v | %20v\n", "sAMAccountName", "givenName", "name", "sn", "mail", "mobile", "userPrincipalName", "msDS-UserPasswordExpiryTimeComputed", "Expired (calc)")
+		log.Infof("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+		for _, entry := range ldapSource {
+			log.Infof("%23v | %20v | %26v | %25v | %45v | %15v | %45v | %20v |%20v\n",
+				entry.UserName, entry.GivenName, entry.Name, entry.Surname, entry.Email, entry.Mobile, entry.UserPrincipalName, entry.ExpiryValue, calcExpiryDate(entry.ExpiryValue))
+		}
+
+		log.Infof("\n")
+		log.Infof("Mapped to Auth users:\n")
+		log.Infof("%23v | %16v | %19v | %45v | %15v\n", "username", "firstname", "lastname", "email", "mobile")
+		log.Infof("----------------------------------------------------------------------------------------------------------------------------------\n")
 		for _, user := range ldapUsers {
-			fmt.Printf("%23v | %16v | %19v | %45v | %15v\n", user.Username, user.Firstname, user.Lastname, user.Email, user.Mobilenumber)
+			log.Infof("%23v | %16v | %19v | %45v | %15v\n", user.Username, user.Firstname, user.Lastname, user.Email, user.Mobilenumber)
 		}
 	}
 	return ldapUsers, nil
 }
 
+func calcExpiryDate(value string) string {
+	// msDS-UserPasswordExpiryTimeComputed is a Windows FileTime, which is the number of 100-nanosecond intervals since January 1, 1601 (UTC).
+	// To convert it to a Go time.Time, we can use the following calculation:
+	const windowsFileTimeOffset = 116444736000000000 // Number of 100-nanosecond intervals between 1601 and 1970
+	fileTimeInt, err := strconv.ParseInt(value, 10, 64)
+	if fileTimeInt == 9223372036854775807 {
+		// This value indicates that the password never expires
+		return "never" // Return zero time to indicate no expiry
+	}
+	if fileTimeInt == 0 {
+		return "exired"
+	}
+	if err != nil {
+		return "error"
+	}
+
+	unixTime := (fileTimeInt - windowsFileTimeOffset) / 10000000 // Convert to seconds
+
+	return fmt.Sprintf("%v", time.Unix(unixTime, 0).UTC())
+}
+
+type hierarchyNode struct {
+	name     string
+	nodeType string
+	children map[string]*hierarchyNode
+}
+
+type pathElement struct {
+	name     string
+	nodeType string
+}
+
+// formatHierarchyPath returns the formatted path string for a node.
+// If nodeType is "CN" and printNodesIfCN is true, uses colon separator.
+func formatHierarchyPath(pathPrefix, nodeName, nodeType string, printNodesIfCN bool) string {
+	if nodeType == "CN" && printNodesIfCN {
+		return printTrunc(pathPrefix+" : "+nodeName, 120, "...")
+	}
+	return printTrunc(pathPrefix+"/"+nodeName, 120, "...")
+}
+
+func printHierarchy(hierarchy *hierarchyNode, pathPrefix string, printNodesIfCN bool, log *log.Logger) {
+	if hierarchy == nil {
+		return
+	}
+	currentNode := hierarchy
+	// print current node
+	log.Infof("Node: %s\n", formatHierarchyPath(pathPrefix, currentNode.name, currentNode.nodeType, printNodesIfCN))
+
+	// iterate through children
+	pathPrefix = pathPrefix + "/" + currentNode.name
+	for _, child := range currentNode.children {
+		printHierarchy(child, pathPrefix, printNodesIfCN, log)
+	}
+}
+
+// printTrunc produces an output such that len(output) <= maxLength
+//
+// If len(str) > maxLength, it will truncate str and append abbrevString such
+// that the output is still of length maxLength.
+func printTrunc(str string, maxLength int, abbrevString string) string {
+	if len(str) > maxLength {
+		return str[:maxLength-len(abbrevString)] + abbrevString
+	} else {
+		return str
+	}
+}
+
+func extractHierarchy(sr *ldap.SearchResult) *hierarchyNode {
+	tree := &hierarchyNode{
+		name:     "ROOT",
+		nodeType: "ROOT",
+		children: make(map[string]*hierarchyNode),
+	}
+
+	currentNode := tree
+	for _, a := range sr.Entries {
+		currentNode = tree
+		// New code
+		pathElements := extractPath(a.DN)
+		for _, part := range pathElements {
+			childNode, found := currentNode.children[part.name]
+			if !found {
+				childNode = &hierarchyNode{
+					name:     part.name,
+					nodeType: part.nodeType,
+					children: make(map[string]*hierarchyNode),
+				}
+				currentNode.children[part.name] = childNode
+			}
+			currentNode = childNode
+		}
+	}
+	return tree
+}
+
+// extractPath extracts the top-down path elements from a DN string
+func extractPath(dn string) []pathElement {
+	parts := strings.Split(dn, ",")
+	result := make([]pathElement, 0, len(parts))
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		equalIndex := strings.Index(part, "=")
+		if equalIndex != -1 && equalIndex < len(part)-1 {
+			result = append(result, pathElement{part[equalIndex+1:], part[:equalIndex]})
+		}
+	}
+	return result
+}
+
 func MergeLDAP(c *Central) {
-	ldapUsers, err := c.ldap.GetLdapUsers()
+	ldapUsers, err := c.ldap.GetLdapUsers(c.Log)
 	if err != nil {
 		c.Log.Warnf("Failed to retrieve users from LDAP server for merge to take place (%v)", err)
 		return
@@ -148,7 +316,9 @@ func MergeLDAP(c *Central) {
 	MergeLdapUsersIntoLocalUserStore(c, ldapUsers, imqsUsers)
 }
 
-// We are reading users from LDAP/AD and merging them into the IMQS userstore
+// MergeLdapUsersIntoLocalUserStore
+//
+// Reads users from LDAP/AD and merges them into the IMQS user store
 func MergeLdapUsersIntoLocalUserStore(x *Central, ldapUsers []AuthUser, imqsUsers []AuthUser) {
 	// Create maps from arrays
 	imqsUserUsernameMap := make(map[string]AuthUser)
@@ -268,41 +438,77 @@ func equalsForLDAPMerge(a, b AuthUser) bool {
 		a.Username == b.Username
 }
 
-func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
+func NewLDAPConnectAndBind(config *ConfigLDAP) (*ldap.Conn, error) {
 	con, err := NewLDAPConnect(config)
 	if err != nil {
 		return nil, err
 	}
-	if err := con.Bind(config.LdapUsername, config.LdapPassword); err != nil {
+	if err = con.Bind(config.LdapUsername, config.LdapPassword); err != nil {
 		return nil, err
 	}
 	return con, nil
 }
 
-func NewLDAPConnect(config *ConfigLDAP) (*ldap.LDAPConnection, error) {
-	con := ldap.NewLDAPConnection(config.LdapHost, config.LdapPort)
-	con.NetworkConnectTimeout = 30 * time.Second
-	con.ReadTimeout = 30 * time.Second
+// NewLDAPConnect creates a new LDAP connection based on the configuration
+// provided
+//
+// If the ldapPort is not specified, it defaults to 389.
+// If connection is not-null, the calling function is required to close the
+// connection when done with it.
+func NewLDAPConnect(config *ConfigLDAP) (*ldap.Conn, error) {
+	if config.LdapPort == 0 {
+		config.LdapPort = 389
+	}
+
+	dialer := &net.Dialer{
+		Timeout: 30 * time.Second,
+	}
+
 	ldapMode, legalLdapMode := configLdapNameToMode[config.Encryption]
 	if !legalLdapMode {
 		return nil, errors.New(fmt.Sprintf("Unknown ldap mode %v. Recognized modes are TLS, SSL, and empty for unencrypted", config.Encryption))
 	}
+
+	// TODO : Switch protocol explicitly for SSL mode to ldaps://
+	addr := "ldap://" + config.LdapHost + fmt.Sprintf(":%d", config.LdapPort)
+
 	switch ldapMode {
 	case LdapConnectionModePlainText:
+		c, e := ldap.DialURL(addr, ldap.DialWithDialer(dialer))
+		if e != nil {
+			return nil, e
+		}
+		c.SetTimeout(10 * time.Second)
+		return c, e
+	// DEPRECATED
 	case LdapConnectionModeSSL:
-		con.IsSSL = true
+		// Use ldaps:// protocol and default port 636 if not specified
+		sslPort := config.LdapPort
+		if sslPort == 0 || sslPort == 389 {
+			sslPort = 636
+		}
+		ldapsAddr := "ldaps://" + config.LdapHost + fmt.Sprintf(":%d", sslPort)
+		tlsConfig := &tls.Config{InsecureSkipVerify: config.InsecureSkipVerify}
+		c, e := ldap.DialURL(ldapsAddr, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
+		if e != nil {
+			return nil, e
+		}
+		c.SetTimeout(10 * time.Second)
+		return c, e
 	case LdapConnectionModeTLS:
-		con.IsTLS = true
+		tlsConfig := &tls.Config{}
+		if config.InsecureSkipVerify {
+			tlsConfig.InsecureSkipVerify = config.InsecureSkipVerify
+		}
+		c, e := ldap.DialURL(addr, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
+		if e != nil {
+			return nil, e
+		}
+		c.SetTimeout(10 * time.Second)
+		return c, e
+	default:
+		return nil, errors.New("unimplemented LDAP connection mode")
 	}
-	if config.InsecureSkipVerify {
-		con.TlsConfig = &tls.Config{}
-		con.TlsConfig.InsecureSkipVerify = config.InsecureSkipVerify
-	}
-	if err := con.Connect(); err != nil {
-		con.Close()
-		return nil, err
-	}
-	return con, nil
 }
 
 func NewAuthenticator_LDAP(config *ConfigLDAP) *LdapImpl {

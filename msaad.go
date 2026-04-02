@@ -689,7 +689,7 @@ func (m *MSAAD) populateAADRoles(users []*msaadUser) error {
 			defer func() {
 				if r := recover(); r != nil {
 					s := GetStack()
-					errGlobal = fmt.Errorf(fmt.Sprintf("%v\n%v\n", r, s))
+					errGlobal = fmt.Errorf("%v\n%v\n", r, s)
 				}
 			}()
 			for _, user := range threadGroup {
