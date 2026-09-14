@@ -4,12 +4,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/IMQS/log"
-	"github.com/go-ldap/ldap/v3"
+	"math"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IMQS/log"
+	"github.com/go-ldap/ldap/v3"
 )
 
 type LdapConnectionMode int
@@ -74,6 +76,12 @@ func (x *LdapImpl) Close() {
 }
 
 func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
+	ldapUsers, _, err := x.GetLdapUsersWithExpiry(log)
+	return ldapUsers, err
+}
+
+// GetLdapUsersWithExpiry returns LDAP users plus parsed password-expiry timestamps keyed by username.
+func (x *LdapImpl) GetLdapUsersWithExpiry(log *log.Logger) ([]AuthUser, map[string]time.Time, error) {
 	var attributes = []string{
 		"sAMAccountName",
 		"givenName",
@@ -94,7 +102,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 
 	con, err := NewLDAPConnectAndBind(x.config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		_ = con.Close()
@@ -102,7 +110,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 	sr, err := con.SearchWithPaging(searchRequest, 100)
 	if err != nil {
 		fmt.Println("LDAP search failed: ", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	if x.config.DebugUserPull {
@@ -121,6 +129,7 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 
 	ldapSource := make([]ldapEntry, len(sr.Entries))
 	ldapUsers := make([]AuthUser, len(sr.Entries))
+	expiryByUser := make(map[string]time.Time, len(sr.Entries))
 	if x.config.DebugUserPull {
 		log.Infof("%d records retrieved from LDAP server...\n", len(sr.Entries))
 	}
@@ -137,7 +146,6 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		}
 
 		newEntry := ldapEntry{}
-		fmt.Printf(getAttributeValue(*value, "msDS-UserPasswordExpiryTimeComputed"))
 		newEntry.UserName = strings.TrimSpace(getAttributeValue(*value, "sAMAccountName"))
 		newEntry.GivenName = strings.TrimSpace(getAttributeValue(*value, "givenName"))
 		newEntry.Name = strings.TrimSpace(getAttributeValue(*value, "name"))
@@ -161,6 +169,10 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 		}
 		ldapSource[i] = newEntry
 		ldapUsers[i] = AuthUser{UserId: NullUserId, Email: newEntry.Email, Username: newEntry.UserName, Firstname: firstName, Lastname: newEntry.Surname, Mobilenumber: newEntry.Mobile}
+		expiry, hasExpiry, parseErr := parseWindowsFileTime(newEntry.ExpiryValue)
+		if parseErr == nil && hasExpiry {
+			expiryByUser[newEntry.UserName] = expiry
+		}
 	}
 
 	// print
@@ -189,28 +201,47 @@ func (x *LdapImpl) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
 			log.Infof("%23v | %16v | %19v | %45v | %15v\n", user.Username, user.Firstname, user.Lastname, user.Email, user.Mobilenumber)
 		}
 	}
-	return ldapUsers, nil
+	return ldapUsers, expiryByUser, nil
 }
 
-func calcExpiryDate(value string) string {
-	// msDS-UserPasswordExpiryTimeComputed is a Windows FileTime, which is the number of 100-nanosecond intervals since January 1, 1601 (UTC).
-	// To convert it to a Go time.Time, we can use the following calculation:
+func parseWindowsFileTime(value string) (time.Time, bool, error) {
 	const windowsFileTimeOffset = 116444736000000000 // Number of 100-nanosecond intervals between 1601 and 1970
+
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false, nil
+	}
+
 	fileTimeInt, err := strconv.ParseInt(value, 10, 64)
-	if fileTimeInt == 9223372036854775807 {
-		// This value indicates that the password never expires
-		return "never" // Return zero time to indicate no expiry
-	}
-	if fileTimeInt == 0 {
-		return "exired"
-	}
 	if err != nil {
-		return "error"
+		return time.Time{}, false, err
+	}
+
+	if fileTimeInt == math.MaxInt64 {
+		// This value indicates that the password never expires.
+		return time.Time{}, false, nil
+	}
+
+	if fileTimeInt == 0 {
+		return time.Unix(0, 0).UTC(), true, nil
 	}
 
 	unixTime := (fileTimeInt - windowsFileTimeOffset) / 10000000 // Convert to seconds
+	return time.Unix(unixTime, 0).UTC(), true, nil
+}
 
-	return fmt.Sprintf("%v", time.Unix(unixTime, 0).UTC())
+func calcExpiryDate(value string) string {
+	expiry, hasExpiry, err := parseWindowsFileTime(value)
+	if err != nil {
+		return "error"
+	}
+	if !hasExpiry {
+		return "never"
+	}
+	if expiry.Unix() == 0 {
+		return "expired"
+	}
+	return fmt.Sprintf("%v", expiry)
 }
 
 type hierarchyNode struct {
