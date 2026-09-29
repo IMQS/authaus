@@ -3,13 +3,14 @@ package authaus
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/IMQS/log"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/IMQS/log"
 )
 
 type MSAADProvider struct {
@@ -67,6 +68,21 @@ type msaadUser struct {
 type msaadRolesJSON struct {
 	NextLink string           `json:"@odata.nextLink"`
 	Value    []*msaadRoleJSON `json:"value"`
+}
+
+type msaadApplicationJSON struct {
+	ID                  string                        `json:"id"`
+	DisplayName         string                        `json:"displayName"`
+	PasswordCredentials []msaadPasswordCredentialJSON `json:"passwordCredentials"`
+}
+
+type msaadApplicationsJSON struct {
+	Value []msaadApplicationJSON `json:"value"`
+}
+
+type msaadPasswordCredentialJSON struct {
+	KeyID       string `json:"keyId"`
+	EndDateTime string `json:"endDateTime"`
 }
 
 type msaadRoleJSON struct {
@@ -164,6 +180,52 @@ func (mp *MSAADProvider) GetAppRoles() (rolesList []string, errGlobal error, qui
 		selectURL = j.NextLink
 	}
 	return rolesList, errGlobal, quit
+}
+
+// GetClientSecretExpiryDate retrieves the expiry date of the configured Entra
+// application password credential. The configured key ID is used when present;
+// otherwise the application must have exactly one password credential so that
+// the result cannot be associated with the wrong secret.
+func (mp *MSAADProvider) GetClientSecretExpiryDate() (*time.Time, error) {
+	clientID := mp.parent.Config().ClientID
+	if clientID == "" {
+		return nil, nil
+	}
+	filter := "appId eq '" + strings.ReplaceAll(clientID, "'", "''") + "'"
+	selectURL := "https://graph.microsoft.com/v1.0/applications?$filter=" + url.QueryEscape(filter) + "&$select=id,displayName,passwordCredentials"
+	applications := msaadApplicationsJSON{}
+	if err := mp.fetchJSON(selectURL, &applications); err != nil {
+		return nil, err
+	}
+	if len(applications.Value) == 0 {
+		return nil, fmt.Errorf("no Entra application found for ClientID %q", clientID)
+	}
+	if len(applications.Value) > 1 {
+		return nil, fmt.Errorf("multiple Entra applications found for ClientID %q", clientID)
+	}
+	application := applications.Value[0]
+
+	credentials := application.PasswordCredentials
+	if mp.parent.Config().ClientSecretKeyID != "" {
+		credentials = nil
+		for _, credential := range application.PasswordCredentials {
+			if credential.KeyID == mp.parent.Config().ClientSecretKeyID {
+				credentials = append(credentials, credential)
+			}
+		}
+	}
+	if len(credentials) == 0 {
+		return nil, fmt.Errorf("Entra application for ClientID %q has no matching password credential", clientID)
+	}
+	if len(credentials) > 1 {
+		return nil, fmt.Errorf("Entra application for ClientID %q has multiple password credentials; configure ClientSecretKeyID", clientID)
+	}
+
+	expiryDate, err := time.Parse(time.RFC3339, credentials[0].EndDateTime)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endDateTime for Entra application for ClientID %q credential %q: %w", clientID, credentials[0].KeyID, err)
+	}
+	return &expiryDate, nil
 }
 
 func (mp *MSAADProvider) GetAADUsers() ([]*msaadUser, error) {
