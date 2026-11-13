@@ -2,6 +2,7 @@ package authaus
 
 import (
 	"database/sql"
+	"github.com/IMQS/log"
 	"sort"
 	"strings"
 	"sync"
@@ -134,9 +135,9 @@ type UserStore interface {
 
 // The LDAP interface allows authentication and the ability to retrieve the LDAP's users and merge them into our system
 type LDAP interface {
-	Authenticate(identity, password string) error // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
-	GetLdapUsers() ([]AuthUser, error)            // Retrieve the list of users from ldap
-	Close()                                       // Typically used to close a database handle
+	Authenticate(identity, password string) error     // Return nil if the password is correct, otherwise one of ErrIdentityAuthNotFound or ErrInvalidPassword
+	GetLdapUsers(log *log.Logger) ([]AuthUser, error) // Retrieve the list of users from ldap
+	Close()                                           // Typically used to close a database handle
 }
 
 // A Permit database performs no validation. It simply returns the Permit owned by a particular user.
@@ -338,8 +339,8 @@ func (x *sanitizingLDAP) Authenticate(identity, password string) error {
 	return x.backend.Authenticate(identity, password)
 }
 
-func (x *sanitizingLDAP) GetLdapUsers() ([]AuthUser, error) {
-	return x.backend.GetLdapUsers()
+func (x *sanitizingLDAP) GetLdapUsers(log *log.Logger) ([]AuthUser, error) {
+	return x.backend.GetLdapUsers(log)
 }
 
 func (x *sanitizingLDAP) Close() {
