@@ -2,6 +2,9 @@
 
 ## Current
 
+## v1.3.10
+* fix : Specify account select on redirect (allows user account switch and re-login) (ASG-5631)
+
 ## v1.3.9
 
 * feat : Add provider function to retrieve visible Entra groups (ASG-4959)
