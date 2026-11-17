@@ -1,21 +1,24 @@
 module github.com/IMQS/authaus
 
-go 1.22.7
+go 1.24.0
+
+toolchain go1.24.10
 
 require (
 	github.com/BurntSushi/migration v0.0.0-20140125045755-c45b897f1335
-	github.com/IMQS/log v1.3.0
+	github.com/IMQS/log v1.5.1
+	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
-	github.com/mavricknz/ldap v0.0.0-20160227184754-f5a958005e43
-	github.com/stretchr/testify v1.9.0
-	github.com/wI2L/jsondiff v0.6.1
-	golang.org/x/crypto v0.31.0
+	github.com/stretchr/testify v1.11.1
+	github.com/wI2L/jsondiff v0.7.0
+	golang.org/x/crypto v0.47.0
 )
 
 require (
+	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/mavricknz/asn1-ber v0.0.0-20151103223136-b9df1c2f4213 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
